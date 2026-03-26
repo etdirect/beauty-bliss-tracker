@@ -270,12 +270,7 @@ export default function SettingsPage() {
           <TabsTrigger value="brands" data-testid="tab-brands">
             <Tag className="w-4 h-4 mr-1.5" /> Brands
           </TabsTrigger>
-          <TabsTrigger value="counters" data-testid="tab-counters">
-            <Store className="w-4 h-4 mr-1.5" /> Counters
-          </TabsTrigger>
-          <TabsTrigger value="assignments" data-testid="tab-assignments">
-            <Grid3X3 className="w-4 h-4 mr-1.5" /> Assignments
-          </TabsTrigger>
+
         </TabsList>
 
         {/* POS Locations Tab */}
@@ -716,110 +711,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Counters Tab (legacy) */}
-        <TabsContent value="counters" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Add New Counter (Legacy)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-2">
-                <Input
-                  value={newCounterName}
-                  onChange={e => setNewCounterName(e.target.value)}
-                  placeholder="e.g. Pop-up Store Central"
-                  className="flex-1"
-                  data-testid="input-new-counter"
-                />
-                <Button
-                  onClick={() => createCounterMutation.mutate()}
-                  disabled={!newCounterName.trim() || createCounterMutation.isPending}
-                  data-testid="button-add-counter"
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Add
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Manage Counters</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {counters.map(counter => (
-                  <div key={counter.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div className="flex items-center gap-2">
-                      <Store className="w-4 h-4 text-muted-foreground" />
-                      <span className={`text-sm ${counter.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
-                        {counter.name}
-                      </span>
-                      {!counter.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleCounterMutation.mutate({ id: counter.id, isActive: !counter.isActive })}
-                      className="text-xs"
-                      data-testid={`toggle-counter-${counter.id}`}
-                    >
-                      {counter.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Assignments Tab (legacy) */}
-        <TabsContent value="assignments" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Counter-Brand Assignments (Legacy)</CardTitle>
-              <p className="text-xs text-muted-foreground">Check which brands are available at each counter</p>
-            </CardHeader>
-            <CardContent className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-2 pr-3 font-medium text-muted-foreground sticky left-0 bg-card">Brand</th>
-                    {counters.filter(c => c.isActive).map(counter => (
-                      <th key={counter.id} className="text-center py-2 px-1 font-medium text-muted-foreground whitespace-nowrap">
-                        {counter.name.replace("LOG-ON ", "").replace("FACESSS ", "F·")}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {brands.filter(b => b.isActive).map(brand => (
-                    <tr key={brand.id} className="border-b last:border-0">
-                      <td className="py-2 pr-3 font-medium sticky left-0 bg-card whitespace-nowrap">
-                        {brand.name}
-                      </td>
-                      {counters.filter(c => c.isActive).map(counter => (
-                        <td key={counter.id} className="text-center py-2 px-1">
-                          <Checkbox
-                            checked={isAssigned(counter.id, brand.id)}
-                            onCheckedChange={(checked) => {
-                              toggleAssignmentMutation.mutate({
-                                counterId: counter.id,
-                                brandId: brand.id,
-                                enabled: !!checked,
-                              });
-                            }}
-                            data-testid={`assign-${counter.id}-${brand.id}`}
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
     </div>
   );

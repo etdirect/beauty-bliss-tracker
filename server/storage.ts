@@ -321,6 +321,38 @@ export class PgStorage implements IStorage {
         console.log("[pg] Seed data created: 2 users, 7 POS locations, brand-POS availability");
       }
     }
+
+    // Always ensure all standard brands exist (idempotent)
+    const allBrands: { name: string; category: string }[] = [
+      { name: "Embryolisse", category: "Skincare" },
+      { name: "PHYTO", category: "Haircare" },
+      { name: "Novexpert", category: "Skincare" },
+      { name: "TALIKA", category: "Skincare" },
+      { name: "SAMPAR", category: "Skincare" },
+      { name: "Klorane", category: "Haircare" },
+      { name: "LADOR", category: "Haircare" },
+      { name: "PESTLO", category: "Skincare" },
+      { name: "Neutraderm", category: "Skincare" },
+      { name: "GESKE", category: "Others" },
+      { name: "ASDceuticals", category: "Skincare" },
+      { name: "elvis+elvin", category: "Skincare" },
+      { name: "Adopt", category: "Body Care" },
+      { name: "XPOSOME", category: "Skincare" },
+      { name: "Addmino18", category: "Haircare" },
+      { name: "Colorgram", category: "Makeup" },
+      { name: "Wakemake", category: "Makeup" },
+      { name: "Pyunkang Yul", category: "Skincare" },
+    ];
+    const { rows: existingBrands } = await this.q("SELECT name FROM brands");
+    const existingNames = new Set(existingBrands.map((r: any) => r.name.toLowerCase()));
+    let brandsAdded = 0;
+    for (const b of allBrands) {
+      if (!existingNames.has(b.name.toLowerCase())) {
+        await this.q("INSERT INTO brands (id, name, category, is_active) VALUES ($1,$2,$3,$4)", [randomUUID(), b.name, b.category, true]);
+        brandsAdded++;
+      }
+    }
+    if (brandsAdded > 0) console.log(`[pg] Added ${brandsAdded} missing brands`);
   }
 
   // ── Row mappers ──
