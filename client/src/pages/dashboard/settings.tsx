@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound } from "lucide-react";
+import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X } from "lucide-react";
 
 interface SafeUser {
   id: string;
@@ -33,6 +33,12 @@ export default function SettingsPage() {
   const [newPosSalesChannel, setNewPosSalesChannel] = useState("");
   const [newPosStoreCode, setNewPosStoreCode] = useState("");
   const [newPosStoreName, setNewPosStoreName] = useState("");
+
+  // POS edit state
+  const [editingPosId, setEditingPosId] = useState<string | null>(null);
+  const [editPosSalesChannel, setEditPosSalesChannel] = useState("");
+  const [editPosStoreCode, setEditPosStoreCode] = useState("");
+  const [editPosStoreName, setEditPosStoreName] = useState("");
 
   // User form
   const [newUserUsername, setNewUserUsername] = useState("");
@@ -87,6 +93,19 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/pos-locations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/counters"] });
     },
+  });
+
+  const editPosMutation = useMutation({
+    mutationFn: async ({ id, salesChannel, storeCode, storeName }: { id: string; salesChannel: string; storeCode: string; storeName: string }) => {
+      await apiRequest("PATCH", `/api/pos-locations/${id}`, { salesChannel, storeCode, storeName });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pos-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/counters"] });
+      setEditingPosId(null);
+      toast({ title: "POS Location updated" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
 
   // === User mutations ===
@@ -288,24 +307,54 @@ export default function SettingsPage() {
             <CardContent>
               <div className="space-y-2">
                 {posLocations.map(pos => (
-                  <div key={pos.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <MapPin className="w-4 h-4 text-muted-foreground" />
-                      <Badge variant="secondary" className="text-xs">{pos.salesChannel}</Badge>
-                      <Badge variant="outline" className="text-xs">{pos.storeCode}</Badge>
-                      <span className={`text-sm ${pos.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
-                        {pos.storeName}
-                      </span>
-                      {!pos.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => togglePosMutation.mutate({ id: pos.id, isActive: !pos.isActive })}
-                      className="text-xs"
-                    >
-                      {pos.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
-                    </Button>
+                  <div key={pos.id} className="flex items-center justify-between py-2 border-b last:border-0 gap-2">
+                    {editingPosId === pos.id ? (
+                      /* Edit mode */
+                      <>
+                        <div className="flex items-center gap-2 flex-1 flex-wrap">
+                          <Input className="w-[120px] h-8 text-sm" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Sales Channel" />
+                          <Input className="w-[70px] h-8 text-sm" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Code" />
+                          <Input className="flex-1 min-w-[180px] h-8 text-sm" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Store Name" />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            if (editPosSalesChannel && editPosStoreCode && editPosStoreName) {
+                              editPosMutation.mutate({ id: pos.id, salesChannel: editPosSalesChannel, storeCode: editPosStoreCode, storeName: editPosStoreName });
+                            }
+                          }}><Check className="w-4 h-4 text-green-600" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingPosId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
+                        </div>
+                      </>
+                    ) : (
+                      /* View mode */
+                      <>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <MapPin className="w-4 h-4 text-muted-foreground" />
+                          <Badge variant="secondary" className="text-xs">{pos.salesChannel}</Badge>
+                          <Badge variant="outline" className="text-xs">{pos.storeCode}</Badge>
+                          <span className={`text-sm ${pos.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
+                            {pos.storeName}
+                          </span>
+                          {!pos.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            setEditingPosId(pos.id);
+                            setEditPosSalesChannel(pos.salesChannel);
+                            setEditPosStoreCode(pos.storeCode);
+                            setEditPosStoreName(pos.storeName);
+                          }}><Pencil className="w-3.5 h-3.5" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => togglePosMutation.mutate({ id: pos.id, isActive: !pos.isActive })}
+                            className="text-xs"
+                          >
+                            {pos.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
