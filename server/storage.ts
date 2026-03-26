@@ -169,7 +169,6 @@ export class PgStorage implements IStorage {
         gwp_count INTEGER NOT NULL DEFAULT 0
       );
       ALTER TABLE sales_entries ADD COLUMN IF NOT EXISTS orders INTEGER NOT NULL DEFAULT 0;
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_entries_upsert ON sales_entries (counter_id, brand_id, date);
       CREATE TABLE IF NOT EXISTS promotions (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         name TEXT NOT NULL,
@@ -262,6 +261,20 @@ export class PgStorage implements IStorage {
       );
     `);
     console.log("[pg] Tables ensured");
+
+    // Ensure unique index on sales_entries for bulk upserts
+    try {
+      // Remove duplicates first (keep the latest inserted row for each counter+brand+date)
+      await this.q(`
+        DELETE FROM sales_entries a USING sales_entries b
+        WHERE a.counter_id = b.counter_id AND a.brand_id = b.brand_id AND a.date = b.date
+          AND a.id < b.id
+      `);
+      await this.q(`CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_entries_upsert ON sales_entries (counter_id, brand_id, date)`);
+      console.log("[pg] Unique index on sales_entries ensured");
+    } catch (err) {
+      console.error("[pg] Failed to create unique index on sales_entries:", err);
+    }
 
     // Seed default management user if users table is empty
     const { rows: existingUsers } = await this.q("SELECT id FROM users LIMIT 1");
