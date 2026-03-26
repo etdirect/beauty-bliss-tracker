@@ -230,7 +230,7 @@ export default function BAEntry() {
                 </SelectTrigger>
                 <SelectContent>
                   {availablePos.map(pos => (
-                    <SelectItem key={pos.id} value={pos.id}>{pos.storeName}</SelectItem>
+                    <SelectItem key={pos.id} value={pos.id}>{pos.salesChannel} — {pos.storeName}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
