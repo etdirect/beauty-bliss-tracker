@@ -136,23 +136,33 @@ export async function registerRoutes(
   });
 
   app.post("/api/users", requireManagement, async (req, res) => {
-    const { username, pin, name, role } = req.body;
-    if (!username || !pin || !name) {
-      return res.status(400).json({ error: "username, pin, name required" });
+    try {
+      const { username, pin, name, role } = req.body;
+      if (!username || !pin || !name) {
+        return res.status(400).json({ error: "username, pin, name required" });
+      }
+      const hashed = await bcrypt.hash(pin, 10);
+      const user = await storage.createUser({ username, pin: hashed, name, role: role || "ba", isActive: true });
+      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
+    } catch (err: any) {
+      const msg = err.message?.includes("unique") || err.message?.includes("UNIQUE") ? "Username already exists" : err.message;
+      res.status(400).json({ error: msg });
     }
-    const hashed = await bcrypt.hash(pin, 10);
-    const user = await storage.createUser({ username, pin: hashed, name, role: role || "ba", isActive: true });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
   });
 
   app.patch("/api/users/:id", requireManagement, async (req, res) => {
-    const updates: any = { ...req.body };
-    if (updates.pin) {
-      updates.pin = await bcrypt.hash(updates.pin, 10);
+    try {
+      const updates: any = { ...req.body };
+      if (updates.pin) {
+        updates.pin = await bcrypt.hash(updates.pin, 10);
+      }
+      const user = await storage.updateUser(req.params.id as string, updates);
+      if (!user) return res.status(404).json({ error: "Not found" });
+      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
+    } catch (err: any) {
+      const msg = err.message?.includes("unique") || err.message?.includes("UNIQUE") ? "Username already exists" : err.message;
+      res.status(400).json({ error: msg });
     }
-    const user = await storage.updateUser(req.params.id as string, updates);
-    if (!user) return res.status(404).json({ error: "Not found" });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
   });
 
   // === USER-POS ASSIGNMENTS ===
