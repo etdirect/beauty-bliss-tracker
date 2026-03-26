@@ -452,16 +452,31 @@ export default function SettingsPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Manage Users</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {users.map(user => {
-                  // Sort POS for Option B: by channel then code
-                  const sortedPos = [...activePos].sort((a, b) => {
-                    const ch = a.salesChannel.localeCompare(b.salesChannel);
-                    return ch !== 0 ? ch : a.storeCode.localeCompare(b.storeCode);
-                  });
-                  return (
-                  <div key={user.id} className="border rounded-md p-3 space-y-2">
+            <CardContent className="p-0">
+              {(() => {
+                // Sort: management first, then BA; within each group sort by name
+                const sorted = [...users].sort((a, b) => {
+                  if (a.role !== b.role) return a.role === "management" ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                });
+                const groups = [
+                  { label: "Management", items: sorted.filter(u => u.role === "management") },
+                  { label: "Beauty Advisors", items: sorted.filter(u => u.role === "ba") },
+                ].filter(g => g.items.length > 0);
+                // Sort POS once for all users
+                const sortedPos = [...activePos].sort((a, b) => {
+                  const ch = a.salesChannel.localeCompare(b.salesChannel);
+                  return ch !== 0 ? ch : a.storeCode.localeCompare(b.storeCode);
+                });
+                return groups.map(group => (
+                  <div key={group.label}>
+                    <div className="px-4 py-2 bg-muted/50 border-b">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</span>
+                      <span className="text-xs text-muted-foreground ml-2">({group.items.length})</span>
+                    </div>
+                    <div className="divide-y">
+                {group.items.map(user => (
+                  <div key={user.id} className="px-4 py-3 space-y-2">
                     {editingUserId === user.id ? (
                       /* Edit mode */
                       <>
@@ -487,16 +502,15 @@ export default function SettingsPage() {
                     ) : (
                       /* View mode */
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                        <div className="grid grid-cols-[16px_120px_100px_auto] gap-2 items-center">
                           <Users className="w-4 h-4 text-muted-foreground" />
-                          <span className={`text-sm ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
+                          <span className={`text-sm truncate ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
                             {user.name}
                           </span>
-                          <Badge variant="outline" className="text-xs">@{user.username}</Badge>
-                          <Badge variant={user.role === "management" ? "default" : "secondary"} className="text-xs">
-                            {user.role}
-                          </Badge>
-                          {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                          <Badge variant="outline" className="text-xs justify-center">@{user.username}</Badge>
+                          <span>
+                            {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                          </span>
                         </div>
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
@@ -575,9 +589,11 @@ export default function SettingsPage() {
                       </div>
                     )}
                   </div>
-                  );
-                })}
-              </div>
+                ))}
+                    </div>
+                  </div>
+                ));
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
