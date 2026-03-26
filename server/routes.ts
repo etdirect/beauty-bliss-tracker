@@ -336,5 +336,54 @@ export async function registerRoutes(
     res.json(results);
   });
 
+  // === BULK SALES IMPORT (management only) ===
+  app.post("/api/sales/import", requireManagement, async (req, res) => {
+    try {
+      const { records } = req.body;
+      if (!Array.isArray(records)) return res.status(400).json({ error: "records array required" });
+
+      const posLocations = await storage.getPosLocations();
+      const brands = await storage.getBrands();
+      let imported = 0;
+      let skipped = 0;
+      const missingPos: string[] = [];
+
+      for (const rec of records) {
+        const { date, salesChannel, posCode, brandName, amount, orders, units } = rec;
+        if (!date || !posCode || !brandName) { skipped++; continue; }
+
+        // Find POS by channel + code
+        const channel = salesChannel || "LOGON";
+        let pos = posLocations.find(p => p.salesChannel.toUpperCase() === channel.toUpperCase() && p.storeCode.toUpperCase() === posCode.toUpperCase());
+
+        // Create POS if not found
+        if (!pos) {
+          if (!missingPos.includes(`${channel}/${posCode}`)) missingPos.push(`${channel}/${posCode}`);
+          pos = await storage.createPosLocation({ salesChannel: channel, storeCode: posCode, storeName: `${channel} ${posCode} (auto-created)`, isActive: false });
+          posLocations.push(pos); // add to local cache
+        }
+
+        // Find brand
+        const brand = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
+        if (!brand) { skipped++; continue; }
+
+        await storage.upsertSalesEntry({
+          counterId: pos.id,
+          brandId: brand.id,
+          date,
+          orders: orders ?? 0,
+          units: units ?? 0,
+          amount: amount ?? 0,
+          gwpCount: 0,
+        });
+        imported++;
+      }
+
+      res.json({ imported, skipped, missingPos, total: records.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return httpServer;
 }
