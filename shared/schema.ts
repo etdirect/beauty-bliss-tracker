@@ -1,0 +1,134 @@
+import { pgTable, text, varchar, integer, boolean, real } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+
+// Counters (points of sale)
+export const counters = pgTable("counters", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const insertCounterSchema = createInsertSchema(counters).omit({ id: true });
+export type InsertCounter = z.infer<typeof insertCounterSchema>;
+export type Counter = typeof counters.$inferSelect;
+
+// Brands
+export const brands = pgTable("brands", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  category: text("category").notNull(), // "Skincare" | "Haircare" | "Body Care" | "Others"
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const insertBrandSchema = createInsertSchema(brands).omit({ id: true });
+export type InsertBrand = z.infer<typeof insertBrandSchema>;
+export type Brand = typeof brands.$inferSelect;
+
+// Counter-Brand assignments
+export const counterBrands = pgTable("counter_brands", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  counterId: varchar("counter_id").notNull(),
+  brandId: varchar("brand_id").notNull(),
+});
+
+export const insertCounterBrandSchema = createInsertSchema(counterBrands).omit({ id: true });
+export type InsertCounterBrand = z.infer<typeof insertCounterBrandSchema>;
+export type CounterBrand = typeof counterBrands.$inferSelect;
+
+// Daily Sales Entries
+export const salesEntries = pgTable("sales_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  counterId: varchar("counter_id").notNull(),
+  brandId: varchar("brand_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  units: integer("units").notNull().default(0),
+  amount: real("amount").notNull().default(0),
+  gwpCount: integer("gwp_count").notNull().default(0),
+});
+
+export const insertSalesEntrySchema = createInsertSchema(salesEntries).omit({ id: true });
+export type InsertSalesEntry = z.infer<typeof insertSalesEntrySchema>;
+export type SalesEntry = typeof salesEntries.$inferSelect;
+
+// Promotions (expanded with Microsoft List fields)
+export const promotions = pgTable("promotions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  brandId: varchar("brand_id"), // nullable for cross-brand
+  type: text("type").notNull(), // "GWP" | "Discount" | "Bundle" | "Multi-Buy" | "PWP" | "Spend & Get" | "Other"
+  description: text("description").notNull(),
+  startDate: text("start_date").notNull(), // YYYY-MM-DD
+  endDate: text("end_date").notNull(), // YYYY-MM-DD
+  isActive: boolean("is_active").notNull().default(true),
+  // Microsoft List fields
+  shopLocation: text("shop_location"),
+  mechanics: text("mechanics"),
+  promoAppliesTo: text("promo_applies_to"), // "Brand-wide" | "Specific SKUs"
+  applicableProducts: text("applicable_products"),
+  exclusions: text("exclusions"),
+  discountPercentage: real("discount_percentage"),
+  discountFixedAmount: real("discount_fixed_amount"),
+  gwpItem: text("gwp_item"),
+  gwpValue: real("gwp_value"),
+  gwpQty: integer("gwp_qty"),
+  pwpItem: text("pwp_item"),
+  pwpPrice: real("pwp_price"),
+  pwpDiscountPercentage: real("pwp_discount_percentage"),
+  bundlePromoPrice: real("bundle_promo_price"),
+  multiBuyBuyQty: integer("multi_buy_buy_qty"),
+  multiBuyGetQty: integer("multi_buy_get_qty"),
+  multiBuyGetType: text("multi_buy_get_type"),
+  multiBuyFixedPrice: real("multi_buy_fixed_price"),
+  spendGetSpendAmount: real("spend_get_spend_amount"),
+  spendGetDiscountAmount: real("spend_get_discount_amount"),
+  conditionMinimumSpend: real("condition_minimum_spend"),
+  conditionMinimumQty: integer("condition_minimum_qty"),
+  conditionRequiredItems: text("condition_required_items"),
+  conditionOther: text("condition_other"),
+  referenceOriginalPrice: real("reference_original_price"),
+  referencePromoPrice: real("reference_promo_price"),
+  remarks: text("remarks"),
+  enteredBy: text("entered_by"),
+  dateEntered: text("date_entered"),
+  sourceListId: text("source_list_id"),
+  lastSyncedAt: text("last_synced_at"),
+});
+
+export const insertPromotionSchema = createInsertSchema(promotions).omit({ id: true });
+export type InsertPromotion = z.infer<typeof insertPromotionSchema>;
+export type Promotion = typeof promotions.$inferSelect;
+
+// Promotion daily results per counter
+export const promotionResults = pgTable("promotion_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull(),
+  counterId: varchar("counter_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  gwpGiven: integer("gwp_given").notNull().default(0),
+  notes: text("notes"),
+});
+
+export const insertPromotionResultSchema = createInsertSchema(promotionResults).omit({ id: true });
+export type InsertPromotionResult = z.infer<typeof insertPromotionResultSchema>;
+export type PromotionResult = typeof promotionResults.$inferSelect;
+
+// Batch submission schema for BA entry
+export const batchSalesSubmissionSchema = z.object({
+  counterId: z.string(),
+  date: z.string(),
+  entries: z.array(z.object({
+    brandId: z.string(),
+    units: z.number().min(0),
+    amount: z.number().min(0),
+    gwpCount: z.number().min(0).default(0),
+  })),
+  promotionResults: z.array(z.object({
+    promotionId: z.string(),
+    gwpGiven: z.number().min(0),
+    notes: z.string().optional(),
+  })).optional(),
+});
+
+export type BatchSalesSubmission = z.infer<typeof batchSalesSubmissionSchema>;
