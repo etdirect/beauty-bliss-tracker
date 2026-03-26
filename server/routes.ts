@@ -400,8 +400,15 @@ export async function registerRoutes(
         });
       }
 
-      // Phase 2: bulk upsert all entries in a single transaction
-      const imported = await storage.bulkUpsertSalesEntries(entriesToUpsert);
+      // Phase 2: deduplicate entries (last wins for same counter+brand+date)
+      const deduped = new Map<string, typeof entriesToUpsert[0]>();
+      for (const e of entriesToUpsert) {
+        deduped.set(`${e.counterId}|${e.brandId}|${e.date}`, e);
+      }
+      const uniqueEntries = Array.from(deduped.values());
+
+      // Phase 3: bulk upsert all entries
+      const imported = await storage.bulkUpsertSalesEntries(uniqueEntries);
 
       res.json({ imported, skipped, missingPos, missingBrands, total: records.length });
     } catch (err: any) {
