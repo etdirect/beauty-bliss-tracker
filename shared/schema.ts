@@ -92,6 +92,7 @@ export const salesEntries = pgTable("sales_entries", {
   counterId: varchar("counter_id").notNull(),
   brandId: varchar("brand_id").notNull(),
   date: text("date").notNull(), // YYYY-MM-DD
+  orders: integer("orders").notNull().default(0),
   units: integer("units").notNull().default(0),
   amount: real("amount").notNull().default(0),
   gwpCount: integer("gwp_count").notNull().default(0),
@@ -173,6 +174,7 @@ export const batchSalesSubmissionSchema = z.object({
   date: z.string(),
   entries: z.array(z.object({
     brandId: z.string(),
+    orders: z.number().min(0).default(0),
     units: z.number().min(0),
     amount: z.number().min(0),
     gwpCount: z.number().min(0).default(0),

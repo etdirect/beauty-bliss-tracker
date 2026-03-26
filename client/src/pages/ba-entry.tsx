@@ -30,7 +30,7 @@ export default function BAEntry() {
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split("T")[0]
   );
-  const [salesData, setSalesData] = useState<Record<string, { units: number; amount: number; gwpCount: number }>>({});
+  const [salesData, setSalesData] = useState<Record<string, { orders: number; units: number; amount: number; gwpCount: number }>>({});
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});
   const [submitted, setSubmitted] = useState(false);
 
@@ -86,11 +86,12 @@ export default function BAEntry() {
       const entries = availableBrands
         .map(b => ({
           brandId: b.id,
+          orders: salesData[b.id]?.orders || 0,
           units: salesData[b.id]?.units || 0,
           amount: salesData[b.id]?.amount || 0,
           gwpCount: salesData[b.id]?.gwpCount || 0,
         }))
-        .filter(e => e.units > 0 || e.amount > 0);
+        .filter(e => e.orders > 0 || e.units > 0 || e.amount > 0);
 
       const promotionResults = activePromotions
         .filter(p => promoData[p.id]?.gwpGiven > 0)
@@ -117,10 +118,10 @@ export default function BAEntry() {
     },
   });
 
-  const updateSales = (brandId: string, field: "units" | "amount" | "gwpCount", value: number) => {
+  const updateSales = (brandId: string, field: "orders" | "units" | "amount" | "gwpCount", value: number) => {
     setSalesData(prev => ({
       ...prev,
-      [brandId]: { ...prev[brandId], units: prev[brandId]?.units || 0, amount: prev[brandId]?.amount || 0, gwpCount: prev[brandId]?.gwpCount || 0, [field]: value },
+      [brandId]: { ...prev[brandId], orders: prev[brandId]?.orders || 0, units: prev[brandId]?.units || 0, amount: prev[brandId]?.amount || 0, gwpCount: prev[brandId]?.gwpCount || 0, [field]: value },
     }));
   };
 
@@ -137,6 +138,7 @@ export default function BAEntry() {
     setSubmitted(false);
   };
 
+  const totalOrders = Object.values(salesData).reduce((sum, d) => sum + (d.orders || 0), 0);
   const totalUnits = Object.values(salesData).reduce((sum, d) => sum + (d.units || 0), 0);
   const totalAmount = Object.values(salesData).reduce((sum, d) => sum + (d.amount || 0), 0);
 
@@ -170,7 +172,7 @@ export default function BAEntry() {
             </div>
             <h2 className="text-xl font-semibold">Sales Submitted</h2>
             <p className="text-muted-foreground text-sm">
-              {totalUnits} units / HK${totalAmount.toLocaleString()} recorded for {selectedDate}
+              {totalOrders} orders / {totalUnits} units / HK${totalAmount.toLocaleString()} recorded for {selectedDate}
             </p>
             <Button onClick={handleReset} className="mt-4">
               Enter More Sales
@@ -345,7 +347,19 @@ export default function BAEntry() {
                           </Badge>
                         )}
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Orders</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            className="h-9 tabular-nums"
+                            value={salesData[brand.id]?.orders || ""}
+                            onChange={(e) => updateSales(brand.id, "orders", parseInt(e.target.value) || 0)}
+                            placeholder="0"
+                            data-testid={`input-orders-${brand.id}`}
+                          />
+                        </div>
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground">Units</label>
                           <Input
@@ -394,14 +408,14 @@ export default function BAEntry() {
           <div className="max-w-lg mx-auto">
             <div className="flex items-center justify-between mb-2 text-sm tabular-nums">
               <span className="text-muted-foreground">
-                {totalUnits} unit{totalUnits !== 1 ? "s" : ""} / HK${totalAmount.toLocaleString()}
+                {totalOrders} order{totalOrders !== 1 ? "s" : ""} / {totalUnits} unit{totalUnits !== 1 ? "s" : ""} / HK${totalAmount.toLocaleString()}
               </span>
               <span className="text-xs text-muted-foreground">{selectedDate}</span>
             </div>
             <Button
               className="w-full h-12 text-base font-semibold"
               onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending || totalUnits === 0}
+              disabled={submitMutation.isPending || (totalOrders === 0 && totalUnits === 0 && totalAmount === 0)}
               data-testid="button-submit"
             >
               {submitMutation.isPending ? "Submitting..." : "Submit Sales"}
