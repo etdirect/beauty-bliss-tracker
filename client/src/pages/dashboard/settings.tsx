@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -304,60 +304,77 @@ export default function SettingsPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">Manage POS Locations</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {posLocations.map(pos => (
-                  <div key={pos.id} className="flex items-center justify-between py-2 border-b last:border-0 gap-2">
-                    {editingPosId === pos.id ? (
-                      /* Edit mode */
-                      <>
-                        <div className="flex items-center gap-2 flex-1 flex-wrap">
-                          <Input className="w-[120px] h-8 text-sm" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Sales Channel" />
-                          <Input className="w-[70px] h-8 text-sm" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Code" />
-                          <Input className="flex-1 min-w-[180px] h-8 text-sm" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Store Name" />
+            <CardContent className="p-0">
+              {(() => {
+                // Group by sales channel, sort channels alphabetically, then store codes within each
+                const sorted = [...posLocations].sort((a, b) => {
+                  const ch = a.salesChannel.localeCompare(b.salesChannel);
+                  if (ch !== 0) return ch;
+                  return a.storeCode.localeCompare(b.storeCode);
+                });
+                const groups: Record<string, typeof posLocations> = {};
+                for (const pos of sorted) {
+                  if (!groups[pos.salesChannel]) groups[pos.salesChannel] = [];
+                  groups[pos.salesChannel].push(pos);
+                }
+                return Object.entries(groups).map(([channel, items]) => (
+                  <div key={channel}>
+                    <div className="px-4 py-2 bg-muted/50 border-b">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{channel}</span>
+                      <span className="text-xs text-muted-foreground ml-2">({items.length})</span>
+                    </div>
+                    <div className="divide-y">
+                      {items.map(pos => (
+                        <div key={pos.id} className="flex items-center px-4 py-2.5 gap-2">
+                          {editingPosId === pos.id ? (
+                            <>
+                              <div className="grid grid-cols-[100px_60px_1fr] gap-2 flex-1">
+                                <Input className="h-8 text-sm" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Channel" />
+                                <Input className="h-8 text-sm" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Code" />
+                                <Input className="h-8 text-sm" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Store Name" />
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                                  if (editPosSalesChannel && editPosStoreCode && editPosStoreName) {
+                                    editPosMutation.mutate({ id: pos.id, salesChannel: editPosSalesChannel, storeCode: editPosStoreCode, storeName: editPosStoreName });
+                                  }
+                                }}><Check className="w-4 h-4 text-green-600" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingPosId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-[60px_1fr] gap-3 flex-1 items-center">
+                                <Badge variant="outline" className="text-xs justify-center">{pos.storeCode}</Badge>
+                                <span className={`text-sm ${pos.isActive ? "" : "text-muted-foreground line-through"}`}>
+                                  {pos.storeName}
+                                  {!pos.isActive && <Badge variant="secondary" className="text-[10px] ml-2">Inactive</Badge>}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                                  setEditingPosId(pos.id);
+                                  setEditPosSalesChannel(pos.salesChannel);
+                                  setEditPosStoreCode(pos.storeCode);
+                                  setEditPosStoreName(pos.storeName);
+                                }}><Pencil className="w-3.5 h-3.5" /></Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => togglePosMutation.mutate({ id: pos.id, isActive: !pos.isActive })}
+                                  className="text-xs"
+                                >
+                                  {pos.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
+                                </Button>
+                              </div>
+                            </>
+                          )}
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-                            if (editPosSalesChannel && editPosStoreCode && editPosStoreName) {
-                              editPosMutation.mutate({ id: pos.id, salesChannel: editPosSalesChannel, storeCode: editPosStoreCode, storeName: editPosStoreName });
-                            }
-                          }}><Check className="w-4 h-4 text-green-600" /></Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingPosId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
-                        </div>
-                      </>
-                    ) : (
-                      /* View mode */
-                      <>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <MapPin className="w-4 h-4 text-muted-foreground" />
-                          <Badge variant="secondary" className="text-xs">{pos.salesChannel}</Badge>
-                          <Badge variant="outline" className="text-xs">{pos.storeCode}</Badge>
-                          <span className={`text-sm ${pos.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
-                            {pos.storeName}
-                          </span>
-                          {!pos.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-                            setEditingPosId(pos.id);
-                            setEditPosSalesChannel(pos.salesChannel);
-                            setEditPosStoreCode(pos.storeCode);
-                            setEditPosStoreName(pos.storeName);
-                          }}><Pencil className="w-3.5 h-3.5" /></Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => togglePosMutation.mutate({ id: pos.id, isActive: !pos.isActive })}
-                            className="text-xs"
-                          >
-                            {pos.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
-                          </Button>
-                        </div>
-                      </>
-                    )}
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </div>
+                ));
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
