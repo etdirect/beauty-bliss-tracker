@@ -39,6 +39,7 @@ export interface IStorage {
   createSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
   upsertSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
   submitBatchSales(submission: BatchSalesSubmission): Promise<void>;
+  deleteSalesEntry(id: string): Promise<void>;
 
   // Promotions
   getPromotions(): Promise<Promotion[]>;
@@ -540,6 +541,9 @@ export class PgStorage implements IStorage {
       }
     }
   }
+  async deleteSalesEntry(id: string): Promise<void> {
+    await this.q("DELETE FROM sales_entries WHERE id=$1", [id]);
+  }
 
   // ── Promotions ──
   async getPromotions(): Promise<Promotion[]> {
@@ -941,6 +945,7 @@ export class MemStorage implements IStorage {
       }
     }
   }
+  async deleteSalesEntry(id: string): Promise<void> { this.salesEntries.delete(id); }
 
   async getPromotions(): Promise<Promotion[]> { return Array.from(this.promotions.values()); }
   async getPromotion(id: string): Promise<Promotion | undefined> { return this.promotions.get(id); }

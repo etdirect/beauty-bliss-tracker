@@ -336,6 +336,22 @@ export async function registerRoutes(
     res.json(results);
   });
 
+  // === DELETE SALES BY DATE RANGE (management only) ===
+  app.delete("/api/sales", requireManagement, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      if (!startDate || !endDate) return res.status(400).json({ error: "startDate and endDate required" });
+      // Get entries in range then delete each
+      const entries = await storage.getSalesEntries({ startDate, endDate });
+      for (const e of entries) {
+        await storage.deleteSalesEntry(e.id);
+      }
+      res.json({ deleted: entries.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === BULK SALES IMPORT (management only) ===
   app.post("/api/sales/import", requireManagement, async (req, res) => {
     try {
