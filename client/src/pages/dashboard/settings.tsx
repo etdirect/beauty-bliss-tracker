@@ -601,43 +601,78 @@ export default function SettingsPage() {
               <p className="text-xs text-muted-foreground">Check which brands are available at each POS location</p>
             </CardHeader>
             <CardContent className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-2 pr-3 font-medium text-muted-foreground sticky left-0 bg-card">Brand</th>
-                    {activePos.map(pos => (
-                      <th key={pos.id} className="text-center py-2 px-1 font-medium text-muted-foreground whitespace-nowrap">
-                        {pos.storeCode}
-                        <div className="text-[10px] font-normal">{pos.salesChannel}</div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeBrands.map(brand => (
-                    <tr key={brand.id} className="border-b last:border-0">
-                      <td className="py-2 pr-3 font-medium sticky left-0 bg-card whitespace-nowrap">
-                        {brand.name}
-                      </td>
-                      {activePos.map(pos => (
-                        <td key={pos.id} className="text-center py-2 px-1">
-                          <Checkbox
-                            checked={isBrandPosAvailable(brand.id, pos.id)}
-                            onCheckedChange={(checked) => {
-                              toggleBrandPosMutation.mutate({
-                                brandId: brand.id,
-                                posId: pos.id,
-                                enabled: !!checked,
-                              });
-                            }}
-                            data-testid={`brand-pos-${brand.id}-${pos.id}`}
-                          />
-                        </td>
+              {(() => {
+                // Sort POS by channel then code, group by channel
+                const sorted = [...activePos].sort((a, b) => {
+                  const ch = a.salesChannel.localeCompare(b.salesChannel);
+                  return ch !== 0 ? ch : a.storeCode.localeCompare(b.storeCode);
+                });
+                const channelGroups: { channel: string; items: typeof activePos }[] = [];
+                for (const pos of sorted) {
+                  const last = channelGroups[channelGroups.length - 1];
+                  if (last && last.channel === pos.salesChannel) {
+                    last.items.push(pos);
+                  } else {
+                    channelGroups.push({ channel: pos.salesChannel, items: [pos] });
+                  }
+                }
+                const channelColors: Record<string, string> = {
+                  "AEON": "bg-blue-50 dark:bg-blue-950/30",
+                  "FACESSS": "bg-purple-50 dark:bg-purple-950/30",
+                  "LOGON": "bg-amber-50 dark:bg-amber-950/30",
+                  "SOGO": "bg-green-50 dark:bg-green-950/30",
+                };
+                return (
+                  <table className="w-full text-xs">
+                    <thead>
+                      {/* Channel group header row */}
+                      <tr>
+                        <th className="sticky left-0 bg-card z-10"></th>
+                        {channelGroups.map(g => (
+                          <th key={g.channel} colSpan={g.items.length}
+                            className={`text-center py-1.5 text-[10px] font-semibold uppercase tracking-wider border-b ${channelColors[g.channel] || "bg-muted/30"}`}>
+                            {g.channel}
+                          </th>
+                        ))}
+                      </tr>
+                      {/* Store code row */}
+                      <tr className="border-b">
+                        <th className="text-left py-2 pr-3 font-medium text-muted-foreground sticky left-0 bg-card z-10">Brand</th>
+                        {sorted.map(pos => (
+                          <th key={pos.id} className="text-center py-2 px-1.5 font-medium text-muted-foreground whitespace-nowrap min-w-[44px]">
+                            {pos.storeCode}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeBrands.map(brand => (
+                        <tr key={brand.id} className="border-b last:border-0 hover:bg-muted/20">
+                          <td className="py-2 pr-3 font-medium sticky left-0 bg-card z-10 whitespace-nowrap">
+                            {brand.name}
+                          </td>
+                          {sorted.map(pos => (
+                            <td key={pos.id} className="text-center py-2 px-1">
+                              <Checkbox
+                                className="h-3.5 w-3.5"
+                                checked={isBrandPosAvailable(brand.id, pos.id)}
+                                onCheckedChange={(checked) => {
+                                  toggleBrandPosMutation.mutate({
+                                    brandId: brand.id,
+                                    posId: pos.id,
+                                    enabled: !!checked,
+                                  });
+                                }}
+                                data-testid={`brand-pos-${brand.id}-${pos.id}`}
+                              />
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </tbody>
+                  </table>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
