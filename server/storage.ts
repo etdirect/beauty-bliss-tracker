@@ -6,13 +6,18 @@ import {
   type Promotion, type InsertPromotion,
   type PromotionResult, type InsertPromotionResult,
   type BatchSalesSubmission,
+  type PosLocation, type InsertPosLocation,
+  type User, type InsertUser,
+  type UserPosAssignment,
+  type BrandPosAvailability,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
 import pg from "pg";
 
 export interface IStorage {
   init(): Promise<void>;
-  // Counters
+  // Counters (legacy)
   getCounters(): Promise<Counter[]>;
   getCounter(id: string): Promise<Counter | undefined>;
   createCounter(counter: InsertCounter): Promise<Counter>;
@@ -24,7 +29,7 @@ export interface IStorage {
   createBrand(brand: InsertBrand): Promise<Brand>;
   updateBrand(id: string, data: Partial<InsertBrand>): Promise<Brand | undefined>;
 
-  // Counter-Brand assignments
+  // Counter-Brand assignments (legacy)
   getCounterBrands(): Promise<CounterBrand[]>;
   getCounterBrandsByCounter(counterId: string): Promise<CounterBrand[]>;
   setCounterBrand(counterId: string, brandId: string, enabled: boolean): Promise<void>;
@@ -47,6 +52,27 @@ export interface IStorage {
   getPromotionResults(filters?: { promotionId?: string; counterId?: string; date?: string }): Promise<PromotionResult[]>;
   createPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
   upsertPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
+
+  // POS Locations
+  getPosLocations(): Promise<PosLocation[]>;
+  getPosLocation(id: string): Promise<PosLocation | undefined>;
+  createPosLocation(data: InsertPosLocation): Promise<PosLocation>;
+  updatePosLocation(id: string, data: Partial<InsertPosLocation>): Promise<PosLocation | undefined>;
+
+  // Users
+  getUsers(): Promise<User[]>;
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(data: InsertUser): Promise<User>;
+  updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
+
+  // User-POS Assignments
+  getUserPosAssignments(userId?: string): Promise<UserPosAssignment[]>;
+  setUserPosAssignment(userId: string, posId: string, enabled: boolean): Promise<void>;
+
+  // Brand-POS Availability
+  getBrandPosAvailability(posId?: string): Promise<BrandPosAvailability[]>;
+  setBrandPosAvailability(brandId: string, posId: string, enabled: boolean): Promise<void>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -198,6 +224,38 @@ export class PgStorage implements IStorage {
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS source_scenario_id TEXT`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS promotion_layer TEXT`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS trackable BOOLEAN NOT NULL DEFAULT false`);
+
+    // NEW tables for auth + POS restructure
+    await this.q(`
+      CREATE TABLE IF NOT EXISTS pos_locations (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        sales_channel TEXT NOT NULL,
+        store_code TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        UNIQUE(sales_channel, store_code)
+      );
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        username TEXT NOT NULL UNIQUE,
+        pin TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'ba',
+        is_active BOOLEAN NOT NULL DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS user_pos_assignments (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        pos_id TEXT NOT NULL REFERENCES pos_locations(id),
+        UNIQUE(user_id, pos_id)
+      );
+      CREATE TABLE IF NOT EXISTS brand_pos_availability (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        brand_id TEXT NOT NULL REFERENCES brands(id),
+        pos_id TEXT NOT NULL REFERENCES pos_locations(id),
+        UNIQUE(brand_id, pos_id)
+      );
+    `);
     console.log("[pg] Tables ensured");
   }
 
@@ -245,6 +303,18 @@ export class PgStorage implements IStorage {
   }
   private mapPromotionResult(r: any): PromotionResult {
     return { id: r.id, promotionId: r.promotion_id, counterId: r.counter_id, date: r.date, gwpGiven: Number(r.gwp_given), notes: r.notes };
+  }
+  private mapPosLocation(r: any): PosLocation {
+    return { id: r.id, salesChannel: r.sales_channel, storeCode: r.store_code, storeName: r.store_name, isActive: r.is_active };
+  }
+  private mapUser(r: any): User {
+    return { id: r.id, username: r.username, pin: r.pin, name: r.name, role: r.role, isActive: r.is_active };
+  }
+  private mapUserPosAssignment(r: any): UserPosAssignment {
+    return { id: r.id, userId: r.user_id, posId: r.pos_id };
+  }
+  private mapBrandPosAvailability(r: any): BrandPosAvailability {
+    return { id: r.id, brandId: r.brand_id, posId: r.pos_id };
   }
 
   // ── Counters ──
@@ -307,7 +377,6 @@ export class PgStorage implements IStorage {
   }
   async setCounterBrand(counterId: string, brandId: string, enabled: boolean): Promise<void> {
     if (enabled) {
-      // Check if already exists
       const { rows } = await this.q("SELECT id FROM counter_brands WHERE counter_id=$1 AND brand_id=$2", [counterId, brandId]);
       if (rows.length === 0) {
         await this.q("INSERT INTO counter_brands (id, counter_id, brand_id) VALUES ($1,$2,$3)", [randomUUID(), counterId, brandId]);
@@ -491,6 +560,103 @@ export class PgStorage implements IStorage {
     }
     return this.createPromotionResult(data);
   }
+
+  // ── POS Locations ──
+  async getPosLocations(): Promise<PosLocation[]> {
+    const { rows } = await this.q("SELECT * FROM pos_locations ORDER BY store_name");
+    return rows.map((r: any) => this.mapPosLocation(r));
+  }
+  async getPosLocation(id: string): Promise<PosLocation | undefined> {
+    const { rows } = await this.q("SELECT * FROM pos_locations WHERE id=$1", [id]);
+    return rows[0] ? this.mapPosLocation(rows[0]) : undefined;
+  }
+  async createPosLocation(data: InsertPosLocation): Promise<PosLocation> {
+    const id = randomUUID();
+    await this.q("INSERT INTO pos_locations (id, sales_channel, store_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5)", [id, data.salesChannel, data.storeCode, data.storeName, data.isActive ?? true]);
+    return { id, salesChannel: data.salesChannel, storeCode: data.storeCode, storeName: data.storeName, isActive: data.isActive ?? true };
+  }
+  async updatePosLocation(id: string, data: Partial<InsertPosLocation>): Promise<PosLocation | undefined> {
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    if (data.salesChannel !== undefined) { sets.push(`sales_channel=$${i++}`); vals.push(data.salesChannel); }
+    if (data.storeCode !== undefined) { sets.push(`store_code=$${i++}`); vals.push(data.storeCode); }
+    if (data.storeName !== undefined) { sets.push(`store_name=$${i++}`); vals.push(data.storeName); }
+    if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
+    if (sets.length === 0) return this.getPosLocation(id);
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE pos_locations SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapPosLocation(rows[0]) : undefined;
+  }
+
+  // ── Users ──
+  async getUsers(): Promise<User[]> {
+    const { rows } = await this.q("SELECT * FROM users ORDER BY name");
+    return rows.map((r: any) => this.mapUser(r));
+  }
+  async getUser(id: string): Promise<User | undefined> {
+    const { rows } = await this.q("SELECT * FROM users WHERE id=$1", [id]);
+    return rows[0] ? this.mapUser(rows[0]) : undefined;
+  }
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const { rows } = await this.q("SELECT * FROM users WHERE username=$1", [username]);
+    return rows[0] ? this.mapUser(rows[0]) : undefined;
+  }
+  async createUser(data: InsertUser): Promise<User> {
+    const id = randomUUID();
+    await this.q("INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)", [id, data.username, data.pin, data.name, data.role ?? "ba", data.isActive ?? true]);
+    return { id, username: data.username, pin: data.pin, name: data.name, role: data.role ?? "ba", isActive: data.isActive ?? true };
+  }
+  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    if (data.username !== undefined) { sets.push(`username=$${i++}`); vals.push(data.username); }
+    if (data.pin !== undefined) { sets.push(`pin=$${i++}`); vals.push(data.pin); }
+    if (data.name !== undefined) { sets.push(`name=$${i++}`); vals.push(data.name); }
+    if (data.role !== undefined) { sets.push(`role=$${i++}`); vals.push(data.role); }
+    if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
+    if (sets.length === 0) return this.getUser(id);
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE users SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapUser(rows[0]) : undefined;
+  }
+
+  // ── User-POS Assignments ──
+  async getUserPosAssignments(userId?: string): Promise<UserPosAssignment[]> {
+    if (userId) {
+      const { rows } = await this.q("SELECT * FROM user_pos_assignments WHERE user_id=$1", [userId]);
+      return rows.map((r: any) => this.mapUserPosAssignment(r));
+    }
+    const { rows } = await this.q("SELECT * FROM user_pos_assignments");
+    return rows.map((r: any) => this.mapUserPosAssignment(r));
+  }
+  async setUserPosAssignment(userId: string, posId: string, enabled: boolean): Promise<void> {
+    if (enabled) {
+      const { rows } = await this.q("SELECT id FROM user_pos_assignments WHERE user_id=$1 AND pos_id=$2", [userId, posId]);
+      if (rows.length === 0) {
+        await this.q("INSERT INTO user_pos_assignments (id, user_id, pos_id) VALUES ($1,$2,$3)", [randomUUID(), userId, posId]);
+      }
+    } else {
+      await this.q("DELETE FROM user_pos_assignments WHERE user_id=$1 AND pos_id=$2", [userId, posId]);
+    }
+  }
+
+  // ── Brand-POS Availability ──
+  async getBrandPosAvailability(posId?: string): Promise<BrandPosAvailability[]> {
+    if (posId) {
+      const { rows } = await this.q("SELECT * FROM brand_pos_availability WHERE pos_id=$1", [posId]);
+      return rows.map((r: any) => this.mapBrandPosAvailability(r));
+    }
+    const { rows } = await this.q("SELECT * FROM brand_pos_availability");
+    return rows.map((r: any) => this.mapBrandPosAvailability(r));
+  }
+  async setBrandPosAvailability(brandId: string, posId: string, enabled: boolean): Promise<void> {
+    if (enabled) {
+      const { rows } = await this.q("SELECT id FROM brand_pos_availability WHERE brand_id=$1 AND pos_id=$2", [brandId, posId]);
+      if (rows.length === 0) {
+        await this.q("INSERT INTO brand_pos_availability (id, brand_id, pos_id) VALUES ($1,$2,$3)", [randomUUID(), brandId, posId]);
+      }
+    } else {
+      await this.q("DELETE FROM brand_pos_availability WHERE brand_id=$1 AND pos_id=$2", [brandId, posId]);
+    }
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -501,6 +667,10 @@ export class MemStorage implements IStorage {
   private salesEntries: Map<string, SalesEntry> = new Map();
   private promotions: Map<string, Promotion> = new Map();
   private promotionResults: Map<string, PromotionResult> = new Map();
+  private posLocationsMap: Map<string, PosLocation> = new Map();
+  private usersMap: Map<string, User> = new Map();
+  private userPosAssignmentsMap: Map<string, UserPosAssignment> = new Map();
+  private brandPosAvailabilityMap: Map<string, BrandPosAvailability> = new Map();
 
   constructor() {
     this.seed();
@@ -511,6 +681,24 @@ export class MemStorage implements IStorage {
   }
 
   private seed() {
+    // POS Locations seed
+    const posData: Array<{ salesChannel: string; storeCode: string; storeName: string }> = [
+      { salesChannel: "FACESSS", storeCode: "AD", storeName: "FACESSS Admiralty" },
+      { salesChannel: "LOGON", storeCode: "CWB", storeName: "LOG-ON Causeway Bay" },
+      { salesChannel: "LOGON", storeCode: "TS", storeName: "LOG-ON TST Harbour City" },
+      { salesChannel: "LOGON", storeCode: "MK", storeName: "LOG-ON Mong Kok" },
+      { salesChannel: "LOGON", storeCode: "KT", storeName: "LOG-ON Kowloon Tong" },
+      { salesChannel: "LOGON", storeCode: "ST", storeName: "LOG-ON Sha Tin" },
+      { salesChannel: "SOGO", storeCode: "KT", storeName: "SOGO Kai Tak" },
+    ];
+    const posIds: string[] = [];
+    for (const pd of posData) {
+      const id = randomUUID();
+      posIds.push(id);
+      this.posLocationsMap.set(id, { id, ...pd, isActive: true });
+    }
+
+    // Also seed legacy counters with the same IDs so sales_entries work
     const counterNames = [
       "FACESSS Admiralty",
       "LOG-ON Causeway Bay",
@@ -521,10 +709,11 @@ export class MemStorage implements IStorage {
       "SOGO Kai Tak",
     ];
     const counterIds: string[] = [];
-    for (const name of counterNames) {
-      const id = randomUUID();
+    for (let ci = 0; ci < counterNames.length; ci++) {
+      // Use the same ID as the POS location for backward compat
+      const id = posIds[ci];
       counterIds.push(id);
-      this.counters.set(id, { id, name, isActive: true });
+      this.counters.set(id, { id, name: counterNames[ci], isActive: true });
     }
 
     const brandData: Array<{ name: string; category: string }> = [
@@ -550,12 +739,34 @@ export class MemStorage implements IStorage {
       this.brands.set(id, { id, name: b.name, category: b.category, isActive: true });
     }
 
+    // Legacy counter-brands (all brands at all counters)
     for (const cid of counterIds) {
       for (const bid of brandIds) {
         const id = randomUUID();
         this.counterBrands.set(id, { id, counterId: cid, brandId: bid });
       }
     }
+
+    // Brand-POS availability: all brands at all POS
+    for (const posId of posIds) {
+      for (const bid of brandIds) {
+        const id = randomUUID();
+        this.brandPosAvailabilityMap.set(id, { id, brandId: bid, posId });
+      }
+    }
+
+    // Seed users with hashed PINs
+    const adminId = randomUUID();
+    const ba1Id = randomUUID();
+    const adminHash = bcrypt.hashSync("1234", 10);
+    const ba1Hash = bcrypt.hashSync("1111", 10);
+    this.usersMap.set(adminId, { id: adminId, username: "admin", pin: adminHash, name: "Admin", role: "management", isActive: true });
+    this.usersMap.set(ba1Id, { id: ba1Id, username: "ba1", pin: ba1Hash, name: "BA Demo", role: "ba", isActive: true });
+
+    // BA1 assigned to LOGON/TS (index 2)
+    const logonTsId = posIds[2];
+    const assignId = randomUUID();
+    this.userPosAssignmentsMap.set(assignId, { id: assignId, userId: ba1Id, posId: logonTsId });
 
     // Seed sample promotions
     const embryolisseBrandId = brandIds[0];
@@ -662,6 +873,76 @@ export class MemStorage implements IStorage {
     const existing = Array.from(this.promotionResults.values()).find(r => r.promotionId === data.promotionId && r.counterId === data.counterId && r.date === data.date);
     if (existing) { const u: PromotionResult = { ...existing, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null }; this.promotionResults.set(existing.id, u); return u; }
     return this.createPromotionResult(data);
+  }
+
+  // ── POS Locations ──
+  async getPosLocations(): Promise<PosLocation[]> { return Array.from(this.posLocationsMap.values()); }
+  async getPosLocation(id: string): Promise<PosLocation | undefined> { return this.posLocationsMap.get(id); }
+  async createPosLocation(data: InsertPosLocation): Promise<PosLocation> {
+    const id = randomUUID();
+    const pos: PosLocation = { id, salesChannel: data.salesChannel, storeCode: data.storeCode, storeName: data.storeName, isActive: data.isActive ?? true };
+    this.posLocationsMap.set(id, pos);
+    // Also create a legacy counter for backward compat
+    this.counters.set(id, { id, name: data.storeName, isActive: data.isActive ?? true });
+    return pos;
+  }
+  async updatePosLocation(id: string, data: Partial<InsertPosLocation>): Promise<PosLocation | undefined> {
+    const pos = this.posLocationsMap.get(id);
+    if (!pos) return undefined;
+    const u = { ...pos, ...data };
+    this.posLocationsMap.set(id, u);
+    // Also update legacy counter
+    const counter = this.counters.get(id);
+    if (counter) {
+      if (data.storeName !== undefined) counter.name = data.storeName;
+      if (data.isActive !== undefined) counter.isActive = data.isActive;
+      this.counters.set(id, counter);
+    }
+    return u;
+  }
+
+  // ── Users ──
+  async getUsers(): Promise<User[]> { return Array.from(this.usersMap.values()); }
+  async getUser(id: string): Promise<User | undefined> { return this.usersMap.get(id); }
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    return Array.from(this.usersMap.values()).find(u => u.username === username);
+  }
+  async createUser(data: InsertUser): Promise<User> {
+    const id = randomUUID();
+    const user: User = { id, username: data.username, pin: data.pin, name: data.name, role: data.role ?? "ba", isActive: data.isActive ?? true };
+    this.usersMap.set(id, user);
+    return user;
+  }
+  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+    const user = this.usersMap.get(id);
+    if (!user) return undefined;
+    const u = { ...user, ...data };
+    this.usersMap.set(id, u);
+    return u;
+  }
+
+  // ── User-POS Assignments ──
+  async getUserPosAssignments(userId?: string): Promise<UserPosAssignment[]> {
+    const all = Array.from(this.userPosAssignmentsMap.values());
+    if (userId) return all.filter(a => a.userId === userId);
+    return all;
+  }
+  async setUserPosAssignment(userId: string, posId: string, enabled: boolean): Promise<void> {
+    const existing = Array.from(this.userPosAssignmentsMap.values()).find(a => a.userId === userId && a.posId === posId);
+    if (enabled && !existing) { const id = randomUUID(); this.userPosAssignmentsMap.set(id, { id, userId, posId }); }
+    else if (!enabled && existing) { this.userPosAssignmentsMap.delete(existing.id); }
+  }
+
+  // ── Brand-POS Availability ──
+  async getBrandPosAvailability(posId?: string): Promise<BrandPosAvailability[]> {
+    const all = Array.from(this.brandPosAvailabilityMap.values());
+    if (posId) return all.filter(a => a.posId === posId);
+    return all;
+  }
+  async setBrandPosAvailability(brandId: string, posId: string, enabled: boolean): Promise<void> {
+    const existing = Array.from(this.brandPosAvailabilityMap.values()).find(a => a.brandId === brandId && a.posId === posId);
+    if (enabled && !existing) { const id = randomUUID(); this.brandPosAvailabilityMap.set(id, { id, brandId, posId }); }
+    else if (!enabled && existing) { this.brandPosAvailabilityMap.delete(existing.id); }
   }
 }
 

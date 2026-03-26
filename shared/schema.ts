@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Counters (points of sale)
+// Counters (points of sale) — legacy, kept for backward compat
 export const counters = pgTable("counters", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -26,7 +26,7 @@ export const insertBrandSchema = createInsertSchema(brands).omit({ id: true });
 export type InsertBrand = z.infer<typeof insertBrandSchema>;
 export type Brand = typeof brands.$inferSelect;
 
-// Counter-Brand assignments
+// Counter-Brand assignments — legacy
 export const counterBrands = pgTable("counter_brands", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   counterId: varchar("counter_id").notNull(),
@@ -36,6 +36,55 @@ export const counterBrands = pgTable("counter_brands", {
 export const insertCounterBrandSchema = createInsertSchema(counterBrands).omit({ id: true });
 export type InsertCounterBrand = z.infer<typeof insertCounterBrandSchema>;
 export type CounterBrand = typeof counterBrands.$inferSelect;
+
+// === NEW: POS Locations ===
+export const posLocations = pgTable("pos_locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  salesChannel: text("sales_channel").notNull(),
+  storeCode: text("store_code").notNull(),
+  storeName: text("store_name").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const insertPosLocationSchema = createInsertSchema(posLocations).omit({ id: true });
+export type InsertPosLocation = z.infer<typeof insertPosLocationSchema>;
+export type PosLocation = typeof posLocations.$inferSelect;
+
+// === NEW: Users ===
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  username: text("username").notNull(),
+  pin: text("pin").notNull(),
+  name: text("name").notNull(),
+  role: text("role").notNull().default("ba"),
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
+// === NEW: User POS Assignments ===
+export const userPosAssignments = pgTable("user_pos_assignments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  posId: varchar("pos_id").notNull(),
+});
+
+export const insertUserPosAssignmentSchema = createInsertSchema(userPosAssignments).omit({ id: true });
+export type InsertUserPosAssignment = z.infer<typeof insertUserPosAssignmentSchema>;
+export type UserPosAssignment = typeof userPosAssignments.$inferSelect;
+
+// === NEW: Brand POS Availability ===
+export const brandPosAvailability = pgTable("brand_pos_availability", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandId: varchar("brand_id").notNull(),
+  posId: varchar("pos_id").notNull(),
+});
+
+export const insertBrandPosAvailabilitySchema = createInsertSchema(brandPosAvailability).omit({ id: true });
+export type InsertBrandPosAvailability = z.infer<typeof insertBrandPosAvailabilitySchema>;
+export type BrandPosAvailability = typeof brandPosAvailability.$inferSelect;
 
 // Daily Sales Entries
 export const salesEntries = pgTable("sales_entries", {

@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Counter, Brand, SalesEntry, Promotion } from "@shared/schema";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, Redirect } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/App";
 import {
   BarChart3, TrendingUp, Store, Tag, Settings, Gift,
   Calendar, DollarSign, Package, ChevronRight, LayoutDashboard,
-  Moon, Sun,
+  Moon, Sun, LogOut,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -43,6 +44,7 @@ const navItems = [
 ];
 
 export default function Dashboard() {
+  const { user, logout } = useAuth();
   const [isDark, setIsDark] = useState(false);
   const [isDaily] = useRoute("/dashboard");
   const [isBrands] = useRoute("/dashboard/brands");
@@ -50,6 +52,11 @@ export default function Dashboard() {
   const [isMonthly] = useRoute("/dashboard/monthly");
   const [isPromos] = useRoute("/dashboard/promotions");
   const [isSettings] = useRoute("/dashboard/settings");
+
+  // Management-only guard
+  if (!user || user.role !== "management") {
+    return <Redirect to="/" />;
+  }
 
   const toggleTheme = () => {
     setIsDark(!isDark);
@@ -69,7 +76,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-sm font-bold leading-tight">Beauty Bliss</h1>
-              <p className="text-[10px] text-muted-foreground">Management</p>
+              <p className="text-[10px] text-muted-foreground">Management — {user.name}</p>
             </div>
           </div>
           <nav className="space-y-1">
@@ -114,6 +121,14 @@ export default function Dashboard() {
               BA Entry
             </div>
           </Link>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-destructive w-full px-3 py-2 rounded-md hover:bg-accent transition-colors mt-1"
+            data-testid="button-logout"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
         </div>
       </aside>
 

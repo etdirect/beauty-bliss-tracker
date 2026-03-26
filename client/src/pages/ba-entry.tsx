@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, Promotion } from "@shared/schema";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/App";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation } from "@shared/schema";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package } from "lucide-react";
+import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut } from "lucide-react";
 import { Link } from "wouter";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
@@ -24,6 +25,7 @@ const PROMO_TYPE_COLORS: Record<string, string> = {
 
 export default function BAEntry() {
   const { toast } = useToast();
+  const { user, logout } = useAuth();
   const [selectedCounter, setSelectedCounter] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split("T")[0]
@@ -32,16 +34,24 @@ export default function BAEntry() {
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});
   const [submitted, setSubmitted] = useState(false);
 
-  const { data: counters = [] } = useQuery<Counter[]>({
-    queryKey: ["/api/counters"],
+  // Fetch POS locations (all active)
+  const { data: posLocations = [] } = useQuery<PosLocation[]>({
+    queryKey: ["/api/pos-locations"],
+  });
+
+  // Fetch user's POS assignments
+  const { data: userAssignments = [] } = useQuery<Array<{ id: string; userId: string; posId: string }>>({
+    queryKey: ["/api/user-pos-assignments", `?userId=${user?.id || ""}`],
+    enabled: !!user,
   });
 
   const { data: brands = [] } = useQuery<Brand[]>({
     queryKey: ["/api/brands"],
   });
 
-  const { data: counterBrands = [] } = useQuery<CounterBrand[]>({
-    queryKey: ["/api/counter-brands"],
+  const { data: brandPosAvail = [] } = useQuery<BrandPosAvailability[]>({
+    queryKey: ["/api/brand-pos-availability", `?posId=${selectedCounter}`],
+    enabled: !!selectedCounter,
   });
 
   const { data: activePromotions = [] } = useQuery<Promotion[]>({
@@ -49,13 +59,15 @@ export default function BAEntry() {
     enabled: !!selectedDate,
   });
 
-  const activeCounters = counters.filter(c => c.isActive);
+  // For management users, show all active POS locations; for BA, only assigned
+  const isManagement = user?.role === "management";
+  const assignedPosIds = userAssignments.map(a => a.posId);
+  const availablePos = isManagement
+    ? posLocations.filter(p => p.isActive)
+    : posLocations.filter(p => p.isActive && assignedPosIds.includes(p.id));
 
-  // Get brands available at selected counter
-  const availableBrandIds = counterBrands
-    .filter(cb => cb.counterId === selectedCounter)
-    .map(cb => cb.brandId);
-
+  // Get brands available at selected POS
+  const availableBrandIds = brandPosAvail.map(bp => bp.brandId);
   const availableBrands = brands
     .filter(b => b.isActive && availableBrandIds.includes(b.id))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -128,6 +140,26 @@ export default function BAEntry() {
   const totalUnits = Object.values(salesData).reduce((sum, d) => sum + (d.units || 0), 0);
   const totalAmount = Object.values(salesData).reduce((sum, d) => sum + (d.amount || 0), 0);
 
+  // No assigned POS for BA users
+  if (!isManagement && availablePos.length === 0 && !submitted) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="pt-8 pb-8 space-y-4">
+            <Store className="w-10 h-10 mx-auto text-muted-foreground opacity-50" />
+            <h2 className="text-lg font-semibold">No POS Locations Assigned</h2>
+            <p className="text-sm text-muted-foreground">
+              Contact management to get POS locations assigned to your account.
+            </p>
+            <Button variant="outline" onClick={logout}>
+              <LogOut className="w-4 h-4 mr-2" /> Sign Out
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (submitted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -160,15 +192,27 @@ export default function BAEntry() {
             </div>
             <div>
               <h1 className="text-base font-semibold leading-tight">Beauty Bliss</h1>
-              <p className="text-xs text-muted-foreground">Daily Sales Entry</p>
+              <p className="text-xs text-muted-foreground">Daily Sales Entry — {user?.name}</p>
             </div>
           </div>
-          <Link href="/dashboard">
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-dashboard">
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              Dashboard
-            </span>
-          </Link>
+          <div className="flex items-center gap-2">
+            {isManagement && (
+              <Link href="/dashboard">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-dashboard">
+                  <LayoutDashboard className="w-3.5 h-3.5" />
+                  Dashboard
+                </span>
+              </Link>
+            )}
+            <button
+              onClick={logout}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors px-3 py-2 rounded-md hover:bg-accent"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
 
@@ -178,15 +222,15 @@ export default function BAEntry() {
           <CardContent className="pt-4 space-y-3">
             <div className="space-y-1.5">
               <label className="text-sm font-medium flex items-center gap-1.5">
-                <Store className="w-3.5 h-3.5" /> Counter
+                <Store className="w-3.5 h-3.5" /> POS Location
               </label>
               <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); }}>
                 <SelectTrigger data-testid="select-counter">
-                  <SelectValue placeholder="Select your counter" />
+                  <SelectValue placeholder="Select your POS location" />
                 </SelectTrigger>
                 <SelectContent>
-                  {activeCounters.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  {availablePos.map(pos => (
+                    <SelectItem key={pos.id} value={pos.id}>{pos.storeName}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -205,7 +249,7 @@ export default function BAEntry() {
           </CardContent>
         </Card>
 
-        {/* Active Promotions Banner - Enhanced with richer details */}
+        {/* Active Promotions Banner */}
         {selectedCounter && activePromotions.length > 0 && (
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="pt-3 pb-3">
@@ -219,15 +263,12 @@ export default function BAEntry() {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
-                      {/* Promo header */}
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
                         <span className="font-medium text-sm">{promo.name}</span>
                       </div>
-
-                      {/* Mechanics - key info for BAs */}
                       {promo.mechanics && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium">
                           {promo.mechanics}
@@ -236,16 +277,12 @@ export default function BAEntry() {
                       {!promo.mechanics && promo.description && (
                         <p className="text-xs text-muted-foreground">{promo.description}</p>
                       )}
-
-                      {/* Location */}
                       {promo.shopLocation && (
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
                           {promo.shopLocation}
                         </p>
                       )}
-
-                      {/* Applicable products / exclusions */}
                       {promo.applicableProducts && (
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
                           <Package className="w-3 h-3" />
@@ -258,19 +295,14 @@ export default function BAEntry() {
                           Excl: {promo.exclusions}
                         </p>
                       )}
-
-                      {/* GWP details */}
                       {promo.gwpItem && (
                         <p className="text-xs text-foreground/80">
                           GWP: {promo.gwpItem}{promo.gwpQty ? ` (x${promo.gwpQty})` : ""}
                         </p>
                       )}
-
                       {brand && (
                         <p className="text-xs text-muted-foreground">Brand: {brand.name}</p>
                       )}
-
-                      {/* GWP Given input */}
                       <div className="flex gap-2 items-center pt-1">
                         <label className="text-xs font-medium whitespace-nowrap">GWP Given:</label>
                         <Input
@@ -351,7 +383,7 @@ export default function BAEntry() {
         {!selectedCounter && (
           <div className="text-center py-12 text-muted-foreground">
             <Store className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">Select your counter to begin</p>
+            <p className="text-sm">Select your POS location to begin</p>
           </div>
         )}
       </div>
