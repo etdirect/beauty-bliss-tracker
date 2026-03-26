@@ -517,22 +517,31 @@ export class PgStorage implements IStorage {
   }
   async bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number> {
     if (entries.length === 0) return 0;
-    const client = await this.pool.connect();
+    // Build a single multi-row INSERT ... ON CONFLICT for maximum speed
+    const CHUNK = 500; // PostgreSQL param limit is 65535; 500 rows × 7 params = 3500
     let imported = 0;
+    const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      for (const e of entries) {
+      for (let i = 0; i < entries.length; i += CHUNK) {
+        const chunk = entries.slice(i, i + CHUNK);
+        const values: any[] = [];
+        const placeholders = chunk.map((e, idx) => {
+          const off = idx * 7;
+          values.push(e.counterId, e.brandId, e.date, e.orders ?? 0, e.units ?? 0, e.amount ?? 0, e.gwpCount ?? 0);
+          return `(gen_random_uuid(), $${off+1}, $${off+2}, $${off+3}, $${off+4}, $${off+5}, $${off+6}, $${off+7})`;
+        });
         await client.query(
           `INSERT INTO sales_entries (id, counter_id, brand_id, date, orders, units, amount, gwp_count)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+           VALUES ${placeholders.join(', ')}
            ON CONFLICT (counter_id, brand_id, date) DO UPDATE SET
              orders = EXCLUDED.orders,
              units = EXCLUDED.units,
              amount = EXCLUDED.amount,
              gwp_count = EXCLUDED.gwp_count`,
-          [e.counterId, e.brandId, e.date, e.orders ?? 0, e.units ?? 0, e.amount ?? 0, e.gwpCount ?? 0]
+          values
         );
-        imported++;
+        imported += chunk.length;
       }
       await client.query('COMMIT');
     } catch (err) {
