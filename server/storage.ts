@@ -90,6 +90,10 @@ function makePromotion(id: string, data: InsertPromotion): Promotion {
     dateEntered: data.dateEntered ?? null,
     sourceListId: data.sourceListId ?? null,
     lastSyncedAt: data.lastSyncedAt ?? null,
+    sourceApp: data.sourceApp ?? null,
+    sourceScenarioId: data.sourceScenarioId ?? null,
+    promotionLayer: data.promotionLayer ?? null,
+    trackable: data.trackable ?? false,
   };
 }
 
@@ -174,7 +178,11 @@ export class PgStorage implements IStorage {
         entered_by TEXT,
         date_entered TEXT,
         source_list_id TEXT,
-        last_synced_at TEXT
+        last_synced_at TEXT,
+        source_app TEXT,
+        source_scenario_id TEXT,
+        promotion_layer TEXT,
+        trackable BOOLEAN NOT NULL DEFAULT false
       );
       CREATE TABLE IF NOT EXISTS promotion_results (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -185,6 +193,11 @@ export class PgStorage implements IStorage {
         notes TEXT
       );
     `);
+    // Migration: add new columns if table already existed
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS source_app TEXT`);
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS source_scenario_id TEXT`);
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS promotion_layer TEXT`);
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS trackable BOOLEAN NOT NULL DEFAULT false`);
     console.log("[pg] Tables ensured");
   }
 
@@ -226,6 +239,8 @@ export class PgStorage implements IStorage {
       referencePromoPrice: r.reference_promo_price != null ? Number(r.reference_promo_price) : null,
       remarks: r.remarks, enteredBy: r.entered_by, dateEntered: r.date_entered,
       sourceListId: r.source_list_id, lastSyncedAt: r.last_synced_at,
+      sourceApp: r.source_app, sourceScenarioId: r.source_scenario_id,
+      promotionLayer: r.promotion_layer, trackable: r.trackable ?? false,
     };
   }
   private mapPromotionResult(r: any): PromotionResult {
@@ -382,8 +397,8 @@ export class PgStorage implements IStorage {
        spend_get_spend_amount, spend_get_discount_amount,
        condition_minimum_spend, condition_minimum_qty, condition_required_items, condition_other,
        reference_original_price, reference_promo_price, remarks, entered_by, date_entered,
-       source_list_id, last_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+       source_list_id, last_synced_at, source_app, source_scenario_id, promotion_layer, trackable)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)`,
       [
         id, data.name, data.brandId ?? null, data.type, data.description, data.startDate, data.endDate, data.isActive ?? true,
         data.shopLocation ?? null, data.mechanics ?? null, data.promoAppliesTo ?? null, data.applicableProducts ?? null, data.exclusions ?? null,
@@ -394,6 +409,7 @@ export class PgStorage implements IStorage {
         data.conditionMinimumSpend ?? null, data.conditionMinimumQty ?? null, data.conditionRequiredItems ?? null, data.conditionOther ?? null,
         data.referenceOriginalPrice ?? null, data.referencePromoPrice ?? null, data.remarks ?? null, data.enteredBy ?? null, data.dateEntered ?? null,
         data.sourceListId ?? null, data.lastSyncedAt ?? null,
+        data.sourceApp ?? null, data.sourceScenarioId ?? null, data.promotionLayer ?? null, data.trackable ?? false,
       ],
     );
     return makePromotion(id, data);
@@ -416,6 +432,8 @@ export class PgStorage implements IStorage {
       referenceOriginalPrice: "reference_original_price", referencePromoPrice: "reference_promo_price",
       remarks: "remarks", enteredBy: "entered_by", dateEntered: "date_entered",
       sourceListId: "source_list_id", lastSyncedAt: "last_synced_at",
+      sourceApp: "source_app", sourceScenarioId: "source_scenario_id",
+      promotionLayer: "promotion_layer", trackable: "trackable",
     };
     const sets: string[] = []; const vals: any[] = []; let i = 1;
     for (const [key, col] of Object.entries(fieldMap)) {

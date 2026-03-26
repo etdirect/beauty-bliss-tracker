@@ -2,85 +2,6 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema } from "@shared/schema";
-import type { InsertPromotion, Brand } from "@shared/schema";
-import { parse } from "csv-parse/sync";
-
-// Brand code mapping for Microsoft List import
-const BRAND_CODE_MAP: Record<string, string> = {
-  "AD": "Adopt",
-  "EM": "Embryolisse",
-  "PH": "PHYTO",
-  "NV": "Novexpert",
-  "TK": "TALIKA",
-  "SP": "SAMPAR",
-  "KL": "Klorane",
-  "LA": "LADOR",
-  "PE": "PESTLO",
-  "ND": "Neutraderm",
-  "GE": "GESKE",
-  "AS": "ASDceuticals",
-  "EE": "elvis+elvin",
-  "XP": "XPOSOME",
-};
-
-// Map Microsoft List PromotionType to our type field
-function mapPromotionType(msType: string): string {
-  const typeMap: Record<string, string> = {
-    "Multi-Buy": "Multi-Buy",
-    "Percentage Discount": "Percentage Discount",
-    "PWP": "PWP",
-    "Bundle Deal": "Bundle Deal",
-    "GWP": "GWP",
-    "Spend & Get": "Spend & Get",
-  };
-  return typeMap[msType] || msType || "Other";
-}
-
-function findBrandByCode(code: string, brands: Brand[]): Brand | undefined {
-  if (!code) return undefined;
-  const codeTrimmed = code.trim();
-
-  // First try the explicit mapping
-  const mappedName = BRAND_CODE_MAP[codeTrimmed.toUpperCase()];
-  if (mappedName) {
-    const found = brands.find(b => b.name.toLowerCase() === mappedName.toLowerCase());
-    if (found) return found;
-  }
-
-  // Try case-insensitive prefix match
-  const found = brands.find(b => b.name.toLowerCase().startsWith(codeTrimmed.toLowerCase()));
-  if (found) return found;
-
-  // Try if the code is a full brand name
-  return brands.find(b => b.name.toLowerCase() === codeTrimmed.toLowerCase());
-}
-
-function parseNum(val: string | undefined): number | null {
-  if (!val || val.trim() === "") return null;
-  const n = parseFloat(val);
-  return isNaN(n) ? null : n;
-}
-
-function parseInt_(val: string | undefined): number | null {
-  if (!val || val.trim() === "") return null;
-  const n = parseInt(val, 10);
-  return isNaN(n) ? null : n;
-}
-
-function parseDate(val: string | undefined): string | null {
-  if (!val || val.trim() === "") return null;
-  // Try ISO format first
-  const d = new Date(val);
-  if (!isNaN(d.getTime())) {
-    return d.toISOString().split("T")[0];
-  }
-  return val.trim();
-}
-
-function strOrNull(val: string | undefined): string | null {
-  if (!val || val.trim() === "") return null;
-  return val.trim();
-}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -186,91 +107,35 @@ export async function registerRoutes(
     res.json(promo);
   });
 
-  // === CSV SYNC FROM MICROSOFT LISTS ===
-  app.post("/api/promotions/sync-csv", async (req, res) => {
+  // POST /api/promotions/push — receive promotion from Simulator
+  app.post("/api/promotions/push", async (req, res) => {
     try {
-      const { csvText } = req.body;
-      if (!csvText || typeof csvText !== "string") {
-        return res.status(400).json({ error: "csvText is required" });
+      const data = req.body;
+      if (!data.name || !data.type || !data.startDate || !data.endDate) {
+        return res.status(400).json({ error: "name, type, startDate, endDate are required" });
       }
 
-      const brands = await storage.getBrands();
-      const records = parse(csvText, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-        bom: true,
-        relax_column_count: true,
-      }) as Record<string, string>[];
-
-      const now = new Date().toISOString();
-      const promotions: InsertPromotion[] = [];
-
-      for (const row of records) {
-        const brandCode = row["BrandCode"] || row["Brand Code"] || "";
-        const brand = findBrandByCode(brandCode, brands);
-
-        const promotionName = row["PromotionName"] || row["Promotion Name"] || row["Title"] || "";
-        const startDate = parseDate(row["StartDate"] || row["Start Date"]);
-        const endDate = parseDate(row["EndDate"] || row["End Date"]);
-
-        if (!promotionName || !startDate || !endDate) continue;
-
-        const mechanicsText = strOrNull(row["Mechanics"]);
-        const promoType = mapPromotionType(row["PromotionType"] || row["Promotion Type"] || "");
-
-        const promo: InsertPromotion = {
-          name: promotionName,
-          brandId: brand?.id ?? null,
-          type: promoType,
-          description: mechanicsText || promotionName,
-          startDate,
-          endDate,
-          isActive: true,
-          shopLocation: strOrNull(row["ShopLocation"] || row["Shop Location"]),
-          mechanics: mechanicsText,
-          promoAppliesTo: strOrNull(row["PromoAppliesTo"] || row["Promo Applies To"]),
-          applicableProducts: strOrNull(row["ApplicableProducts"] || row["Applicable Products"]),
-          exclusions: strOrNull(row["Exclusions"]),
-          discountPercentage: parseNum(row["DiscountPercentage"] || row["Discount Percentage"]),
-          discountFixedAmount: parseNum(row["DiscountFixedAmount"] || row["Discount Fixed Amount"]),
-          gwpItem: strOrNull(row["GWP_Item"] || row["GWP Item"]),
-          gwpValue: parseNum(row["GWP_Value"] || row["GWP Value"]),
-          gwpQty: parseInt_(row["GWP_Qty"] || row["GWP Qty"]),
-          pwpItem: strOrNull(row["PWP_Item"] || row["PWP Item"]),
-          pwpPrice: parseNum(row["PWP_Price"] || row["PWP Price"]),
-          pwpDiscountPercentage: parseNum(row["PWP_DiscountPercentage"] || row["PWP Discount Percentage"]),
-          bundlePromoPrice: parseNum(row["Bundle_PromoPrice"] || row["Bundle Promo Price"]),
-          multiBuyBuyQty: parseInt_(row["MultiBuy_BuyQty"] || row["MultiBuy Buy Qty"]),
-          multiBuyGetQty: parseInt_(row["MultiBuy_GetQty"] || row["MultiBuy Get Qty"]),
-          multiBuyGetType: strOrNull(row["MultiBuy_GetType"] || row["MultiBuy Get Type"]),
-          multiBuyFixedPrice: parseNum(row["MultiBuy_FixedPrice"] || row["MultiBuy Fixed Price"]),
-          spendGetSpendAmount: parseNum(row["SpendGet_SpendAmount"] || row["Spend Get Spend Amount"]),
-          spendGetDiscountAmount: parseNum(row["SpendGet_DiscountAmount"] || row["Spend Get Discount Amount"]),
-          conditionMinimumSpend: parseNum(row["Condition_MinimumSpend"] || row["Condition Minimum Spend"]),
-          conditionMinimumQty: parseInt_(row["Condition_MinimumQty"] || row["Condition Minimum Qty"]),
-          conditionRequiredItems: strOrNull(row["Condition_RequiredItems"] || row["Condition Required Items"]),
-          conditionOther: strOrNull(row["Condition_Other"] || row["Condition Other"]),
-          referenceOriginalPrice: parseNum(row["Reference_OriginalPrice"] || row["Reference Original Price"]),
-          referencePromoPrice: parseNum(row["Reference_PromoPrice"] || row["Reference Promo Price"]),
-          remarks: strOrNull(row["Remarks"]),
-          enteredBy: strOrNull(row["EnteredBy"] || row["Entered By"]),
-          dateEntered: strOrNull(row["DateEntered"] || row["Date Entered"]),
-          sourceListId: `mslist-${Date.now()}`,
-          lastSyncedAt: now,
-        };
-
-        promotions.push(promo);
+      // Check if this promotion was already pushed (by sourceScenarioId)
+      if (data.sourceScenarioId) {
+        const existing = await storage.getPromotions();
+        const match = existing.find(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
+        if (match) {
+          // Update existing
+          const updated = await storage.updatePromotion(match.id, data);
+          return res.json({ action: "updated", promotion: updated });
+        }
       }
 
-      if (promotions.length === 0) {
-        return res.status(400).json({ error: "No valid promotions found in CSV. Ensure columns PromotionName, StartDate, and EndDate are present." });
-      }
-
-      const result = await storage.syncPromotionsFromImport(promotions);
-      res.json(result);
+      // Create new
+      const promo = await storage.createPromotion({
+        ...data,
+        sourceApp: data.sourceApp || "simulator",
+        trackable: data.trackable ?? false,
+        isActive: data.isActive ?? true,
+      });
+      return res.json({ action: "created", promotion: promo });
     } catch (err: any) {
-      res.status(400).json({ error: `CSV parse error: ${err.message}` });
+      return res.status(500).json({ error: err.message });
     }
   });
 

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -10,16 +10,15 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Gift, Plus, Calendar, CheckCircle, XCircle, CloudDownload, Upload, Search, Filter } from "lucide-react";
+import { Plus, CheckCircle, XCircle, Search, Filter } from "lucide-react";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
   "GWP": "bg-pink-100 text-pink-800 border-pink-200",
-  "Percentage Discount": "bg-blue-100 text-blue-800 border-blue-200",
-  "Discount": "bg-blue-100 text-blue-800 border-blue-200",
-  "Bundle Deal": "bg-purple-100 text-purple-800 border-purple-200",
-  "Bundle": "bg-purple-100 text-purple-800 border-purple-200",
-  "Multi-Buy": "bg-orange-100 text-orange-800 border-orange-200",
   "PWP": "bg-green-100 text-green-800 border-green-200",
+  "Percentage Discount": "bg-blue-100 text-blue-800 border-blue-200",
+  "Fixed Amount Discount": "bg-cyan-100 text-cyan-800 border-cyan-200",
+  "Bundle Deal": "bg-purple-100 text-purple-800 border-purple-200",
+  "Multi-Buy": "bg-orange-100 text-orange-800 border-orange-200",
   "Spend & Get": "bg-amber-100 text-amber-800 border-amber-200",
   "Other": "bg-gray-100 text-gray-800 border-gray-200",
 };
@@ -38,13 +37,13 @@ function PromoTypeDetails({ promo }: { promo: Promotion }) {
     if (promo.gwpValue) details.push(`Value: HK$${promo.gwpValue}`);
     if (promo.gwpQty) details.push(`Qty: ${promo.gwpQty}`);
   }
-  if ((t === "Percentage Discount" || t === "Discount") && promo.discountPercentage) {
+  if (t === "Percentage Discount" && promo.discountPercentage) {
     details.push(`${promo.discountPercentage}% off`);
   }
   if (promo.discountFixedAmount) {
     details.push(`HK$${promo.discountFixedAmount} off`);
   }
-  if (t === "Bundle Deal" || t === "Bundle") {
+  if (t === "Bundle Deal") {
     if (promo.bundlePromoPrice) details.push(`Bundle: HK$${promo.bundlePromoPrice}`);
   }
   if (t === "Multi-Buy") {
@@ -93,18 +92,12 @@ function RefPricing({ promo }: { promo: Promotion }) {
 export default function Promotions() {
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [formName, setFormName] = useState("");
   const [formBrandId, setFormBrandId] = useState<string>("cross-brand");
   const [formType, setFormType] = useState("GWP");
   const [formDescription, setFormDescription] = useState("");
   const [formStartDate, setFormStartDate] = useState("");
   const [formEndDate, setFormEndDate] = useState("");
-
-  // Sync state
-  const [csvText, setCsvText] = useState("");
-  const [syncResult, setSyncResult] = useState<{ created: number; updated: number; total: number } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -152,21 +145,6 @@ export default function Promotions() {
     },
   });
 
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/promotions/sync-csv", { csvText });
-      return await res.json();
-    },
-    onSuccess: (data: { created: number; updated: number; total: number }) => {
-      setSyncResult(data);
-      queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
-      toast({ title: "Sync complete", description: `${data.created} created, ${data.updated} updated` });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
-    },
-  });
-
   const resetForm = () => {
     setFormName("");
     setFormBrandId("cross-brand");
@@ -175,39 +153,6 @@ export default function Promotions() {
     setFormStartDate("");
     setFormEndDate("");
   };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      setCsvText(text);
-      setSyncResult(null);
-    };
-    reader.readAsText(file);
-  };
-
-  const handleSyncDialogClose = (open: boolean) => {
-    setShowSyncDialog(open);
-    if (!open) {
-      setCsvText("");
-      setSyncResult(null);
-    }
-  };
-
-  // Last synced timestamp
-  const lastSynced = useMemo(() => {
-    const synced = promotions.filter(p => p.lastSyncedAt).map(p => p.lastSyncedAt!).sort().reverse();
-    return synced[0] || null;
-  }, [promotions]);
-
-  // Count CSV rows for preview
-  const csvRowCount = useMemo(() => {
-    if (!csvText) return 0;
-    const lines = csvText.trim().split("\n");
-    return Math.max(0, lines.length - 1); // subtract header
-  }, [csvText]);
 
   // Promotion type options from data
   const promoTypes = useMemo(() => {
@@ -278,77 +223,8 @@ export default function Promotions() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="text-xl font-semibold">Promotions</h2>
-          {lastSynced && (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Last synced: {new Date(lastSynced).toLocaleString()}
-            </p>
-          )}
         </div>
         <div className="flex gap-2">
-          <Dialog open={showSyncDialog} onOpenChange={handleSyncDialogClose}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm">
-                <CloudDownload className="w-4 h-4 mr-1" /> Sync from Microsoft Lists
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Sync from Microsoft Lists</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 pt-2">
-                <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground space-y-1">
-                  <p className="font-medium text-foreground">How to export:</p>
-                  <ol className="list-decimal list-inside space-y-0.5 text-xs">
-                    <li>Open your Microsoft List ("Beauty Bliss Promotion Tracker")</li>
-                    <li>Click <strong>Export</strong> → <strong>CSV</strong></li>
-                    <li>Upload the downloaded file below</li>
-                  </ol>
-                </div>
-
-                <div
-                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm font-medium">
-                    {csvText ? `CSV loaded (${csvRowCount} promotions)` : "Click to upload CSV file"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">or drag and drop</p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
-                </div>
-
-                {csvText && !syncResult && (
-                  <Button
-                    className="w-full"
-                    onClick={() => syncMutation.mutate()}
-                    disabled={syncMutation.isPending}
-                  >
-                    {syncMutation.isPending ? "Syncing..." : `Sync ${csvRowCount} Promotions`}
-                  </Button>
-                )}
-
-                {syncResult && (
-                  <div className="rounded-md bg-green-50 border border-green-200 p-4 text-center space-y-1">
-                    <CheckCircle className="w-6 h-6 text-green-600 mx-auto" />
-                    <p className="text-sm font-medium text-green-800">Sync Complete</p>
-                    <p className="text-xs text-green-700">
-                      {syncResult.created} created · {syncResult.updated} updated · {syncResult.total} total
-                    </p>
-                    <Button variant="outline" size="sm" className="mt-2" onClick={() => handleSyncDialogClose(false)}>
-                      Done
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
-
           <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
             <DialogTrigger asChild>
               <Button size="sm" data-testid="button-create-promotion">
@@ -380,13 +256,12 @@ export default function Promotions() {
                     <SelectTrigger data-testid="select-promo-type"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="GWP">GWP (Gift with Purchase)</SelectItem>
-                      <SelectItem value="Percentage Discount">Percentage Discount</SelectItem>
-                      <SelectItem value="Multi-Buy">Multi-Buy</SelectItem>
                       <SelectItem value="PWP">PWP (Purchase with Purchase)</SelectItem>
+                      <SelectItem value="Percentage Discount">Percentage Discount</SelectItem>
+                      <SelectItem value="Fixed Amount Discount">Fixed Amount Discount</SelectItem>
                       <SelectItem value="Bundle Deal">Bundle Deal</SelectItem>
+                      <SelectItem value="Multi-Buy">Multi-Buy</SelectItem>
                       <SelectItem value="Spend & Get">Spend & Get</SelectItem>
-                      <SelectItem value="Discount">Discount</SelectItem>
-                      <SelectItem value="Bundle">Bundle</SelectItem>
                       <SelectItem value="Other">Other</SelectItem>
                     </SelectContent>
                   </Select>
@@ -481,6 +356,12 @@ export default function Promotions() {
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <PromoTypeBadge type={promo.type} />
+                        {promo.trackable && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">Trackable</span>
+                        )}
+                        {promo.sourceApp === "simulator" && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">From Simulator</span>
+                        )}
                         <span className="font-medium text-sm truncate">{promo.name}</span>
                         {brand && <Badge variant="outline" className="text-xs shrink-0">{brand.name}</Badge>}
                       </div>

@@ -57,7 +57,7 @@ export const promotions = pgTable("promotions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   brandId: varchar("brand_id"), // nullable for cross-brand
-  type: text("type").notNull(), // "GWP" | "Discount" | "Bundle" | "Multi-Buy" | "PWP" | "Spend & Get" | "Other"
+  type: text("type").notNull(), // "GWP" | "PWP" | "Percentage Discount" | "Fixed Amount Discount" | "Bundle Deal" | "Multi-Buy" | "Spend & Get" | "Other"
   description: text("description").notNull(),
   startDate: text("start_date").notNull(), // YYYY-MM-DD
   endDate: text("end_date").notNull(), // YYYY-MM-DD
@@ -94,6 +94,10 @@ export const promotions = pgTable("promotions", {
   dateEntered: text("date_entered"),
   sourceListId: text("source_list_id"),
   lastSyncedAt: text("last_synced_at"),
+  sourceApp: text("source_app"),           // "simulator" | "manual" | "mslist"
+  sourceScenarioId: text("source_scenario_id"),  // ID from simulator for update tracking
+  promotionLayer: text("promotion_layer"),       // "brand" | "counter" | "channel"
+  trackable: boolean("trackable").notNull().default(false),  // true for GWP/PWP/Spend&Get(gift) — types where daily redemptions can be counted
 });
 
 export const insertPromotionSchema = createInsertSchema(promotions).omit({ id: true });
