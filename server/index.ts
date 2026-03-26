@@ -24,6 +24,9 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// Trust proxy for Railway (HTTPS behind reverse proxy)
+app.set("trust proxy", 1);
+
 // Session middleware — MUST be before routes
 app.use(
   session({
@@ -31,8 +34,9 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
+      sameSite: "lax",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     },
   }),
