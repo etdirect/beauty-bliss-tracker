@@ -50,6 +50,12 @@ export default function SettingsPage() {
   const [resetPinUserId, setResetPinUserId] = useState<string | null>(null);
   const [resetPinValue, setResetPinValue] = useState("");
 
+  // User edit state
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserUsername, setEditUserUsername] = useState("");
+  const [editUserRole, setEditUserRole] = useState("ba");
+
   // New counter/brand forms (legacy)
   const [newCounterName, setNewCounterName] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
@@ -147,6 +153,18 @@ export default function SettingsPage() {
       setResetPinUserId(null);
       setResetPinValue("");
       toast({ title: "PIN reset successfully" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const editUserMutation = useMutation({
+    mutationFn: async ({ id, name, username, role }: { id: string; name: string; username: string; role: string }) => {
+      await apiRequest("PATCH", `/api/users/${id}`, { name, username, role });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      setEditingUserId(null);
+      toast({ title: "User updated" });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -436,47 +454,84 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {users.map(user => (
+                {users.map(user => {
+                  // Sort POS for Option B: by channel then code
+                  const sortedPos = [...activePos].sort((a, b) => {
+                    const ch = a.salesChannel.localeCompare(b.salesChannel);
+                    return ch !== 0 ? ch : a.storeCode.localeCompare(b.storeCode);
+                  });
+                  return (
                   <div key={user.id} className="border rounded-md p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        <span className={`text-sm ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
-                          {user.name}
-                        </span>
-                        <Badge variant="outline" className="text-xs">@{user.username}</Badge>
-                        <Badge variant={user.role === "management" ? "default" : "secondary"} className="text-xs">
-                          {user.role}
-                        </Badge>
-                        {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs"
-                          onClick={() => {
-                            if (resetPinUserId === user.id) {
-                              setResetPinUserId(null);
-                              setResetPinValue("");
-                            } else {
-                              setResetPinUserId(user.id);
-                              setResetPinValue("");
+                    {editingUserId === user.id ? (
+                      /* Edit mode */
+                      <>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Users className="w-4 h-4 text-muted-foreground" />
+                          <Input className="w-[140px] h-8 text-sm" value={editUserName} onChange={(e) => setEditUserName(e.target.value)} placeholder="Display Name" />
+                          <Input className="w-[120px] h-8 text-sm" value={editUserUsername} onChange={(e) => setEditUserUsername(e.target.value)} placeholder="Username" />
+                          <Select value={editUserRole} onValueChange={setEditUserRole}>
+                            <SelectTrigger className="w-[120px] h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ba">BA</SelectItem>
+                              <SelectItem value="management">Management</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            if (editUserName && editUserUsername) {
+                              editUserMutation.mutate({ id: user.id, name: editUserName, username: editUserUsername, role: editUserRole });
                             }
-                          }}
-                        >
-                          <KeyRound className="w-3.5 h-3.5 mr-1" /> PIN
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleUserMutation.mutate({ id: user.id, isActive: !user.isActive })}
-                          className="text-xs"
-                        >
-                          {user.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
-                        </Button>
+                          }}><Check className="w-4 h-4 text-green-600" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingUserId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
+                        </div>
+                      </>
+                    ) : (
+                      /* View mode */
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 text-muted-foreground" />
+                          <span className={`text-sm ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
+                            {user.name}
+                          </span>
+                          <Badge variant="outline" className="text-xs">@{user.username}</Badge>
+                          <Badge variant={user.role === "management" ? "default" : "secondary"} className="text-xs">
+                            {user.role}
+                          </Badge>
+                          {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            setEditingUserId(user.id);
+                            setEditUserName(user.name);
+                            setEditUserUsername(user.username);
+                            setEditUserRole(user.role);
+                          }}><Pencil className="w-3.5 h-3.5" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => {
+                              if (resetPinUserId === user.id) {
+                                setResetPinUserId(null);
+                                setResetPinValue("");
+                              } else {
+                                setResetPinUserId(user.id);
+                                setResetPinValue("");
+                              }
+                            }}
+                          >
+                            <KeyRound className="w-3.5 h-3.5 mr-1" /> PIN
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleUserMutation.mutate({ id: user.id, isActive: !user.isActive })}
+                            className="text-xs"
+                          >
+                            {user.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
+                          </Button>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     {resetPinUserId === user.id && (
                       <div className="flex gap-2 items-center ml-6">
@@ -499,27 +554,29 @@ export default function SettingsPage() {
                       </div>
                     )}
 
-                    {/* POS Assignments for this user */}
+                    {/* POS Assignments — Option B: compact grid with channel/code prefix */}
                     {user.role === "ba" && (
                       <div className="ml-6">
-                        <p className="text-xs text-muted-foreground mb-1">Assigned POS:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {activePos.map(pos => (
-                            <label key={pos.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <p className="text-xs text-muted-foreground mb-1.5">Assigned POS:</p>
+                        <div className="grid grid-cols-4 gap-x-3 gap-y-1.5">
+                          {sortedPos.map(pos => (
+                            <label key={pos.id} className="flex items-center gap-1.5 text-xs cursor-pointer whitespace-nowrap">
                               <Checkbox
+                                className="h-3.5 w-3.5"
                                 checked={isUserPosAssigned(user.id, pos.id)}
                                 onCheckedChange={(checked) => {
                                   toggleUserPosMutation.mutate({ userId: user.id, posId: pos.id, enabled: !!checked });
                                 }}
                               />
-                              {pos.storeName}
+                              <span className="font-mono text-[11px]">{pos.salesChannel.substring(0, 3).toUpperCase()}/{pos.storeCode}</span>
                             </label>
                           ))}
                         </div>
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
