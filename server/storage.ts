@@ -257,6 +257,70 @@ export class PgStorage implements IStorage {
       );
     `);
     console.log("[pg] Tables ensured");
+
+    // Seed default management user if users table is empty
+    const { rows: existingUsers } = await this.q("SELECT id FROM users LIMIT 1");
+    if (existingUsers.length === 0) {
+      console.log("[pg] Seeding default admin user...");
+      const adminId = randomUUID();
+      const adminPin = bcrypt.hashSync("1234", 10);
+      await this.q(
+        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
+        [adminId, "admin", adminPin, "Admin", "management", true]
+      );
+
+      // Seed default BA user
+      const baId = randomUUID();
+      const baPin = bcrypt.hashSync("1111", 10);
+      await this.q(
+        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
+        [baId, "ba1", baPin, "BA Demo", "ba", true]
+      );
+
+      // Seed POS locations if empty
+      const { rows: existingPos } = await this.q("SELECT id FROM pos_locations LIMIT 1");
+      if (existingPos.length === 0) {
+        console.log("[pg] Seeding default POS locations...");
+        const posData = [
+          { channel: "FACESSS", code: "AD", name: "FACESSS Admiralty" },
+          { channel: "LOGON", code: "CWB", name: "LOG-ON Causeway Bay" },
+          { channel: "LOGON", code: "TS", name: "LOG-ON TST Harbour City" },
+          { channel: "LOGON", code: "MK", name: "LOG-ON Mong Kok" },
+          { channel: "LOGON", code: "KT", name: "LOG-ON Kowloon Tong" },
+          { channel: "LOGON", code: "ST", name: "LOG-ON Sha Tin" },
+          { channel: "SOGO", code: "KT", name: "SOGO Kai Tak" },
+        ];
+        const posIds: string[] = [];
+        for (const p of posData) {
+          const pid = randomUUID();
+          posIds.push(pid);
+          await this.q(
+            "INSERT INTO pos_locations (id, sales_channel, store_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5)",
+            [pid, p.channel, p.code, p.name, true]
+          );
+        }
+        // Assign BA to first LOGON/TS
+        const tsPos = posIds[2]; // LOGON/TS
+        if (tsPos) {
+          await this.q(
+            "INSERT INTO user_pos_assignments (id, user_id, pos_id) VALUES ($1,$2,$3)",
+            [randomUUID(), baId, tsPos]
+          );
+        }
+
+        // Seed brand-POS availability: all brands to all POS
+        const { rows: brands } = await this.q("SELECT id FROM brands");
+        for (const brand of brands) {
+          for (const pid of posIds) {
+            await this.q(
+              "INSERT INTO brand_pos_availability (id, brand_id, pos_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+              [randomUUID(), brand.id, pid]
+            );
+          }
+        }
+        console.log("[pg] Seed data created: 2 users, 7 POS locations, brand-POS availability");
+      }
+    }
   }
 
   // ── Row mappers ──
