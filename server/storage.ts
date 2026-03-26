@@ -8,8 +8,10 @@ import {
   type BatchSalesSubmission,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import pg from "pg";
 
 export interface IStorage {
+  init(): Promise<void>;
   // Counters
   getCounters(): Promise<Counter[]>;
   getCounter(id: string): Promise<Counter | undefined>;
@@ -91,295 +93,243 @@ function makePromotion(id: string, data: InsertPromotion): Promotion {
   };
 }
 
-export class MemStorage implements IStorage {
-  private counters: Map<string, Counter> = new Map();
-  private brands: Map<string, Brand> = new Map();
-  private counterBrands: Map<string, CounterBrand> = new Map();
-  private salesEntries: Map<string, SalesEntry> = new Map();
-  private promotions: Map<string, Promotion> = new Map();
-  private promotionResults: Map<string, PromotionResult> = new Map();
+// ─── PostgreSQL Storage ─────────────────────────────────────────
+export class PgStorage implements IStorage {
+  private pool: pg.Pool;
 
-  constructor() {
-    this.seed();
+  constructor(databaseUrl: string) {
+    this.pool = new pg.Pool({
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes("localhost") ? false : { rejectUnauthorized: false },
+    });
   }
 
-  private seed() {
-    // Seed counters
-    const counterNames = [
-      "FACESSS Admiralty",
-      "LOG-ON Causeway Bay",
-      "LOG-ON TST Harbour City",
-      "LOG-ON Mong Kok",
-      "LOG-ON Kowloon Tong",
-      "LOG-ON Sha Tin",
-      "SOGO Kai Tak",
-    ];
-    const counterIds: string[] = [];
-    for (const name of counterNames) {
-      const id = randomUUID();
-      counterIds.push(id);
-      this.counters.set(id, { id, name, isActive: true });
-    }
-
-    // Seed brands
-    const brandData: Array<{ name: string; category: string }> = [
-      { name: "Embryolisse", category: "Skincare" },
-      { name: "PHYTO", category: "Haircare" },
-      { name: "Novexpert", category: "Skincare" },
-      { name: "TALIKA", category: "Skincare" },
-      { name: "SAMPAR", category: "Skincare" },
-      { name: "Klorane", category: "Haircare" },
-      { name: "LADOR", category: "Haircare" },
-      { name: "PESTLO", category: "Skincare" },
-      { name: "Neutraderm", category: "Skincare" },
-      { name: "GESKE", category: "Others" },
-      { name: "ASDceuticals", category: "Skincare" },
-      { name: "elvis+elvin", category: "Skincare" },
-      { name: "Adopt", category: "Body Care" },
-      { name: "XPOSOME", category: "Skincare" },
-    ];
-    const brandIds: string[] = [];
-    for (const b of brandData) {
-      const id = randomUUID();
-      brandIds.push(id);
-      this.brands.set(id, { id, name: b.name, category: b.category, isActive: true });
-    }
-
-    // Assign all brands to all counters
-    for (const cid of counterIds) {
-      for (const bid of brandIds) {
-        const id = randomUUID();
-        this.counterBrands.set(id, { id, counterId: cid, brandId: bid });
-      }
-    }
-
-    // Seed sample promotions with rich Microsoft List data
-    const adoptBrandId = brandIds[12]; // Adopt
-    const embryolisseBrandId = brandIds[0]; // Embryolisse
-
-    const samplePromos: Promotion[] = [
-      makePromotion(randomUUID(), {
-        name: "Embryolisse April GWP",
-        brandId: embryolisseBrandId,
-        type: "GWP",
-        description: "Free gift with purchase of HK$300+",
-        startDate: "2026-03-01",
-        endDate: "2026-04-30",
-        isActive: true,
-        shopLocation: "COUNTERS ALL",
-        mechanics: "Spend HK$300 or more on any Embryolisse product and receive a complimentary Lait-Crème Concentré 30ml.",
-        promoAppliesTo: "Brand-wide",
-        gwpItem: "Lait-Crème Concentré 30ml",
-        gwpValue: 89,
-        gwpQty: 1,
-        conditionMinimumSpend: 300,
-      }),
-      makePromotion(randomUUID(), {
-        name: "Adopt - Buy 2 30ml perfumes, for $245",
-        brandId: adoptBrandId,
-        type: "Multi-Buy",
-        description: "Buy any 2 x 30ml perfumes for HK$245",
-        startDate: "2026-03-01",
-        endDate: "2026-04-30",
-        isActive: true,
-        shopLocation: "LOGON ALL",
-        mechanics: "Buy any 2 x 30ml Adopt perfumes for a special price of HK$245 (usual price HK$149 each).",
-        promoAppliesTo: "Brand-wide",
-        applicableProducts: "Any 30ml Perfume",
-        multiBuyBuyQty: 2,
-        multiBuyFixedPrice: 245,
-        referenceOriginalPrice: 149,
-        referencePromoPrice: 122.5,
-        sourceListId: "mslist-001",
-        lastSyncedAt: "2026-03-15T10:30:00Z",
-      }),
-      makePromotion(randomUUID(), {
-        name: "Adopt - Buy 2 30ml perfumes, Get 10% off",
-        brandId: adoptBrandId,
-        type: "Percentage Discount",
-        description: "10% off when buying 2 x 30ml perfumes",
-        startDate: "2026-03-01",
-        endDate: "2026-04-30",
-        isActive: true,
-        shopLocation: "FACESSS ALL",
-        mechanics: "Purchase any 2 x 30ml Adopt perfumes and enjoy 10% off the total.",
-        promoAppliesTo: "Brand-wide",
-        applicableProducts: "Any 30ml Perfume",
-        discountPercentage: 10,
-        conditionMinimumQty: 2,
-        sourceListId: "mslist-002",
-        lastSyncedAt: "2026-03-15T10:30:00Z",
-      }),
-      makePromotion(randomUUID(), {
-        name: "Adopt - PWP 1 fragrance from 4 for $60",
-        brandId: adoptBrandId,
-        type: "PWP",
-        description: "Purchase with purchase: any fragrance from selected 4 for HK$60",
-        startDate: "2026-03-01",
-        endDate: "2026-04-30",
-        isActive: true,
-        shopLocation: "COUNTERS ALL",
-        mechanics: "With any Adopt purchase, add a selected 30ml fragrance for only HK$60 (choose from 4 scents).",
-        promoAppliesTo: "Brand-wide",
-        applicableProducts: "Any 30ml Perfume",
-        pwpItem: "Selected 30ml fragrance (choice of 4)",
-        pwpPrice: 60,
-        conditionOther: "Valid with any Adopt purchase",
-        sourceListId: "mslist-003",
-        lastSyncedAt: "2026-03-15T10:30:00Z",
-      }),
-      makePromotion(randomUUID(), {
-        name: "Adopt - Signature Scent Duo bundle",
-        brandId: adoptBrandId,
-        type: "Bundle Deal",
-        description: "Au Feminin 30ml + Au Masculin 30ml bundle deal",
-        startDate: "2026-03-01",
-        endDate: "2026-04-30",
-        isActive: true,
-        shopLocation: "FACESSS OT [AS61]",
-        mechanics: "Get the Signature Scent Duo (Au Feminin 30ml + Au Masculin 30ml) at a special bundle price of HK$230.",
-        promoAppliesTo: "Specific SKUs",
-        applicableProducts: "Au Feminin 30ml / Au Masculin 30ml",
-        bundlePromoPrice: 230,
-        referenceOriginalPrice: 298,
-        referencePromoPrice: 230,
-        sourceListId: "mslist-004",
-        lastSyncedAt: "2026-03-15T10:30:00Z",
-      }),
-    ];
-
-    for (const promo of samplePromos) {
-      this.promotions.set(promo.id, promo);
-    }
-
-    // Seed some sample sales data for demo
-    const today = new Date();
-    for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - dayOffset);
-      const dateStr = d.toISOString().split("T")[0];
-      // Random sales for first 3 counters, first 5 brands
-      for (let ci = 0; ci < 3; ci++) {
-        for (let bi = 0; bi < 5; bi++) {
-          const id = randomUUID();
-          const units = Math.floor(Math.random() * 8) + 1;
-          const amount = units * (Math.floor(Math.random() * 300) + 100);
-          this.salesEntries.set(id, {
-            id,
-            counterId: counterIds[ci],
-            brandId: brandIds[bi],
-            date: dateStr,
-            units,
-            amount,
-            gwpCount: 0,
-          });
-        }
-      }
-    }
+  private async q(text: string, params?: any[]): Promise<pg.QueryResult> {
+    return this.pool.query(text, params);
   }
 
-  // Counters
+  async init(): Promise<void> {
+    await this.q(`
+      CREATE TABLE IF NOT EXISTS counters (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS brands (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS counter_brands (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        counter_id TEXT NOT NULL,
+        brand_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS sales_entries (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        counter_id TEXT NOT NULL,
+        brand_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        units INTEGER NOT NULL DEFAULT 0,
+        amount REAL NOT NULL DEFAULT 0,
+        gwp_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS promotions (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL,
+        brand_id TEXT,
+        type TEXT NOT NULL,
+        description TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        shop_location TEXT,
+        mechanics TEXT,
+        promo_applies_to TEXT,
+        applicable_products TEXT,
+        exclusions TEXT,
+        discount_percentage REAL,
+        discount_fixed_amount REAL,
+        gwp_item TEXT,
+        gwp_value REAL,
+        gwp_qty INTEGER,
+        pwp_item TEXT,
+        pwp_price REAL,
+        pwp_discount_percentage REAL,
+        bundle_promo_price REAL,
+        multi_buy_buy_qty INTEGER,
+        multi_buy_get_qty INTEGER,
+        multi_buy_get_type TEXT,
+        multi_buy_fixed_price REAL,
+        spend_get_spend_amount REAL,
+        spend_get_discount_amount REAL,
+        condition_minimum_spend REAL,
+        condition_minimum_qty INTEGER,
+        condition_required_items TEXT,
+        condition_other TEXT,
+        reference_original_price REAL,
+        reference_promo_price REAL,
+        remarks TEXT,
+        entered_by TEXT,
+        date_entered TEXT,
+        source_list_id TEXT,
+        last_synced_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS promotion_results (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        promotion_id TEXT NOT NULL,
+        counter_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        gwp_given INTEGER NOT NULL DEFAULT 0,
+        notes TEXT
+      );
+    `);
+    console.log("[pg] Tables ensured");
+  }
+
+  // ── Row mappers ──
+  private mapCounter(r: any): Counter {
+    return { id: r.id, name: r.name, isActive: r.is_active };
+  }
+  private mapBrand(r: any): Brand {
+    return { id: r.id, name: r.name, category: r.category, isActive: r.is_active };
+  }
+  private mapCounterBrand(r: any): CounterBrand {
+    return { id: r.id, counterId: r.counter_id, brandId: r.brand_id };
+  }
+  private mapSalesEntry(r: any): SalesEntry {
+    return { id: r.id, counterId: r.counter_id, brandId: r.brand_id, date: r.date, units: Number(r.units), amount: Number(r.amount), gwpCount: Number(r.gwp_count) };
+  }
+  private mapPromotion(r: any): Promotion {
+    return {
+      id: r.id, name: r.name, brandId: r.brand_id, type: r.type, description: r.description,
+      startDate: r.start_date, endDate: r.end_date, isActive: r.is_active,
+      shopLocation: r.shop_location, mechanics: r.mechanics, promoAppliesTo: r.promo_applies_to,
+      applicableProducts: r.applicable_products, exclusions: r.exclusions,
+      discountPercentage: r.discount_percentage != null ? Number(r.discount_percentage) : null,
+      discountFixedAmount: r.discount_fixed_amount != null ? Number(r.discount_fixed_amount) : null,
+      gwpItem: r.gwp_item, gwpValue: r.gwp_value != null ? Number(r.gwp_value) : null,
+      gwpQty: r.gwp_qty != null ? Number(r.gwp_qty) : null,
+      pwpItem: r.pwp_item, pwpPrice: r.pwp_price != null ? Number(r.pwp_price) : null,
+      pwpDiscountPercentage: r.pwp_discount_percentage != null ? Number(r.pwp_discount_percentage) : null,
+      bundlePromoPrice: r.bundle_promo_price != null ? Number(r.bundle_promo_price) : null,
+      multiBuyBuyQty: r.multi_buy_buy_qty != null ? Number(r.multi_buy_buy_qty) : null,
+      multiBuyGetQty: r.multi_buy_get_qty != null ? Number(r.multi_buy_get_qty) : null,
+      multiBuyGetType: r.multi_buy_get_type, multiBuyFixedPrice: r.multi_buy_fixed_price != null ? Number(r.multi_buy_fixed_price) : null,
+      spendGetSpendAmount: r.spend_get_spend_amount != null ? Number(r.spend_get_spend_amount) : null,
+      spendGetDiscountAmount: r.spend_get_discount_amount != null ? Number(r.spend_get_discount_amount) : null,
+      conditionMinimumSpend: r.condition_minimum_spend != null ? Number(r.condition_minimum_spend) : null,
+      conditionMinimumQty: r.condition_minimum_qty != null ? Number(r.condition_minimum_qty) : null,
+      conditionRequiredItems: r.condition_required_items, conditionOther: r.condition_other,
+      referenceOriginalPrice: r.reference_original_price != null ? Number(r.reference_original_price) : null,
+      referencePromoPrice: r.reference_promo_price != null ? Number(r.reference_promo_price) : null,
+      remarks: r.remarks, enteredBy: r.entered_by, dateEntered: r.date_entered,
+      sourceListId: r.source_list_id, lastSyncedAt: r.last_synced_at,
+    };
+  }
+  private mapPromotionResult(r: any): PromotionResult {
+    return { id: r.id, promotionId: r.promotion_id, counterId: r.counter_id, date: r.date, gwpGiven: Number(r.gwp_given), notes: r.notes };
+  }
+
+  // ── Counters ──
   async getCounters(): Promise<Counter[]> {
-    return Array.from(this.counters.values());
+    const { rows } = await this.q("SELECT * FROM counters ORDER BY name");
+    return rows.map((r: any) => this.mapCounter(r));
   }
-
   async getCounter(id: string): Promise<Counter | undefined> {
-    return this.counters.get(id);
+    const { rows } = await this.q("SELECT * FROM counters WHERE id=$1", [id]);
+    return rows[0] ? this.mapCounter(rows[0]) : undefined;
   }
-
   async createCounter(data: InsertCounter): Promise<Counter> {
     const id = randomUUID();
-    const counter: Counter = { id, name: data.name, isActive: data.isActive ?? true };
-    this.counters.set(id, counter);
-    return counter;
+    await this.q("INSERT INTO counters (id, name, is_active) VALUES ($1,$2,$3)", [id, data.name, data.isActive ?? true]);
+    return { id, name: data.name, isActive: data.isActive ?? true };
   }
-
   async updateCounter(id: string, data: Partial<InsertCounter>): Promise<Counter | undefined> {
-    const counter = this.counters.get(id);
-    if (!counter) return undefined;
-    const updated = { ...counter, ...data };
-    this.counters.set(id, updated);
-    return updated;
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    if (data.name !== undefined) { sets.push(`name=$${i++}`); vals.push(data.name); }
+    if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
+    if (sets.length === 0) return this.getCounter(id);
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE counters SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapCounter(rows[0]) : undefined;
   }
 
-  // Brands
+  // ── Brands ──
   async getBrands(): Promise<Brand[]> {
-    return Array.from(this.brands.values());
+    const { rows } = await this.q("SELECT * FROM brands ORDER BY name");
+    return rows.map((r: any) => this.mapBrand(r));
   }
-
   async getBrand(id: string): Promise<Brand | undefined> {
-    return this.brands.get(id);
+    const { rows } = await this.q("SELECT * FROM brands WHERE id=$1", [id]);
+    return rows[0] ? this.mapBrand(rows[0]) : undefined;
   }
-
   async createBrand(data: InsertBrand): Promise<Brand> {
     const id = randomUUID();
-    const brand: Brand = { id, name: data.name, category: data.category, isActive: data.isActive ?? true };
-    this.brands.set(id, brand);
-    return brand;
+    await this.q("INSERT INTO brands (id, name, category, is_active) VALUES ($1,$2,$3,$4)", [id, data.name, data.category, data.isActive ?? true]);
+    return { id, name: data.name, category: data.category, isActive: data.isActive ?? true };
   }
-
   async updateBrand(id: string, data: Partial<InsertBrand>): Promise<Brand | undefined> {
-    const brand = this.brands.get(id);
-    if (!brand) return undefined;
-    const updated = { ...brand, ...data };
-    this.brands.set(id, updated);
-    return updated;
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    if (data.name !== undefined) { sets.push(`name=$${i++}`); vals.push(data.name); }
+    if (data.category !== undefined) { sets.push(`category=$${i++}`); vals.push(data.category); }
+    if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
+    if (sets.length === 0) return this.getBrand(id);
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE brands SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapBrand(rows[0]) : undefined;
   }
 
-  // Counter-Brand assignments
+  // ── Counter-Brand assignments ──
   async getCounterBrands(): Promise<CounterBrand[]> {
-    return Array.from(this.counterBrands.values());
+    const { rows } = await this.q("SELECT * FROM counter_brands");
+    return rows.map((r: any) => this.mapCounterBrand(r));
   }
-
   async getCounterBrandsByCounter(counterId: string): Promise<CounterBrand[]> {
-    return Array.from(this.counterBrands.values()).filter(cb => cb.counterId === counterId);
+    const { rows } = await this.q("SELECT * FROM counter_brands WHERE counter_id=$1", [counterId]);
+    return rows.map((r: any) => this.mapCounterBrand(r));
   }
-
   async setCounterBrand(counterId: string, brandId: string, enabled: boolean): Promise<void> {
-    const existing = Array.from(this.counterBrands.values()).find(
-      cb => cb.counterId === counterId && cb.brandId === brandId
-    );
-    if (enabled && !existing) {
-      const id = randomUUID();
-      this.counterBrands.set(id, { id, counterId, brandId });
-    } else if (!enabled && existing) {
-      this.counterBrands.delete(existing.id);
+    if (enabled) {
+      // Check if already exists
+      const { rows } = await this.q("SELECT id FROM counter_brands WHERE counter_id=$1 AND brand_id=$2", [counterId, brandId]);
+      if (rows.length === 0) {
+        await this.q("INSERT INTO counter_brands (id, counter_id, brand_id) VALUES ($1,$2,$3)", [randomUUID(), counterId, brandId]);
+      }
+    } else {
+      await this.q("DELETE FROM counter_brands WHERE counter_id=$1 AND brand_id=$2", [counterId, brandId]);
     }
   }
 
-  // Sales entries
+  // ── Sales entries ──
   async getSalesEntries(filters?: { counterId?: string; brandId?: string; startDate?: string; endDate?: string; date?: string }): Promise<SalesEntry[]> {
-    let entries = Array.from(this.salesEntries.values());
-    if (filters) {
-      if (filters.counterId) entries = entries.filter(e => e.counterId === filters.counterId);
-      if (filters.brandId) entries = entries.filter(e => e.brandId === filters.brandId);
-      if (filters.date) entries = entries.filter(e => e.date === filters.date);
-      if (filters.startDate) entries = entries.filter(e => e.date >= filters.startDate!);
-      if (filters.endDate) entries = entries.filter(e => e.date <= filters.endDate!);
-    }
-    return entries;
+    let where = "WHERE 1=1"; const vals: any[] = []; let i = 1;
+    if (filters?.counterId) { where += ` AND counter_id=$${i++}`; vals.push(filters.counterId); }
+    if (filters?.brandId) { where += ` AND brand_id=$${i++}`; vals.push(filters.brandId); }
+    if (filters?.date) { where += ` AND date=$${i++}`; vals.push(filters.date); }
+    if (filters?.startDate) { where += ` AND date>=$${i++}`; vals.push(filters.startDate); }
+    if (filters?.endDate) { where += ` AND date<=$${i++}`; vals.push(filters.endDate); }
+    const { rows } = await this.q(`SELECT * FROM sales_entries ${where} ORDER BY date DESC`, vals);
+    return rows.map((r: any) => this.mapSalesEntry(r));
   }
-
   async createSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
     const id = randomUUID();
-    const entry: SalesEntry = { id, ...data, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
-    this.salesEntries.set(id, entry);
-    return entry;
-  }
-
-  async upsertSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
-    // Find existing entry for same counter + brand + date
-    const existing = Array.from(this.salesEntries.values()).find(
-      e => e.counterId === data.counterId && e.brandId === data.brandId && e.date === data.date
+    await this.q(
+      "INSERT INTO sales_entries (id, counter_id, brand_id, date, units, amount, gwp_count) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, data.counterId, data.brandId, data.date, data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0],
     );
-    if (existing) {
-      const updated: SalesEntry = { ...existing, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
-      this.salesEntries.set(existing.id, updated);
-      return updated;
+    return { id, counterId: data.counterId, brandId: data.brandId, date: data.date, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
+  }
+  async upsertSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
+    const { rows } = await this.q("SELECT id FROM sales_entries WHERE counter_id=$1 AND brand_id=$2 AND date=$3", [data.counterId, data.brandId, data.date]);
+    if (rows.length > 0) {
+      const existingId = rows[0].id;
+      await this.q("UPDATE sales_entries SET units=$1, amount=$2, gwp_count=$3 WHERE id=$4", [data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0, existingId]);
+      return { id: existingId, counterId: data.counterId, brandId: data.brandId, date: data.date, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
     }
     return this.createSalesEntry(data);
   }
-
   async submitBatchSales(submission: BatchSalesSubmission): Promise<void> {
     for (const entry of submission.entries) {
       if (entry.units > 0 || entry.amount > 0) {
@@ -408,62 +358,278 @@ export class MemStorage implements IStorage {
     }
   }
 
-  // Promotions
+  // ── Promotions ──
   async getPromotions(): Promise<Promotion[]> {
-    return Array.from(this.promotions.values());
+    const { rows } = await this.q("SELECT * FROM promotions ORDER BY start_date DESC, name");
+    return rows.map((r: any) => this.mapPromotion(r));
   }
-
   async getPromotion(id: string): Promise<Promotion | undefined> {
-    return this.promotions.get(id);
+    const { rows } = await this.q("SELECT * FROM promotions WHERE id=$1", [id]);
+    return rows[0] ? this.mapPromotion(rows[0]) : undefined;
   }
-
   async getActivePromotions(date: string): Promise<Promotion[]> {
-    return Array.from(this.promotions.values()).filter(
-      p => p.isActive && p.startDate <= date && p.endDate >= date
-    );
+    const { rows } = await this.q("SELECT * FROM promotions WHERE is_active=true AND start_date<=$1 AND end_date>=$1 ORDER BY name", [date]);
+    return rows.map((r: any) => this.mapPromotion(r));
   }
-
   async createPromotion(data: InsertPromotion): Promise<Promotion> {
     const id = randomUUID();
-    const promo = makePromotion(id, data);
-    this.promotions.set(id, promo);
-    return promo;
+    await this.q(
+      `INSERT INTO promotions (id, name, brand_id, type, description, start_date, end_date, is_active,
+       shop_location, mechanics, promo_applies_to, applicable_products, exclusions,
+       discount_percentage, discount_fixed_amount, gwp_item, gwp_value, gwp_qty,
+       pwp_item, pwp_price, pwp_discount_percentage, bundle_promo_price,
+       multi_buy_buy_qty, multi_buy_get_qty, multi_buy_get_type, multi_buy_fixed_price,
+       spend_get_spend_amount, spend_get_discount_amount,
+       condition_minimum_spend, condition_minimum_qty, condition_required_items, condition_other,
+       reference_original_price, reference_promo_price, remarks, entered_by, date_entered,
+       source_list_id, last_synced_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+      [
+        id, data.name, data.brandId ?? null, data.type, data.description, data.startDate, data.endDate, data.isActive ?? true,
+        data.shopLocation ?? null, data.mechanics ?? null, data.promoAppliesTo ?? null, data.applicableProducts ?? null, data.exclusions ?? null,
+        data.discountPercentage ?? null, data.discountFixedAmount ?? null, data.gwpItem ?? null, data.gwpValue ?? null, data.gwpQty ?? null,
+        data.pwpItem ?? null, data.pwpPrice ?? null, data.pwpDiscountPercentage ?? null, data.bundlePromoPrice ?? null,
+        data.multiBuyBuyQty ?? null, data.multiBuyGetQty ?? null, data.multiBuyGetType ?? null, data.multiBuyFixedPrice ?? null,
+        data.spendGetSpendAmount ?? null, data.spendGetDiscountAmount ?? null,
+        data.conditionMinimumSpend ?? null, data.conditionMinimumQty ?? null, data.conditionRequiredItems ?? null, data.conditionOther ?? null,
+        data.referenceOriginalPrice ?? null, data.referencePromoPrice ?? null, data.remarks ?? null, data.enteredBy ?? null, data.dateEntered ?? null,
+        data.sourceListId ?? null, data.lastSyncedAt ?? null,
+      ],
+    );
+    return makePromotion(id, data);
   }
-
   async updatePromotion(id: string, data: Partial<InsertPromotion>): Promise<Promotion | undefined> {
-    const promo = this.promotions.get(id);
-    if (!promo) return undefined;
-    const updated = { ...promo, ...data };
-    this.promotions.set(id, updated as Promotion);
-    return updated as Promotion;
+    const fieldMap: Record<string, string> = {
+      name: "name", brandId: "brand_id", type: "type", description: "description",
+      startDate: "start_date", endDate: "end_date", isActive: "is_active",
+      shopLocation: "shop_location", mechanics: "mechanics", promoAppliesTo: "promo_applies_to",
+      applicableProducts: "applicable_products", exclusions: "exclusions",
+      discountPercentage: "discount_percentage", discountFixedAmount: "discount_fixed_amount",
+      gwpItem: "gwp_item", gwpValue: "gwp_value", gwpQty: "gwp_qty",
+      pwpItem: "pwp_item", pwpPrice: "pwp_price", pwpDiscountPercentage: "pwp_discount_percentage",
+      bundlePromoPrice: "bundle_promo_price",
+      multiBuyBuyQty: "multi_buy_buy_qty", multiBuyGetQty: "multi_buy_get_qty",
+      multiBuyGetType: "multi_buy_get_type", multiBuyFixedPrice: "multi_buy_fixed_price",
+      spendGetSpendAmount: "spend_get_spend_amount", spendGetDiscountAmount: "spend_get_discount_amount",
+      conditionMinimumSpend: "condition_minimum_spend", conditionMinimumQty: "condition_minimum_qty",
+      conditionRequiredItems: "condition_required_items", conditionOther: "condition_other",
+      referenceOriginalPrice: "reference_original_price", referencePromoPrice: "reference_promo_price",
+      remarks: "remarks", enteredBy: "entered_by", dateEntered: "date_entered",
+      sourceListId: "source_list_id", lastSyncedAt: "last_synced_at",
+    };
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    for (const [key, col] of Object.entries(fieldMap)) {
+      if ((data as any)[key] !== undefined) {
+        sets.push(`${col}=$${i++}`);
+        vals.push((data as any)[key]);
+      }
+    }
+    if (sets.length === 0) return this.getPromotion(id);
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE promotions SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapPromotion(rows[0]) : undefined;
   }
-
   async syncPromotionsFromImport(incoming: InsertPromotion[]): Promise<{ created: number; updated: number; total: number }> {
-    let created = 0;
-    let updated = 0;
-    const existing = Array.from(this.promotions.values());
+    let created = 0; let updated = 0;
+    const { rows: existing } = await this.q("SELECT * FROM promotions");
+    const existingList = existing.map((r: any) => this.mapPromotion(r));
 
     for (const data of incoming) {
-      // Match by name + startDate + endDate
-      const match = existing.find(
-        p => p.name === data.name && p.startDate === data.startDate && p.endDate === data.endDate
-      );
+      const match = existingList.find(p => p.name === data.name && p.startDate === data.startDate && p.endDate === data.endDate);
       if (match) {
-        // Update all fields
-        const updatedPromo = makePromotion(match.id, { ...data });
-        this.promotions.set(match.id, updatedPromo);
+        await this.updatePromotion(match.id, data);
         updated++;
       } else {
-        const id = randomUUID();
-        const promo = makePromotion(id, data);
-        this.promotions.set(id, promo);
+        await this.createPromotion(data);
         created++;
       }
     }
     return { created, updated, total: incoming.length };
   }
 
-  // Promotion results
+  // ── Promotion results ──
+  async getPromotionResults(filters?: { promotionId?: string; counterId?: string; date?: string }): Promise<PromotionResult[]> {
+    let where = "WHERE 1=1"; const vals: any[] = []; let i = 1;
+    if (filters?.promotionId) { where += ` AND promotion_id=$${i++}`; vals.push(filters.promotionId); }
+    if (filters?.counterId) { where += ` AND counter_id=$${i++}`; vals.push(filters.counterId); }
+    if (filters?.date) { where += ` AND date=$${i++}`; vals.push(filters.date); }
+    const { rows } = await this.q(`SELECT * FROM promotion_results ${where} ORDER BY date DESC`, vals);
+    return rows.map((r: any) => this.mapPromotionResult(r));
+  }
+  async createPromotionResult(data: InsertPromotionResult): Promise<PromotionResult> {
+    const id = randomUUID();
+    await this.q(
+      "INSERT INTO promotion_results (id, promotion_id, counter_id, date, gwp_given, notes) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, data.promotionId, data.counterId, data.date, data.gwpGiven ?? 0, data.notes ?? null],
+    );
+    return { id, promotionId: data.promotionId, counterId: data.counterId, date: data.date, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null };
+  }
+  async upsertPromotionResult(data: InsertPromotionResult): Promise<PromotionResult> {
+    const { rows } = await this.q("SELECT id FROM promotion_results WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [data.promotionId, data.counterId, data.date]);
+    if (rows.length > 0) {
+      const existingId = rows[0].id;
+      await this.q("UPDATE promotion_results SET gwp_given=$1, notes=$2 WHERE id=$3", [data.gwpGiven ?? 0, data.notes ?? null, existingId]);
+      return { id: existingId, promotionId: data.promotionId, counterId: data.counterId, date: data.date, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null };
+    }
+    return this.createPromotionResult(data);
+  }
+}
+
+// ─── In-Memory Storage (fallback for local dev) ─────────────────
+export class MemStorage implements IStorage {
+  private counters: Map<string, Counter> = new Map();
+  private brands: Map<string, Brand> = new Map();
+  private counterBrands: Map<string, CounterBrand> = new Map();
+  private salesEntries: Map<string, SalesEntry> = new Map();
+  private promotions: Map<string, Promotion> = new Map();
+  private promotionResults: Map<string, PromotionResult> = new Map();
+
+  constructor() {
+    this.seed();
+  }
+
+  async init(): Promise<void> {
+    // No-op for in-memory storage
+  }
+
+  private seed() {
+    const counterNames = [
+      "FACESSS Admiralty",
+      "LOG-ON Causeway Bay",
+      "LOG-ON TST Harbour City",
+      "LOG-ON Mong Kok",
+      "LOG-ON Kowloon Tong",
+      "LOG-ON Sha Tin",
+      "SOGO Kai Tak",
+    ];
+    const counterIds: string[] = [];
+    for (const name of counterNames) {
+      const id = randomUUID();
+      counterIds.push(id);
+      this.counters.set(id, { id, name, isActive: true });
+    }
+
+    const brandData: Array<{ name: string; category: string }> = [
+      { name: "Embryolisse", category: "Skincare" },
+      { name: "PHYTO", category: "Haircare" },
+      { name: "Novexpert", category: "Skincare" },
+      { name: "TALIKA", category: "Skincare" },
+      { name: "SAMPAR", category: "Skincare" },
+      { name: "Klorane", category: "Haircare" },
+      { name: "LADOR", category: "Haircare" },
+      { name: "PESTLO", category: "Skincare" },
+      { name: "Neutraderm", category: "Skincare" },
+      { name: "GESKE", category: "Others" },
+      { name: "ASDceuticals", category: "Skincare" },
+      { name: "elvis+elvin", category: "Skincare" },
+      { name: "Adopt", category: "Body Care" },
+      { name: "XPOSOME", category: "Skincare" },
+    ];
+    const brandIds: string[] = [];
+    for (const b of brandData) {
+      const id = randomUUID();
+      brandIds.push(id);
+      this.brands.set(id, { id, name: b.name, category: b.category, isActive: true });
+    }
+
+    for (const cid of counterIds) {
+      for (const bid of brandIds) {
+        const id = randomUUID();
+        this.counterBrands.set(id, { id, counterId: cid, brandId: bid });
+      }
+    }
+
+    // Seed sample promotions
+    const embryolisseBrandId = brandIds[0];
+    const adoptBrandId = brandIds[12];
+    const samplePromos: Promotion[] = [
+      makePromotion(randomUUID(), { name: "Embryolisse April GWP", brandId: embryolisseBrandId, type: "GWP", description: "Free gift with purchase of HK$300+", startDate: "2026-03-01", endDate: "2026-04-30", isActive: true, shopLocation: "COUNTERS ALL", mechanics: "Spend HK$300 or more on any Embryolisse product and receive a complimentary Lait-Crème Concentré 30ml.", promoAppliesTo: "Brand-wide", gwpItem: "Lait-Crème Concentré 30ml", gwpValue: 89, gwpQty: 1, conditionMinimumSpend: 300 }),
+      makePromotion(randomUUID(), { name: "Adopt - Buy 2 30ml perfumes, for $245", brandId: adoptBrandId, type: "Multi-Buy", description: "Buy any 2 x 30ml perfumes for HK$245", startDate: "2026-03-01", endDate: "2026-04-30", isActive: true, shopLocation: "LOGON ALL", mechanics: "Buy any 2 x 30ml Adopt perfumes for a special price of HK$245.", promoAppliesTo: "Brand-wide", applicableProducts: "Any 30ml Perfume", multiBuyBuyQty: 2, multiBuyFixedPrice: 245 }),
+    ];
+    for (const promo of samplePromos) this.promotions.set(promo.id, promo);
+
+    // Seed sample sales
+    const today = new Date();
+    for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
+      const d = new Date(today); d.setDate(d.getDate() - dayOffset);
+      const dateStr = d.toISOString().split("T")[0];
+      for (let ci = 0; ci < 3; ci++) {
+        for (let bi = 0; bi < 5; bi++) {
+          const id = randomUUID();
+          const units = Math.floor(Math.random() * 8) + 1;
+          const amount = units * (Math.floor(Math.random() * 300) + 100);
+          this.salesEntries.set(id, { id, counterId: counterIds[ci], brandId: brandIds[bi], date: dateStr, units, amount, gwpCount: 0 });
+        }
+      }
+    }
+  }
+
+  async getCounters(): Promise<Counter[]> { return Array.from(this.counters.values()); }
+  async getCounter(id: string): Promise<Counter | undefined> { return this.counters.get(id); }
+  async createCounter(data: InsertCounter): Promise<Counter> { const id = randomUUID(); const c: Counter = { id, name: data.name, isActive: data.isActive ?? true }; this.counters.set(id, c); return c; }
+  async updateCounter(id: string, data: Partial<InsertCounter>): Promise<Counter | undefined> { const c = this.counters.get(id); if (!c) return undefined; const u = { ...c, ...data }; this.counters.set(id, u); return u; }
+
+  async getBrands(): Promise<Brand[]> { return Array.from(this.brands.values()); }
+  async getBrand(id: string): Promise<Brand | undefined> { return this.brands.get(id); }
+  async createBrand(data: InsertBrand): Promise<Brand> { const id = randomUUID(); const b: Brand = { id, name: data.name, category: data.category, isActive: data.isActive ?? true }; this.brands.set(id, b); return b; }
+  async updateBrand(id: string, data: Partial<InsertBrand>): Promise<Brand | undefined> { const b = this.brands.get(id); if (!b) return undefined; const u = { ...b, ...data }; this.brands.set(id, u); return u; }
+
+  async getCounterBrands(): Promise<CounterBrand[]> { return Array.from(this.counterBrands.values()); }
+  async getCounterBrandsByCounter(counterId: string): Promise<CounterBrand[]> { return Array.from(this.counterBrands.values()).filter(cb => cb.counterId === counterId); }
+  async setCounterBrand(counterId: string, brandId: string, enabled: boolean): Promise<void> {
+    const existing = Array.from(this.counterBrands.values()).find(cb => cb.counterId === counterId && cb.brandId === brandId);
+    if (enabled && !existing) { const id = randomUUID(); this.counterBrands.set(id, { id, counterId, brandId }); }
+    else if (!enabled && existing) { this.counterBrands.delete(existing.id); }
+  }
+
+  async getSalesEntries(filters?: { counterId?: string; brandId?: string; startDate?: string; endDate?: string; date?: string }): Promise<SalesEntry[]> {
+    let entries = Array.from(this.salesEntries.values());
+    if (filters) {
+      if (filters.counterId) entries = entries.filter(e => e.counterId === filters.counterId);
+      if (filters.brandId) entries = entries.filter(e => e.brandId === filters.brandId);
+      if (filters.date) entries = entries.filter(e => e.date === filters.date);
+      if (filters.startDate) entries = entries.filter(e => e.date >= filters.startDate!);
+      if (filters.endDate) entries = entries.filter(e => e.date <= filters.endDate!);
+    }
+    return entries;
+  }
+  async createSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> { const id = randomUUID(); const e: SalesEntry = { id, ...data, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 }; this.salesEntries.set(id, e); return e; }
+  async upsertSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
+    const existing = Array.from(this.salesEntries.values()).find(e => e.counterId === data.counterId && e.brandId === data.brandId && e.date === data.date);
+    if (existing) { const u: SalesEntry = { ...existing, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 }; this.salesEntries.set(existing.id, u); return u; }
+    return this.createSalesEntry(data);
+  }
+  async submitBatchSales(submission: BatchSalesSubmission): Promise<void> {
+    for (const entry of submission.entries) {
+      if (entry.units > 0 || entry.amount > 0) {
+        await this.upsertSalesEntry({ counterId: submission.counterId, brandId: entry.brandId, date: submission.date, units: entry.units, amount: entry.amount, gwpCount: entry.gwpCount });
+      }
+    }
+    if (submission.promotionResults) {
+      for (const pr of submission.promotionResults) {
+        if (pr.gwpGiven > 0) {
+          await this.upsertPromotionResult({ promotionId: pr.promotionId, counterId: submission.counterId, date: submission.date, gwpGiven: pr.gwpGiven, notes: pr.notes ?? null });
+        }
+      }
+    }
+  }
+
+  async getPromotions(): Promise<Promotion[]> { return Array.from(this.promotions.values()); }
+  async getPromotion(id: string): Promise<Promotion | undefined> { return this.promotions.get(id); }
+  async getActivePromotions(date: string): Promise<Promotion[]> { return Array.from(this.promotions.values()).filter(p => p.isActive && p.startDate <= date && p.endDate >= date); }
+  async createPromotion(data: InsertPromotion): Promise<Promotion> { const id = randomUUID(); const p = makePromotion(id, data); this.promotions.set(id, p); return p; }
+  async updatePromotion(id: string, data: Partial<InsertPromotion>): Promise<Promotion | undefined> { const p = this.promotions.get(id); if (!p) return undefined; const u = { ...p, ...data }; this.promotions.set(id, u as Promotion); return u as Promotion; }
+  async syncPromotionsFromImport(incoming: InsertPromotion[]): Promise<{ created: number; updated: number; total: number }> {
+    let created = 0; let updated = 0;
+    const existing = Array.from(this.promotions.values());
+    for (const data of incoming) {
+      const match = existing.find(p => p.name === data.name && p.startDate === data.startDate && p.endDate === data.endDate);
+      if (match) { this.promotions.set(match.id, makePromotion(match.id, data)); updated++; }
+      else { const id = randomUUID(); this.promotions.set(id, makePromotion(id, data)); created++; }
+    }
+    return { created, updated, total: incoming.length };
+  }
+
   async getPromotionResults(filters?: { promotionId?: string; counterId?: string; date?: string }): Promise<PromotionResult[]> {
     let results = Array.from(this.promotionResults.values());
     if (filters) {
@@ -473,25 +639,15 @@ export class MemStorage implements IStorage {
     }
     return results;
   }
-
-  async createPromotionResult(data: InsertPromotionResult): Promise<PromotionResult> {
-    const id = randomUUID();
-    const result: PromotionResult = { id, ...data, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null };
-    this.promotionResults.set(id, result);
-    return result;
-  }
-
+  async createPromotionResult(data: InsertPromotionResult): Promise<PromotionResult> { const id = randomUUID(); const r: PromotionResult = { id, ...data, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null }; this.promotionResults.set(id, r); return r; }
   async upsertPromotionResult(data: InsertPromotionResult): Promise<PromotionResult> {
-    const existing = Array.from(this.promotionResults.values()).find(
-      r => r.promotionId === data.promotionId && r.counterId === data.counterId && r.date === data.date
-    );
-    if (existing) {
-      const updated: PromotionResult = { ...existing, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null };
-      this.promotionResults.set(existing.id, updated);
-      return updated;
-    }
+    const existing = Array.from(this.promotionResults.values()).find(r => r.promotionId === data.promotionId && r.counterId === data.counterId && r.date === data.date);
+    if (existing) { const u: PromotionResult = { ...existing, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null }; this.promotionResults.set(existing.id, u); return u; }
     return this.createPromotionResult(data);
   }
 }
 
-export const storage = new MemStorage();
+// ─── Storage selection ──────────────────────────────────────────
+const databaseUrl = process.env.DATABASE_URL;
+export const isPostgres = !!databaseUrl;
+export const storage: IStorage = databaseUrl ? new PgStorage(databaseUrl) : new MemStorage();
