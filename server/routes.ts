@@ -360,10 +360,12 @@ export async function registerRoutes(
 
       const posLocations = await storage.getPosLocations();
       const brands = await storage.getBrands();
-      let imported = 0;
       let skipped = 0;
       const missingPos: string[] = [];
+      const missingBrands: string[] = [];
+      const entriesToUpsert: { counterId: string; brandId: string; date: string; orders: number; units: number; amount: number; gwpCount: number }[] = [];
 
+      // Phase 1: resolve POS and brands, build entries array
       for (const rec of records) {
         const { date, salesChannel, posCode, brandName, amount, orders, units } = rec;
         if (!date || !posCode || !brandName) { skipped++; continue; }
@@ -376,14 +378,18 @@ export async function registerRoutes(
         if (!pos) {
           if (!missingPos.includes(`${channel}/${posCode}`)) missingPos.push(`${channel}/${posCode}`);
           pos = await storage.createPosLocation({ salesChannel: channel, storeCode: posCode, storeName: `${channel} ${posCode} (auto-created)`, isActive: false });
-          posLocations.push(pos); // add to local cache
+          posLocations.push(pos);
         }
 
         // Find brand
         const brand = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
-        if (!brand) { skipped++; continue; }
+        if (!brand) {
+          if (!missingBrands.includes(brandName)) missingBrands.push(brandName);
+          skipped++;
+          continue;
+        }
 
-        await storage.upsertSalesEntry({
+        entriesToUpsert.push({
           counterId: pos.id,
           brandId: brand.id,
           date,
@@ -392,10 +398,12 @@ export async function registerRoutes(
           amount: amount ?? 0,
           gwpCount: 0,
         });
-        imported++;
       }
 
-      res.json({ imported, skipped, missingPos, total: records.length });
+      // Phase 2: bulk upsert all entries in a single transaction
+      const imported = await storage.bulkUpsertSalesEntries(entriesToUpsert);
+
+      res.json({ imported, skipped, missingPos, missingBrands, total: records.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

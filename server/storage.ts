@@ -40,6 +40,7 @@ export interface IStorage {
   upsertSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
   submitBatchSales(submission: BatchSalesSubmission): Promise<void>;
   deleteSalesEntry(id: string): Promise<void>;
+  bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number>;
 
   // Promotions
   getPromotions(): Promise<Promotion[]>;
@@ -168,6 +169,7 @@ export class PgStorage implements IStorage {
         gwp_count INTEGER NOT NULL DEFAULT 0
       );
       ALTER TABLE sales_entries ADD COLUMN IF NOT EXISTS orders INTEGER NOT NULL DEFAULT 0;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_entries_upsert ON sales_entries (counter_id, brand_id, date);
       CREATE TABLE IF NOT EXISTS promotions (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         name TEXT NOT NULL,
@@ -512,6 +514,34 @@ export class PgStorage implements IStorage {
       return { id: existingId, counterId: data.counterId, brandId: data.brandId, date: data.date, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
     }
     return this.createSalesEntry(data);
+  }
+  async bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number> {
+    if (entries.length === 0) return 0;
+    const client = await this.pool.connect();
+    let imported = 0;
+    try {
+      await client.query('BEGIN');
+      for (const e of entries) {
+        await client.query(
+          `INSERT INTO sales_entries (id, counter_id, brand_id, date, orders, units, amount, gwp_count)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (counter_id, brand_id, date) DO UPDATE SET
+             orders = EXCLUDED.orders,
+             units = EXCLUDED.units,
+             amount = EXCLUDED.amount,
+             gwp_count = EXCLUDED.gwp_count`,
+          [e.counterId, e.brandId, e.date, e.orders ?? 0, e.units ?? 0, e.amount ?? 0, e.gwpCount ?? 0]
+        );
+        imported++;
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    return imported;
   }
   async submitBatchSales(submission: BatchSalesSubmission): Promise<void> {
     for (const entry of submission.entries) {
@@ -946,6 +976,10 @@ export class MemStorage implements IStorage {
     }
   }
   async deleteSalesEntry(id: string): Promise<void> { this.salesEntries.delete(id); }
+  async bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number> {
+    for (const e of entries) { await this.upsertSalesEntry(e); }
+    return entries.length;
+  }
 
   async getPromotions(): Promise<Promotion[]> { return Array.from(this.promotions.values()); }
   async getPromotion(id: string): Promise<Promotion | undefined> { return this.promotions.get(id); }
