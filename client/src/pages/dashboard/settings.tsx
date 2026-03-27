@@ -305,7 +305,7 @@ export default function SettingsPage() {
   const activeBrands = brands.filter(b => b.isActive);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       <h2 className="text-xl font-semibold">Settings</h2>
 
       <Tabs defaultValue="pos-locations">
@@ -535,10 +535,10 @@ export default function SettingsPage() {
                       <>
                         <div className="flex items-center gap-2 flex-wrap">
                           <Users className="w-4 h-4 text-muted-foreground" />
-                          <Input className="w-[140px] h-8 text-sm" value={editUserName} onChange={(e) => setEditUserName(e.target.value)} placeholder="Display Name" />
-                          <Input className="w-[120px] h-8 text-sm" value={editUserUsername} onChange={(e) => setEditUserUsername(e.target.value)} placeholder="Username" />
+                          <Input className="w-[100px] sm:w-[140px] h-8 text-sm" value={editUserName} onChange={(e) => setEditUserName(e.target.value)} placeholder="Name" />
+                          <Input className="w-[80px] sm:w-[120px] h-8 text-sm" value={editUserUsername} onChange={(e) => setEditUserUsername(e.target.value)} placeholder="Username" />
                           <Select value={editUserRole} onValueChange={setEditUserRole}>
-                            <SelectTrigger className="w-[120px] h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="w-[90px] sm:w-[120px] h-8 text-sm"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="ba">BA</SelectItem>
                               <SelectItem value="part_time">Part Time</SelectItem>
@@ -556,15 +556,13 @@ export default function SettingsPage() {
                     ) : (
                       /* View mode */
                       <div className="flex items-center justify-between">
-                        <div className="grid grid-cols-[16px_120px_100px_auto] gap-2 items-center">
-                          <Users className="w-4 h-4 text-muted-foreground" />
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                          <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                           <span className={`text-sm truncate ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
                             {user.name}
                           </span>
-                          <Badge variant="outline" className="text-xs justify-center">@{user.username}</Badge>
-                          <span>
-                            {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                          </span>
+                          <Badge variant="outline" className="text-xs">@{user.username}</Badge>
+                          {!user.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
                         </div>
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
@@ -626,7 +624,7 @@ export default function SettingsPage() {
                     {(user.role === "ba" || user.role === "part_time") && (
                       <div className="ml-6">
                         <p className="text-xs text-muted-foreground mb-1.5">Assigned POS:</p>
-                        <div className="grid grid-cols-4 gap-x-3 gap-y-1.5">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-1.5">
                           {sortedPos.map(pos => (
                             <label key={pos.id} className="flex items-center gap-1.5 text-xs cursor-pointer whitespace-nowrap">
                               <Checkbox

@@ -403,7 +403,7 @@ export default function BrandDashboard() {
 
   // ── Render ────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Filter Bar */}
       <Card>
         <CardContent className="pt-4 pb-4">
@@ -431,7 +431,7 @@ export default function BrandDashboard() {
                     type="date"
                     value={dailyStart}
                     onChange={(e) => setDailyStart(e.target.value)}
-                    className="w-[150px]"
+                    className="w-[130px] md:w-[150px]"
                   />
                 </div>
                 <div>
@@ -440,7 +440,7 @@ export default function BrandDashboard() {
                     type="date"
                     value={dailyEnd}
                     onChange={(e) => setDailyEnd(e.target.value)}
-                    className="w-[150px]"
+                    className="w-[130px] md:w-[150px]"
                   />
                 </div>
               </div>
@@ -727,7 +727,7 @@ export default function BrandDashboard() {
       </Card>
 
       {/* Brand Comparison + Category Comparison */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Brand Comparison */}
         <Card>
           <CardHeader>

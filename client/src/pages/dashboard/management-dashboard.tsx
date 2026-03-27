@@ -266,7 +266,7 @@ export default function ManagementDashboard() {
 
   // ── Render ────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Filter Bar */}
       <Card>
         <CardContent className="pt-4 pb-4">
@@ -279,7 +279,7 @@ export default function ManagementDashboard() {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-[150px]"
+                  className="w-[130px] md:w-[150px]"
                 />
               </div>
               <div>
@@ -288,7 +288,7 @@ export default function ManagementDashboard() {
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-[150px]"
+                  className="w-[130px] md:w-[150px]"
                 />
               </div>
             </div>
@@ -482,7 +482,7 @@ export default function ManagementDashboard() {
       </Card>
 
       {/* Channel Pie + Counter Bar */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Sales by Channel */}
         <Card>
           <CardHeader>

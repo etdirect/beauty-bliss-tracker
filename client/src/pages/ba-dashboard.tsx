@@ -11,8 +11,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package,
+  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft,
 } from "lucide-react";
+import { Link } from "wouter";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -216,7 +217,12 @@ export default function BADashboard() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">My Dashboard</h1>
+          <div className="flex items-center gap-2">
+            <Link href="/">
+              <span className="text-muted-foreground hover:text-foreground cursor-pointer"><ArrowLeft className="w-5 h-5" /></span>
+            </Link>
+            <h1 className="text-xl md:text-2xl font-bold">My Dashboard</h1>
+          </div>
           <p className="text-sm text-muted-foreground">
             {assignedPos.map((p: any) => p.storeName ?? p.name).join(", ")}
           </p>
