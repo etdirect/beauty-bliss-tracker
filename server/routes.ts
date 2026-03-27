@@ -441,5 +441,65 @@ export async function registerRoutes(
     }
   });
 
+  // === UPDATE UNITS ONLY (management only) ===
+  app.post("/api/sales/update-units", requireManagement, async (req, res) => {
+    try {
+      const { records } = req.body;
+      if (!Array.isArray(records)) return res.status(400).json({ error: "records array required" });
+
+      const posLocations = await storage.getPosLocations();
+      const brands = await storage.getBrands();
+      let updated = 0;
+      let skipped = 0;
+      const notFound: string[] = [];
+
+      for (const rec of records) {
+        const { date, salesChannel, posCode, brandName, units } = rec;
+        if (!date || !posCode || !brandName || units === undefined) { skipped++; continue; }
+
+        const channel = salesChannel || "LOGON";
+        const pos = posLocations.find(p => p.salesChannel.toUpperCase() === channel.toUpperCase() && p.storeCode.toUpperCase() === posCode.toUpperCase());
+        if (!pos) { skipped++; continue; }
+
+        const brand = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
+        if (!brand) { skipped++; continue; }
+
+        // Find existing entry and update only units
+        const entries = await storage.getSalesEntries({ counterId: pos.id, brandId: brand.id, date });
+        if (entries.length > 0) {
+          await storage.upsertSalesEntry({
+            counterId: pos.id,
+            brandId: brand.id,
+            date,
+            orders: entries[0].orders,
+            units: units,
+            amount: entries[0].amount,
+            gwpCount: entries[0].gwpCount,
+          });
+          updated++;
+        } else {
+          // No existing entry — create one with just units (amount=0)
+          await storage.upsertSalesEntry({
+            counterId: pos.id,
+            brandId: brand.id,
+            date,
+            orders: 0,
+            units: units,
+            amount: 0,
+            gwpCount: 0,
+          });
+          updated++;
+          if (!notFound.includes(`${channel}/${posCode}/${brandName}/${date}`)) {
+            notFound.push(`${channel}/${posCode}/${brandName}/${date}`);
+          }
+        }
+      }
+
+      res.json({ updated, skipped, newEntries: notFound.length, total: records.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return httpServer;
 }
