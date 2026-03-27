@@ -684,7 +684,7 @@ export default function SettingsPage() {
               <CardTitle className="text-sm font-medium">Add New Brand</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-2">
+              <div className="flex items-end gap-2">
                 <Input
                   value={newBrandName}
                   onChange={e => setNewBrandName(e.target.value)}
@@ -695,15 +695,20 @@ export default function SettingsPage() {
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-muted-foreground">Category</label>
                   <Select value={newBrandCategory} onValueChange={setNewBrandCategory}>
-                    <SelectTrigger className="w-36" data-testid="select-brand-category">
+                    <SelectTrigger className="w-48" data-testid="select-brand-category">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Skincare">Skincare</SelectItem>
                       <SelectItem value="Haircare">Haircare</SelectItem>
-                      <SelectItem value="Personal Care">Personal Care</SelectItem>
                       <SelectItem value="Babycare">Babycare</SelectItem>
                       <SelectItem value="Makeup">Makeup</SelectItem>
+                      <SelectItem value="Fragrance">Fragrance</SelectItem>
+                      <SelectItem value="Personal Care">Personal Care</SelectItem>
+                      <SelectItem value="Health Supplements">Health Supplements</SelectItem>
+                      <SelectItem value="Small Electronic Devices">Small Electronic Devices</SelectItem>
+                      <SelectItem value="Snacks">Snacks</SelectItem>
+                      <SelectItem value="Beauty Accessories">Beauty Accessories</SelectItem>
                       <SelectItem value="Body Care">Body Care</SelectItem>
                       <SelectItem value="Others">Others</SelectItem>
                     </SelectContent>
