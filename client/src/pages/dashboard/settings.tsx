@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability } from "@shared/schema";
+import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X } from "lucide-react";
+import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X, Trash2, Layers } from "lucide-react";
 
 interface SafeUser {
   id: string;
@@ -72,6 +72,12 @@ export default function SettingsPage() {
   const { data: brandPosAvail = [] } = useQuery<BrandPosAvailability[]>({ queryKey: ["/api/brand-pos-availability"] });
   const { data: counters = [] } = useQuery<Counter[]>({ queryKey: ["/api/counters"] });
   const { data: counterBrands = [] } = useQuery<CounterBrand[]>({ queryKey: ["/api/counter-brands"] });
+  const { data: categoryList = [] } = useQuery<Category[]>({ queryKey: ["/api/categories"] });
+
+  // Category state
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editCategoryName, setEditCategoryName] = useState("");
 
   // === POS Location mutations ===
   const createPosMutation = useMutation({
@@ -243,6 +249,39 @@ export default function SettingsPage() {
     },
   });
 
+  // === Category mutations ===
+  const createCategoryMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/categories", { name: newCategoryName.trim(), sortOrder: categoryList.length + 1 });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      setNewCategoryName("");
+      toast({ title: "Category created" });
+    },
+  });
+
+  const editCategoryMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      await apiRequest("PATCH", `/api/categories/${id}`, { name });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brands"] });
+      setEditingCategoryId(null);
+    },
+  });
+
+  const deleteCategoryMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/categories/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      toast({ title: "Category deleted" });
+    },
+  });
+
   const toggleAssignmentMutation = useMutation({
     mutationFn: async ({ counterId, brandId, enabled }: { counterId: string; brandId: string; enabled: boolean }) => {
       await apiRequest("POST", "/api/counter-brands", { counterId, brandId, enabled });
@@ -283,7 +322,9 @@ export default function SettingsPage() {
           <TabsTrigger value="brands" data-testid="tab-brands">
             <Tag className="w-4 h-4 mr-1.5" /> Brands
           </TabsTrigger>
-
+          <TabsTrigger value="categories" data-testid="tab-categories">
+            <Layers className="w-4 h-4 mr-1.5" /> Categories
+          </TabsTrigger>
         </TabsList>
 
         {/* POS Locations Tab */}
@@ -717,18 +758,9 @@ export default function SettingsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Skincare">Skincare</SelectItem>
-                      <SelectItem value="Haircare">Haircare</SelectItem>
-                      <SelectItem value="Babycare">Babycare</SelectItem>
-                      <SelectItem value="Makeup">Makeup</SelectItem>
-                      <SelectItem value="Fragrance">Fragrance</SelectItem>
-                      <SelectItem value="Personal Care">Personal Care</SelectItem>
-                      <SelectItem value="Health Supplements">Health Supplements</SelectItem>
-                      <SelectItem value="Small Electronic Devices">Small Electronic Devices</SelectItem>
-                      <SelectItem value="Snacks">Snacks</SelectItem>
-                      <SelectItem value="Beauty Accessories">Beauty Accessories</SelectItem>
-                      <SelectItem value="Body Care">Body Care</SelectItem>
-                      <SelectItem value="Others">Others</SelectItem>
+                      {categoryList.map(cat => (
+                        <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -760,18 +792,9 @@ export default function SettingsPage() {
                           <Select value={editBrandCategory} onValueChange={setEditBrandCategory}>
                             <SelectTrigger className="w-48 h-8 text-sm"><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="Skincare">Skincare</SelectItem>
-                              <SelectItem value="Haircare">Haircare</SelectItem>
-                              <SelectItem value="Babycare">Babycare</SelectItem>
-                              <SelectItem value="Makeup">Makeup</SelectItem>
-                              <SelectItem value="Fragrance">Fragrance</SelectItem>
-                              <SelectItem value="Personal Care">Personal Care</SelectItem>
-                              <SelectItem value="Health Supplements">Health Supplements</SelectItem>
-                              <SelectItem value="Small Electronic Devices">Small Electronic Devices</SelectItem>
-                              <SelectItem value="Snacks">Snacks</SelectItem>
-                              <SelectItem value="Beauty Accessories">Beauty Accessories</SelectItem>
-                              <SelectItem value="Body Care">Body Care</SelectItem>
-                              <SelectItem value="Others">Others</SelectItem>
+                              {categoryList.map(cat => (
+                                <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
@@ -818,6 +841,90 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
+        {/* Categories Tab */}
+        <TabsContent value="categories" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Add New Category</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-end gap-2">
+                <Input
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  placeholder="Category name"
+                  className="flex-1"
+                  data-testid="input-new-category"
+                  onKeyDown={e => { if (e.key === 'Enter' && newCategoryName.trim()) createCategoryMutation.mutate(); }}
+                />
+                <Button
+                  onClick={() => createCategoryMutation.mutate()}
+                  disabled={!newCategoryName.trim() || createCategoryMutation.isPending}
+                  data-testid="button-add-category"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Add
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Manage Categories</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {categoryList.map(cat => {
+                  const brandsInCat = brands.filter(b => b.category === cat.name);
+                  return (
+                    <div key={cat.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                      {editingCategoryId === cat.id ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <Layers className="w-4 h-4 text-muted-foreground" />
+                          <Input className="h-8 text-sm flex-1" value={editCategoryName} onChange={(e) => setEditCategoryName(e.target.value)} placeholder="Category name" />
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            if (editCategoryName.trim()) {
+                              editCategoryMutation.mutate({ id: cat.id, name: editCategoryName.trim() });
+                            }
+                          }}><Check className="w-4 h-4 text-green-600" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingCategoryId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <Layers className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">{cat.name}</span>
+                            {brandsInCat.length > 0 && (
+                              <Badge variant="secondary" className="text-xs">{brandsInCat.length} brand{brandsInCat.length !== 1 ? 's' : ''}</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                              setEditingCategoryId(cat.id);
+                              setEditCategoryName(cat.name);
+                            }} data-testid={`edit-category-${cat.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              disabled={brandsInCat.length > 0}
+                              title={brandsInCat.length > 0 ? `Cannot delete: ${brandsInCat.length} brand(s) use this category` : "Delete category"}
+                              onClick={() => deleteCategoryMutation.mutate(cat.id)}
+                              data-testid={`delete-category-${cat.id}`}
+                            ><Trash2 className="w-3.5 h-3.5" /></Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {categoryList.length === 0 && (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No categories yet. Add one above.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
       </Tabs>
     </div>

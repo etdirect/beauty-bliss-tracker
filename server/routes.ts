@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema } from "@shared/schema";
+import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 // Extend express-session types
@@ -214,6 +214,31 @@ export async function registerRoutes(
     const counter = await storage.updateCounter(req.params.id as string, req.body);
     if (!counter) return res.status(404).json({ error: "Not found" });
     res.json(counter);
+  });
+
+  // === BRANDS ===
+  // === CATEGORIES ===
+  app.get("/api/categories", requireAuth, async (_req, res) => {
+    const categories = await storage.getCategories();
+    res.json(categories);
+  });
+
+  app.post("/api/categories", requireManagement, async (req, res) => {
+    const parsed = insertCategorySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const cat = await storage.createCategory(parsed.data);
+    res.json(cat);
+  });
+
+  app.patch("/api/categories/:id", requireManagement, async (req, res) => {
+    const cat = await storage.updateCategory(req.params.id as string, req.body);
+    if (!cat) return res.status(404).json({ error: "Not found" });
+    res.json(cat);
+  });
+
+  app.delete("/api/categories/:id", requireManagement, async (req, res) => {
+    await storage.deleteCategory(req.params.id as string);
+    res.json({ ok: true });
   });
 
   // === BRANDS ===

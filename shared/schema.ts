@@ -14,6 +14,17 @@ export const insertCounterSchema = createInsertSchema(counters).omit({ id: true 
 export type InsertCounter = z.infer<typeof insertCounterSchema>;
 export type Counter = typeof counters.$inferSelect;
 
+// Categories
+export const categories = pgTable("categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertCategorySchema = createInsertSchema(categories).omit({ id: true });
+export type InsertCategory = z.infer<typeof insertCategorySchema>;
+export type Category = typeof categories.$inferSelect;
+
 // Brands
 export const brands = pgTable("brands", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

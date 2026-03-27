@@ -10,6 +10,7 @@ import {
   type User, type InsertUser,
   type UserPosAssignment,
   type BrandPosAvailability,
+  type Category, type InsertCategory,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
@@ -22,6 +23,12 @@ export interface IStorage {
   getCounter(id: string): Promise<Counter | undefined>;
   createCounter(counter: InsertCounter): Promise<Counter>;
   updateCounter(id: string, data: Partial<InsertCounter>): Promise<Counter | undefined>;
+
+  // Categories
+  getCategories(): Promise<Category[]>;
+  createCategory(cat: InsertCategory): Promise<Category>;
+  updateCategory(id: string, data: Partial<InsertCategory>): Promise<Category | undefined>;
+  deleteCategory(id: string): Promise<void>;
 
   // Brands
   getBrands(): Promise<Brand[]>;
@@ -146,6 +153,11 @@ export class PgStorage implements IStorage {
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         name TEXT NOT NULL,
         is_active BOOLEAN NOT NULL DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS categories (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL UNIQUE,
+        sort_order INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS brands (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -274,6 +286,23 @@ export class PgStorage implements IStorage {
       console.log("[pg] Unique index on sales_entries ensured");
     } catch (err) {
       console.error("[pg] Failed to create unique index on sales_entries:", err);
+    }
+
+    // Seed default categories if empty
+    const { rows: existingCats } = await this.q("SELECT id FROM categories LIMIT 1");
+    if (existingCats.length === 0) {
+      console.log("[pg] Seeding default categories...");
+      const defaultCats = [
+        "Skincare", "Haircare", "Babycare", "Makeup", "Fragrance",
+        "Personal Care", "Health Supplements", "Small Electronic Devices",
+        "Snacks", "Beauty Accessories", "Body Care", "Others",
+      ];
+      for (let i = 0; i < defaultCats.length; i++) {
+        await this.q(
+          "INSERT INTO categories (id, name, sort_order) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING",
+          [randomUUID(), defaultCats[i], i + 1]
+        );
+      }
     }
 
     // Seed default management user if users table is empty
@@ -453,6 +482,35 @@ export class PgStorage implements IStorage {
     vals.push(id);
     const { rows } = await this.q(`UPDATE counters SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
     return rows[0] ? this.mapCounter(rows[0]) : undefined;
+  }
+
+  // ── Categories ──
+  private mapCategory(r: any): Category {
+    return { id: r.id, name: r.name, sortOrder: r.sort_order ?? 0 };
+  }
+  async getCategories(): Promise<Category[]> {
+    const { rows } = await this.q("SELECT * FROM categories ORDER BY sort_order, name");
+    return rows.map((r: any) => this.mapCategory(r));
+  }
+  async createCategory(data: InsertCategory): Promise<Category> {
+    const id = randomUUID();
+    const { rows } = await this.q(
+      "INSERT INTO categories (id, name, sort_order) VALUES ($1, $2, $3) RETURNING *",
+      [id, data.name, data.sortOrder ?? 0]
+    );
+    return this.mapCategory(rows[0]);
+  }
+  async updateCategory(id: string, data: Partial<InsertCategory>): Promise<Category | undefined> {
+    const sets: string[] = []; const vals: any[] = []; let i = 1;
+    if (data.name !== undefined) { sets.push(`name=$${i++}`); vals.push(data.name); }
+    if (data.sortOrder !== undefined) { sets.push(`sort_order=$${i++}`); vals.push(data.sortOrder); }
+    if (sets.length === 0) return undefined;
+    vals.push(id);
+    const { rows } = await this.q(`UPDATE categories SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+    return rows[0] ? this.mapCategory(rows[0]) : undefined;
+  }
+  async deleteCategory(id: string): Promise<void> {
+    await this.q("DELETE FROM categories WHERE id=$1", [id]);
   }
 
   // ── Brands ──
@@ -816,6 +874,7 @@ export class MemStorage implements IStorage {
   private usersMap: Map<string, User> = new Map();
   private userPosAssignmentsMap: Map<string, UserPosAssignment> = new Map();
   private brandPosAvailabilityMap: Map<string, BrandPosAvailability> = new Map();
+  private categoriesMap: Map<string, Category> = new Map();
 
   constructor() {
     this.seed();
@@ -942,6 +1001,11 @@ export class MemStorage implements IStorage {
   async getCounter(id: string): Promise<Counter | undefined> { return this.counters.get(id); }
   async createCounter(data: InsertCounter): Promise<Counter> { const id = randomUUID(); const c: Counter = { id, name: data.name, isActive: data.isActive ?? true }; this.counters.set(id, c); return c; }
   async updateCounter(id: string, data: Partial<InsertCounter>): Promise<Counter | undefined> { const c = this.counters.get(id); if (!c) return undefined; const u = { ...c, ...data }; this.counters.set(id, u); return u; }
+
+  async getCategories(): Promise<Category[]> { return Array.from(this.categoriesMap.values()).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)); }
+  async createCategory(data: InsertCategory): Promise<Category> { const id = randomUUID(); const c: Category = { id, name: data.name, sortOrder: data.sortOrder ?? 0 }; this.categoriesMap.set(id, c); return c; }
+  async updateCategory(id: string, data: Partial<InsertCategory>): Promise<Category | undefined> { const c = this.categoriesMap.get(id); if (!c) return undefined; const u = { ...c, ...data }; this.categoriesMap.set(id, u); return u; }
+  async deleteCategory(id: string): Promise<void> { this.categoriesMap.delete(id); }
 
   async getBrands(): Promise<Brand[]> { return Array.from(this.brands.values()); }
   async getBrand(id: string): Promise<Brand | undefined> { return this.brands.get(id); }
