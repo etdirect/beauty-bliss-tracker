@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DollarSign, ShoppingCart, TrendingUp, Package,
   Filter, ChevronDown,
@@ -330,7 +329,7 @@ export default function ManagementDashboard() {
                       <button className="text-primary underline" onClick={clearAllChannels}>None</button>
                     </div>
                   </div>
-                  <ScrollArea className="max-h-[200px]">
+                  <div className="max-h-[300px] overflow-y-auto pr-1">
                     <div className="space-y-2">
                       {channels.map((ch) => (
                         <label key={ch} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -342,7 +341,7 @@ export default function ManagementDashboard() {
                         </label>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -365,7 +364,7 @@ export default function ManagementDashboard() {
                       <button className="text-primary underline" onClick={clearAllCounters}>None</button>
                     </div>
                   </div>
-                  <ScrollArea className="max-h-[300px]">
+                  <div className="max-h-[400px] overflow-y-auto pr-1">
                     <div className="space-y-3">
                       {Object.entries(posGroupedByChannel).map(([channel, locations]) => (
                         <div key={channel}>
@@ -384,7 +383,7 @@ export default function ManagementDashboard() {
                         </div>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>

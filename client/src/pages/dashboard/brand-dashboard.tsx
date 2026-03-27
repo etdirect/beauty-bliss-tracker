@@ -13,7 +13,6 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DollarSign, Tag, Award, Layers,
   Filter, ChevronDown,
@@ -533,7 +532,7 @@ export default function BrandDashboard() {
                       <button className="text-primary underline" onClick={() => setSelectedBrands(new Set())}>None</button>
                     </div>
                   </div>
-                  <ScrollArea className="max-h-[250px]">
+                  <div className="max-h-[350px] overflow-y-auto pr-1">
                     <div className="space-y-2">
                       {categoryFilteredBrands.map((b) => (
                         <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -546,7 +545,7 @@ export default function BrandDashboard() {
                         </label>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -611,7 +610,7 @@ export default function BrandDashboard() {
                           <button className="text-primary underline" onClick={() => setSelectedCounters(new Set())}>None</button>
                         </div>
                       </div>
-                      <ScrollArea className="max-h-[300px]">
+                      <div className="max-h-[400px] overflow-y-auto pr-1">
                         <div className="space-y-3">
                           {Object.entries(posGroupedByChannel).map(([channel, locs]) => (
                             <div key={channel}>
@@ -633,7 +632,7 @@ export default function BrandDashboard() {
                             </div>
                           ))}
                         </div>
-                      </ScrollArea>
+                      </div>
                     </>
                   )}
                 </div>
