@@ -14,8 +14,8 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  DollarSign, Tag, Award, Layers,
-  Filter, ChevronDown,
+  DollarSign, Tag, Package, TrendingUp, TrendingDown, CalendarClock,
+  Filter, ChevronDown, Layers,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -77,6 +77,7 @@ export default function BrandDashboard() {
 
   // Monthly state — year + month selectors
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
+  const [monthlyMonth, setMonthlyMonth] = useState<string>("all"); // "all" or "01"-"12"
 
   // Yearly state — last 2 years
   const [yearlyEnd, setYearlyEnd] = useState(String(currentYear));
@@ -95,7 +96,8 @@ export default function BrandDashboard() {
     }
     if (timePeriod === "monthly") {
       const y = Number(monthlyYear);
-      return { queryStart: `${y}-01-01`, queryEnd: `${y}-12-31` };
+      // Fetch current year + previous year (for YoY comparison)
+      return { queryStart: `${y - 1}-01-01`, queryEnd: `${y}-12-31` };
     }
     // yearly: 2 years ending at yearlyEnd
     const ey = Number(yearlyEnd);
@@ -186,45 +188,58 @@ export default function BrandDashboard() {
     [sales, activeBrandIds, activeCounterIds],
   );
 
+  // ── Current-period sales (excludes comparison year for charts) ──
+  const currentPeriodSales = useMemo(() => {
+    if (timePeriod === "monthly") {
+      return filteredSales.filter((s) => s.date.startsWith(monthlyYear));
+    }
+    return filteredSales;
+  }, [filteredSales, timePeriod, monthlyYear]);
+
+  // ── Month-filtered sales (for KPIs when a specific month is selected) ──
+  const kpiSales = useMemo(() => {
+    if (timePeriod !== "monthly" || monthlyMonth === "all") return currentPeriodSales;
+    const prefix = `${monthlyYear}-${monthlyMonth}`;
+    return filteredSales.filter((s) => s.date.startsWith(prefix));
+  }, [filteredSales, currentPeriodSales, timePeriod, monthlyYear, monthlyMonth]);
+
   // ── KPIs ──────────────────────────────────────
-  const totalSales = useMemo(() => filteredSales.reduce((s, e) => s + e.amount, 0), [filteredSales]);
-  const activeBrandCount = useMemo(() => {
-    const seen = new Set<string>();
-    filteredSales.forEach((e) => seen.add(e.brandId));
-    return seen.size;
-  }, [filteredSales]);
+  const totalSales = useMemo(() => kpiSales.reduce((s, e) => s + e.amount, 0), [kpiSales]);
+  const totalUnits = useMemo(() => kpiSales.reduce((s, e) => s + (e.units ?? 0), 0), [kpiSales]);
 
-  const topBrand = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
-      map[e.brandId] = (map[e.brandId] ?? 0) + e.amount;
-    });
-    let best = "";
-    let bestVal = 0;
-    for (const [id, val] of Object.entries(map)) {
-      if (val > bestVal) { best = id; bestVal = val; }
-    }
-    return best ? (brandMap.get(best)?.name ?? "—") : "—";
-  }, [filteredSales, brandMap]);
+  // Comparison: vs Last Month
+  const vsLastMonth = useMemo(() => {
+    if (timePeriod !== "monthly" || monthlyMonth === "all") return null;
+    const y = Number(monthlyYear);
+    const m = Number(monthlyMonth);
+    const prevM = m === 1 ? 12 : m - 1;
+    const prevY = m === 1 ? y - 1 : y;
+    const prevPrefix = `${prevY}-${String(prevM).padStart(2, "0")}`;
+    const prevSales = sales.filter((s) =>
+      s.date.startsWith(prevPrefix) && activeBrandIds.has(s.brandId) && activeCounterIds.has(s.counterId)
+    );
+    const prevTotal = prevSales.reduce((s, e) => s + e.amount, 0);
+    if (prevTotal === 0) return null;
+    return ((totalSales - prevTotal) / prevTotal) * 100;
+  }, [timePeriod, monthlyYear, monthlyMonth, totalSales, sales, activeBrandIds, activeCounterIds]);
 
-  const topCategory = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
-      const cat = brandMap.get(e.brandId)?.category ?? "Unknown";
-      map[cat] = (map[cat] ?? 0) + e.amount;
-    });
-    let best = "";
-    let bestVal = 0;
-    for (const [cat, val] of Object.entries(map)) {
-      if (val > bestVal) { best = cat; bestVal = val; }
-    }
-    return best || "—";
-  }, [filteredSales, brandMap]);
+  // Comparison: vs Same Month Last Year
+  const vsLastYear = useMemo(() => {
+    if (timePeriod !== "monthly" || monthlyMonth === "all") return null;
+    const y = Number(monthlyYear);
+    const lyPrefix = `${y - 1}-${monthlyMonth}`;
+    const lySales = sales.filter((s) =>
+      s.date.startsWith(lyPrefix) && activeBrandIds.has(s.brandId) && activeCounterIds.has(s.counterId)
+    );
+    const lyTotal = lySales.reduce((s, e) => s + e.amount, 0);
+    if (lyTotal === 0) return null;
+    return ((totalSales - lyTotal) / lyTotal) * 100;
+  }, [timePeriod, monthlyYear, monthlyMonth, totalSales, sales, activeBrandIds, activeCounterIds]);
 
   // ── Active brand list for multi-line chart ────
   const activeBrandList = useMemo(() => {
     const seen = new Map<string, number>();
-    filteredSales.forEach((e) => {
+    currentPeriodSales.forEach((e) => {
       seen.set(e.brandId, (seen.get(e.brandId) ?? 0) + e.amount);
     });
     return Array.from(seen.entries())
@@ -233,7 +248,7 @@ export default function BrandDashboard() {
         id,
         name: brandMap.get(id)?.name ?? "Unknown",
       }));
-  }, [filteredSales, brandMap]);
+  }, [currentPeriodSales, brandMap]);
 
   // ── Sales Trend by Brand (multi-line) ─────────
   const brandTrendData = useMemo(() => {
@@ -242,7 +257,7 @@ export default function BrandDashboard() {
       // Build map: date -> brandId -> amount
       const map: Record<string, Record<string, number>> = {};
       allDates.forEach((d) => (map[d] = {}));
-      filteredSales.forEach((e) => {
+      currentPeriodSales.forEach((e) => {
         if (map[e.date]) {
           map[e.date][e.brandId] = (map[e.date][e.brandId] ?? 0) + e.amount;
         }
@@ -259,7 +274,7 @@ export default function BrandDashboard() {
       const allMonths = monthRange(`${monthlyYear}-01`, `${monthlyYear}-12`);
       const map: Record<string, Record<string, number>> = {};
       allMonths.forEach((ym) => (map[ym] = {}));
-      filteredSales.forEach((e) => {
+      currentPeriodSales.forEach((e) => {
         const ym = e.date.slice(0, 7);
         if (map[ym]) {
           map[ym][e.brandId] = (map[ym][e.brandId] ?? 0) + e.amount;
@@ -294,37 +309,37 @@ export default function BrandDashboard() {
       });
       return row;
     });
-  }, [timePeriod, filteredSales, activeBrandList, queryStart, queryEnd, monthlyYear, yearlyEnd]);
+  }, [timePeriod, currentPeriodSales, activeBrandList, queryStart, queryEnd, monthlyYear, yearlyEnd]);
 
   // ── Brand comparison bar data ─────────────────
   const brandCompareData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
+    currentPeriodSales.forEach((e) => {
       const name = brandMap.get(e.brandId)?.name ?? "Unknown";
       map[name] = (map[name] ?? 0) + e.amount;
     });
     return Object.entries(map)
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount);
-  }, [filteredSales, brandMap]);
+  }, [currentPeriodSales, brandMap]);
 
   // ── Category comparison data ──────────────────
   const categoryData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
+    currentPeriodSales.forEach((e) => {
       const cat = brandMap.get(e.brandId)?.category ?? "Unknown";
       map[cat] = (map[cat] ?? 0) + e.amount;
     });
     return Object.entries(map)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [filteredSales, brandMap]);
+  }, [currentPeriodSales, brandMap]);
 
   // ── Sales by Counter (stacked by brand) ───────
   const counterStackedData = useMemo(() => {
     // counterName -> brandName -> amount
     const map: Record<string, Record<string, number>> = {};
-    filteredSales.forEach((e) => {
+    currentPeriodSales.forEach((e) => {
       const cName = posNameMap.get(e.counterId) ?? "Unknown";
       const bName = brandMap.get(e.brandId)?.name ?? "Unknown";
       if (!map[cName]) map[cName] = {};
@@ -337,19 +352,19 @@ export default function BrandDashboard() {
       ...bMap,
     }));
     return entries.sort((a, b) => b.total - a.total).slice(0, 15);
-  }, [filteredSales, posNameMap, brandMap]);
+  }, [currentPeriodSales, posNameMap, brandMap]);
 
   // ── Sales by Channel ──────────────────────────
   const channelPieData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
+    currentPeriodSales.forEach((e) => {
       const ch = posChannelMap.get(e.counterId) ?? "Unknown";
       map[ch] = (map[ch] ?? 0) + e.amount;
     });
     return Object.entries(map)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [filteredSales, posChannelMap]);
+  }, [currentPeriodSales, posChannelMap]);
 
   // ── Toggle helpers ────────────────────────────
   function toggleSet(
@@ -447,18 +462,36 @@ export default function BrandDashboard() {
             )}
 
             {timePeriod === "monthly" && (
-              <div>
-                <Label className="text-xs text-muted-foreground">Year</Label>
-                <Select value={monthlyYear} onValueChange={setMonthlyYear}>
-                  <SelectTrigger className="w-[120px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {yearOptions.map((y) => (
-                      <SelectItem key={y} value={y}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex items-end gap-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Year</Label>
+                  <Select value={monthlyYear} onValueChange={setMonthlyYear}>
+                    <SelectTrigger className="w-[100px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {yearOptions.map((y) => (
+                        <SelectItem key={y} value={y}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Month</Label>
+                  <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Months</SelectItem>
+                      {["01","02","03","04","05","06","07","08","09","10","11","12"].map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {new Date(2000, Number(m) - 1, 1).toLocaleString("en-US", { month: "long" })}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )}
 
@@ -655,29 +688,41 @@ export default function BrandDashboard() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Brands Active</CardTitle>
-            <Tag className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Total Units</CardTitle>
+            <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{activeBrandCount}</div>
+            <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "\u2014"}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Top Brand</CardTitle>
-            <Award className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">vs. Last Month</CardTitle>
+            {vsLastMonth !== null && vsLastMonth >= 0 ? <TrendingUp className="h-4 w-4 text-green-600" /> : vsLastMonth !== null ? <TrendingDown className="h-4 w-4 text-red-500" /> : <TrendingUp className="h-4 w-4 text-muted-foreground" />}
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold truncate">{topBrand}</div>
+            {vsLastMonth !== null ? (
+              <div className={`text-2xl font-bold ${vsLastMonth >= 0 ? "text-green-600" : "text-red-500"}`}>
+                {vsLastMonth >= 0 ? "+" : ""}{vsLastMonth.toFixed(1)}%
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-muted-foreground">\u2014</div>
+            )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Top Category</CardTitle>
-            <Layers className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">vs. Last Year</CardTitle>
+            {vsLastYear !== null && vsLastYear >= 0 ? <CalendarClock className="h-4 w-4 text-green-600" /> : vsLastYear !== null ? <CalendarClock className="h-4 w-4 text-red-500" /> : <CalendarClock className="h-4 w-4 text-muted-foreground" />}
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold truncate">{topCategory}</div>
+            {vsLastYear !== null ? (
+              <div className={`text-2xl font-bold ${vsLastYear >= 0 ? "text-green-600" : "text-red-500"}`}>
+                {vsLastYear >= 0 ? "+" : ""}{vsLastYear.toFixed(1)}%
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-muted-foreground">\u2014</div>
+            )}
           </CardContent>
         </Card>
       </div>
