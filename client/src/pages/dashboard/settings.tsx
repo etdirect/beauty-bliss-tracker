@@ -60,6 +60,9 @@ export default function SettingsPage() {
   const [newCounterName, setNewCounterName] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
   const [newBrandCategory, setNewBrandCategory] = useState("Skincare");
+  const [editingBrandId, setEditingBrandId] = useState<string | null>(null);
+  const [editBrandName, setEditBrandName] = useState("");
+  const [editBrandCategory, setEditBrandCategory] = useState("");
 
   // Queries
   const { data: posLocations = [] } = useQuery<PosLocation[]>({ queryKey: ["/api/pos-locations"] });
@@ -227,6 +230,16 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/brands"] });
+    },
+  });
+
+  const editBrandMutation = useMutation({
+    mutationFn: async ({ id, name, category }: { id: string; name: string; category: string }) => {
+      await apiRequest("PATCH", `/api/brands/${id}`, { name, category });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brands"] });
+      setEditingBrandId(null);
     },
   });
 
@@ -738,23 +751,66 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 {brands.map(brand => (
                   <div key={brand.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div className="flex items-center gap-2">
-                      <Tag className="w-4 h-4 text-muted-foreground" />
-                      <span className={`text-sm ${brand.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
-                        {brand.name}
-                      </span>
-                      <Badge variant="secondary" className="text-xs">{brand.category}</Badge>
-                      {!brand.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleBrandMutation.mutate({ id: brand.id, isActive: !brand.isActive })}
-                      className="text-xs"
-                      data-testid={`toggle-brand-${brand.id}`}
-                    >
-                      {brand.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
-                    </Button>
+                    {editingBrandId === brand.id ? (
+                      /* Edit mode */
+                      <>
+                        <div className="flex items-center gap-2 flex-1">
+                          <Tag className="w-4 h-4 text-muted-foreground" />
+                          <Input className="h-8 text-sm w-[180px]" value={editBrandName} onChange={(e) => setEditBrandName(e.target.value)} placeholder="Brand name" />
+                          <Select value={editBrandCategory} onValueChange={setEditBrandCategory}>
+                            <SelectTrigger className="w-48 h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Skincare">Skincare</SelectItem>
+                              <SelectItem value="Haircare">Haircare</SelectItem>
+                              <SelectItem value="Babycare">Babycare</SelectItem>
+                              <SelectItem value="Makeup">Makeup</SelectItem>
+                              <SelectItem value="Fragrance">Fragrance</SelectItem>
+                              <SelectItem value="Personal Care">Personal Care</SelectItem>
+                              <SelectItem value="Health Supplements">Health Supplements</SelectItem>
+                              <SelectItem value="Small Electronic Devices">Small Electronic Devices</SelectItem>
+                              <SelectItem value="Snacks">Snacks</SelectItem>
+                              <SelectItem value="Beauty Accessories">Beauty Accessories</SelectItem>
+                              <SelectItem value="Body Care">Body Care</SelectItem>
+                              <SelectItem value="Others">Others</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            if (editBrandName.trim()) {
+                              editBrandMutation.mutate({ id: brand.id, name: editBrandName.trim(), category: editBrandCategory });
+                            }
+                          }}><Check className="w-4 h-4 text-green-600" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingBrandId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
+                        </div>
+                      </>
+                    ) : (
+                      /* View mode */
+                      <>
+                        <div className="flex items-center gap-2">
+                          <Tag className="w-4 h-4 text-muted-foreground" />
+                          <span className={`text-sm ${brand.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
+                            {brand.name}
+                          </span>
+                          <Badge variant="secondary" className="text-xs">{brand.category}</Badge>
+                          {!brand.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                            setEditingBrandId(brand.id);
+                            setEditBrandName(brand.name);
+                            setEditBrandCategory(brand.category);
+                          }} data-testid={`edit-brand-${brand.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleBrandMutation.mutate({ id: brand.id, isActive: !brand.isActive })}
+                            className="text-xs"
+                            data-testid={`toggle-brand-${brand.id}`}
+                          >
+                            {brand.isActive ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Deactivate</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Activate</>}
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
