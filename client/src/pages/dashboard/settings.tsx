@@ -692,17 +692,23 @@ export default function SettingsPage() {
                   className="flex-1"
                   data-testid="input-new-brand"
                 />
-                <Select value={newBrandCategory} onValueChange={setNewBrandCategory}>
-                  <SelectTrigger className="w-32" data-testid="select-brand-category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Skincare">Skincare</SelectItem>
-                    <SelectItem value="Haircare">Haircare</SelectItem>
-                    <SelectItem value="Body Care">Body Care</SelectItem>
-                    <SelectItem value="Others">Others</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">Category</label>
+                  <Select value={newBrandCategory} onValueChange={setNewBrandCategory}>
+                    <SelectTrigger className="w-36" data-testid="select-brand-category">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Skincare">Skincare</SelectItem>
+                      <SelectItem value="Haircare">Haircare</SelectItem>
+                      <SelectItem value="Personal Care">Personal Care</SelectItem>
+                      <SelectItem value="Babycare">Babycare</SelectItem>
+                      <SelectItem value="Makeup">Makeup</SelectItem>
+                      <SelectItem value="Body Care">Body Care</SelectItem>
+                      <SelectItem value="Others">Others</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button
                   onClick={() => createBrandMutation.mutate()}
                   disabled={!newBrandName.trim() || createBrandMutation.isPending}
