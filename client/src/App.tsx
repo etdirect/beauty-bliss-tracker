@@ -92,8 +92,8 @@ function AppRouter() {
     return <LoginPage onLogin={login} />;
   }
 
-  // BA role: only BA entry page
-  if (user.role === "ba") {
+  // BA and Part Time roles: only BA entry page
+  if (user.role === "ba" || user.role === "part_time") {
     return (
       <Switch>
         <Route path="/" component={BAEntry} />

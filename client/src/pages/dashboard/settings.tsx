@@ -429,6 +429,7 @@ export default function SettingsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ba">BA</SelectItem>
+                    <SelectItem value="part_time">Part Time</SelectItem>
                     <SelectItem value="management">Management</SelectItem>
                   </SelectContent>
                 </Select>
@@ -449,14 +450,17 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="p-0">
               {(() => {
-                // Sort: management first, then BA; within each group sort by name
+                // Sort: management first, then BA, then Part Time; within each group sort by name
+                const roleOrder: Record<string, number> = { management: 0, ba: 1, part_time: 2 };
                 const sorted = [...users].sort((a, b) => {
-                  if (a.role !== b.role) return a.role === "management" ? -1 : 1;
+                  const ra = roleOrder[a.role] ?? 3, rb = roleOrder[b.role] ?? 3;
+                  if (ra !== rb) return ra - rb;
                   return a.name.localeCompare(b.name);
                 });
                 const groups = [
                   { label: "Management", items: sorted.filter(u => u.role === "management") },
                   { label: "Beauty Advisors", items: sorted.filter(u => u.role === "ba") },
+                  { label: "Part Time", items: sorted.filter(u => u.role === "part_time") },
                 ].filter(g => g.items.length > 0);
                 // Sort POS once for all users
                 const sortedPos = [...activePos].sort((a, b) => {
@@ -483,6 +487,7 @@ export default function SettingsPage() {
                             <SelectTrigger className="w-[120px] h-8 text-sm"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="ba">BA</SelectItem>
+                              <SelectItem value="part_time">Part Time</SelectItem>
                               <SelectItem value="management">Management</SelectItem>
                             </SelectContent>
                           </Select>
@@ -564,7 +569,7 @@ export default function SettingsPage() {
                     )}
 
                     {/* POS Assignments — Option B: compact grid with channel/code prefix */}
-                    {user.role === "ba" && (
+                    {(user.role === "ba" || user.role === "part_time") && (
                       <div className="ml-6">
                         <p className="text-xs text-muted-foreground mb-1.5">Assigned POS:</p>
                         <div className="grid grid-cols-4 gap-x-3 gap-y-1.5">
