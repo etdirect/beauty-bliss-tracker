@@ -706,7 +706,7 @@ export default function BrandDashboard() {
                 {vsLastMonth >= 0 ? "+" : ""}{vsLastMonth.toFixed(1)}%
               </div>
             ) : (
-              <div className="text-2xl font-bold text-muted-foreground">\u2014</div>
+              <div className="text-2xl font-bold text-muted-foreground">—</div>
             )}
           </CardContent>
         </Card>
@@ -721,7 +721,7 @@ export default function BrandDashboard() {
                 {vsLastYear >= 0 ? "+" : ""}{vsLastYear.toFixed(1)}%
               </div>
             ) : (
-              <div className="text-2xl font-bold text-muted-foreground">\u2014</div>
+              <div className="text-2xl font-bold text-muted-foreground">—</div>
             )}
           </CardContent>
         </Card>
@@ -785,10 +785,10 @@ export default function BrandDashboard() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={Math.max(300, brandCompareData.length * 32)}>
-                <BarChart data={brandCompareData} layout="vertical" margin={{ left: 100 }}>
+                <BarChart data={brandCompareData} layout="vertical" margin={{ left: 10, right: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={70} tick={{ fontSize: 10 }} />
                   <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
                   <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
                     {brandCompareData.map((_, i) => (
@@ -847,10 +847,10 @@ export default function BrandDashboard() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={Math.max(300, counterStackedData.length * 36)}>
-              <BarChart data={counterStackedData} layout="vertical" margin={{ left: 120 }}>
+              <BarChart data={counterStackedData} layout="vertical" margin={{ left: 10, right: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="counter" width={110} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="counter" width={80} tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v: number) => fmtCurrency(v)} />
                 <Legend />
                 {activeBrandList.map((b, i) => (

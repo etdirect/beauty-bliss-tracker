@@ -528,10 +528,10 @@ export default function ManagementDashboard() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={Math.max(300, counterBarData.length * 32)}>
-                <BarChart data={counterBarData} layout="vertical" margin={{ left: 120 }}>
+                <BarChart data={counterBarData} layout="vertical" margin={{ left: 10, right: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 10 }} />
                   <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
                   <Bar dataKey="amount" fill={CHART_COLORS[4]} radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -553,10 +553,10 @@ export default function ManagementDashboard() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={Math.max(300, brandBarData.length * 32)}>
-              <BarChart data={brandBarData} layout="vertical" margin={{ left: 120 }}>
+              <BarChart data={brandBarData} layout="vertical" margin={{ left: 10, right: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
                 <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
                   {brandBarData.map((_, i) => (
