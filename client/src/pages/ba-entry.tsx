@@ -198,6 +198,14 @@ export default function BAEntry() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {!isManagement && (
+              <Link href="/my-dashboard">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-my-dashboard">
+                  <LayoutDashboard className="w-3.5 h-3.5" />
+                  My Dashboard
+                </span>
+              </Link>
+            )}
             {isManagement && (
               <Link href="/dashboard">
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-dashboard">

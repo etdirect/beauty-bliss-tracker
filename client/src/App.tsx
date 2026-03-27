@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import BAEntry from "@/pages/ba-entry";
+import BADashboard from "@/pages/ba-dashboard";
 import Dashboard from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
 
@@ -92,11 +93,12 @@ function AppRouter() {
     return <LoginPage onLogin={login} />;
   }
 
-  // BA and Part Time roles: only BA entry page
+  // BA and Part Time roles: BA entry + personal dashboard
   if (user.role === "ba" || user.role === "part_time") {
     return (
       <Switch>
         <Route path="/" component={BAEntry} />
+        <Route path="/my-dashboard" component={BADashboard} />
         <Route path="/dashboard">
           <Redirect to="/" />
         </Route>
