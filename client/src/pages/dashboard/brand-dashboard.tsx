@@ -79,8 +79,8 @@ export default function BrandDashboard() {
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
   const [monthlyMonth, setMonthlyMonth] = useState<string>("all"); // "all" or "01"-"12"
 
-  // Yearly state — last 2 years
-  const [yearlyEnd, setYearlyEnd] = useState(String(currentYear));
+  // Yearly state — multi-year checkboxes
+  const [selectedYears, setSelectedYears] = useState<Set<string>>(new Set([String(currentYear)]));
 
   // ── Filter state ──────────────────────────────
   const [selectedBrands, setSelectedBrands] = useState<Set<string> | null>(null);
@@ -99,10 +99,12 @@ export default function BrandDashboard() {
       // Fetch current year + previous year (for YoY comparison)
       return { queryStart: `${y - 1}-01-01`, queryEnd: `${y}-12-31` };
     }
-    // yearly: 2 years ending at yearlyEnd
-    const ey = Number(yearlyEnd);
-    return { queryStart: `${ey - 1}-01-01`, queryEnd: `${ey}-12-31` };
-  }, [timePeriod, rangeStart, rangeEnd, monthlyYear, yearlyEnd]);
+    // yearly: cover all selected years
+    const years = Array.from(selectedYears).map(Number).sort();
+    const minY = years[0] || currentYear;
+    const maxY = years[years.length - 1] || currentYear;
+    return { queryStart: `${minY}-01-01`, queryEnd: `${maxY}-12-31` };
+  }, [timePeriod, rangeStart, rangeEnd, monthlyYear, selectedYears, currentYear]);
 
   // ── Queries ───────────────────────────────────
   const { data: sales = [] } = useQuery<SalesEntry[]>({
@@ -309,25 +311,28 @@ export default function BrandDashboard() {
         return row;
       });
     }
-    // yearly
-    const ey = Number(yearlyEnd);
-    const years = [String(ey - 1), String(ey)];
+    // yearly — overlaid lines per year, x-axis = month
+    const years = Array.from(selectedYears).sort();
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    // Build map: month -> year -> total amount
     const map: Record<string, Record<string, number>> = {};
-    years.forEach((y) => (map[y] = {}));
+    months.forEach((m) => (map[m] = {}));
     filteredSales.forEach((e) => {
       const y = e.date.slice(0, 4);
-      if (map[y]) {
-        map[y][e.brandId] = (map[y][e.brandId] ?? 0) + e.amount;
-      }
+      if (!years.includes(y)) return;
+      if (!activeBrandIds.has(e.brandId) || !activeCounterIds.has(e.counterId)) return;
+      const mIdx = Number(e.date.slice(5, 7)) - 1;
+      const mName = months[mIdx];
+      map[mName][y] = (map[mName][y] ?? 0) + e.amount;
     });
-    return years.map((y) => {
-      const row: Record<string, any> = { label: y };
-      activeBrandList.forEach((b) => {
-        row[b.name] = map[y][b.id] ?? 0;
+    return months.map((m) => {
+      const row: Record<string, any> = { label: m };
+      years.forEach((y) => {
+        row[y] = map[m][y] ?? 0;
       });
       return row;
     });
-  }, [timePeriod, currentPeriodSales, activeBrandList, queryStart, queryEnd, monthlyYear, yearlyEnd]);
+  }, [timePeriod, currentPeriodSales, activeBrandList, queryStart, queryEnd, monthlyYear, selectedYears, filteredSales, activeBrandIds, activeCounterIds]);
 
   // ── Brand comparison bar data ─────────────────
   const brandCompareData = useMemo(() => {
@@ -514,18 +519,26 @@ export default function BrandDashboard() {
             )}
 
             {timePeriod === "yearly" && (
-              <div>
-                <Label className="text-xs text-muted-foreground">Up to Year</Label>
-                <Select value={yearlyEnd} onValueChange={setYearlyEnd}>
-                  <SelectTrigger className="w-[120px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {yearOptions.map((y) => (
-                      <SelectItem key={y} value={y}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex items-end gap-3">
+                <Label className="text-xs text-muted-foreground">Years:</Label>
+                <div className="flex flex-wrap gap-3">
+                  {yearOptions.map((y) => (
+                    <label key={y} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={selectedYears.has(y)}
+                        onCheckedChange={(checked) => {
+                          setSelectedYears((prev) => {
+                            const next = new Set(prev);
+                            if (checked) next.add(y); else next.delete(y);
+                            if (next.size === 0) next.add(y); // keep at least 1
+                            return next;
+                          });
+                        }}
+                      />
+                      {y}
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -799,10 +812,31 @@ export default function BrandDashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {brandTrendData.length === 0 || activeBrandList.length === 0 ? (
+          {brandTrendData.length === 0 ? (
             <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
               No data for selected filters
             </div>
+          ) : timePeriod === "yearly" ? (
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={brandTrendData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v: number) => fmtCurrency(v)} />
+                <Legend />
+                {Array.from(selectedYears).sort().map((y, i) => (
+                  <Line
+                    key={y}
+                    type="monotone"
+                    dataKey={y}
+                    stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
           ) : (
             <ResponsiveContainer width="100%" height={350}>
               <LineChart data={brandTrendData}>
