@@ -14,14 +14,19 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
   DollarSign, Tag, Package, TrendingUp, TrendingDown, CalendarClock,
-  Filter, ChevronDown, Layers,
+  Filter, ChevronDown, Layers, Download,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { CHART_COLORS } from "../dashboard";
+import { downloadExcel, dateRangeFilename, fmtCurrencyExport, fmtRatio } from "@/lib/exportExcel";
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -439,6 +444,228 @@ export default function BrandDashboard() {
     return groups;
   }, [posLocations, activeChannels]);
 
+  // ── Effective date range for filenames ────────
+  const effectiveStart = useMemo(() => {
+    if (timePeriod === "range") return rangeStart;
+    if (timePeriod === "monthly") {
+      if (monthlyMonth === "all") return `${monthlyYear}-01-01`;
+      return `${monthlyYear}-${monthlyMonth}-01`;
+    }
+    const years = Array.from(selectedYears).sort();
+    return `${years[0]}-01-01`;
+  }, [timePeriod, rangeStart, monthlyYear, monthlyMonth, selectedYears]);
+
+  const effectiveEnd = useMemo(() => {
+    if (timePeriod === "range") return rangeEnd;
+    if (timePeriod === "monthly") {
+      if (monthlyMonth === "all") return `${monthlyYear}-12-31`;
+      const m = Number(monthlyMonth);
+      return `${monthlyYear}-${monthlyMonth}-${String(daysInMonth(Number(monthlyYear), m)).padStart(2, "0")}`;
+    }
+    const years = Array.from(selectedYears).sort();
+    return `${years[years.length - 1]}-12-31`;
+  }, [timePeriod, rangeEnd, monthlyYear, monthlyMonth, selectedYears]);
+
+  // ── Export functions ──────────────────────────
+
+  function exportBrandPerformance() {
+    const map: Record<string, { sales: number; units: number; orders: number }> = {};
+    kpiSales.forEach((e) => {
+      if (!map[e.brandId]) map[e.brandId] = { sales: 0, units: 0, orders: 0 };
+      map[e.brandId].sales += e.amount;
+      map[e.brandId].units += e.units ?? 0;
+      map[e.brandId].orders += e.orders ?? 0;
+    });
+    const rows = Object.entries(map)
+      .sort(([, a], [, b]) => b.sales - a.sales)
+      .map(([id, d]) => ({
+        Brand: brandMap.get(id)?.name ?? "Unknown",
+        Category: brandMap.get(id)?.category ?? "Unknown",
+        "Total Sales": fmtCurrencyExport(d.sales),
+        "Total Units": d.units,
+        "Total Orders": d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+        "% of Total Sales": totalSales > 0 ? Math.round((d.sales / totalSales) * 10000) / 100 : 0,
+      }));
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Performance", effectiveStart, effectiveEnd),
+      [{ name: "Brand Performance", data: rows }],
+    );
+  }
+
+  function exportBrandCounterMatrix() {
+    // Get active counters with sales
+    const counterIds = new Set<string>();
+    currentPeriodSales.forEach((e) => counterIds.add(e.counterId));
+    const counterList = Array.from(counterIds).map((id) => ({
+      id,
+      name: posNameMap.get(id) ?? "Unknown",
+    })).sort((a, b) => a.name.localeCompare(b.name));
+
+    // brand -> counter -> amount
+    const matrix: Record<string, Record<string, number>> = {};
+    const brandTotals: Record<string, number> = {};
+    currentPeriodSales.forEach((e) => {
+      const bName = brandMap.get(e.brandId)?.name ?? "Unknown";
+      if (!matrix[bName]) matrix[bName] = {};
+      matrix[bName][e.counterId] = (matrix[bName][e.counterId] ?? 0) + e.amount;
+      brandTotals[bName] = (brandTotals[bName] ?? 0) + e.amount;
+    });
+
+    const rows = Object.entries(brandTotals)
+      .sort(([, a], [, b]) => b - a)
+      .map(([bName]) => {
+        const row: Record<string, any> = { Brand: bName };
+        counterList.forEach((c) => {
+          row[c.name] = fmtCurrencyExport(matrix[bName]?.[c.id] ?? 0);
+        });
+        row["Total"] = fmtCurrencyExport(brandTotals[bName]);
+        return row;
+      });
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Counter_Matrix", effectiveStart, effectiveEnd),
+      [{ name: "Brand x Counter", data: rows }],
+    );
+  }
+
+  function exportCategorySummary() {
+    const map: Record<string, { sales: number; units: number; orders: number; brands: Set<string> }> = {};
+    kpiSales.forEach((e) => {
+      const cat = brandMap.get(e.brandId)?.category ?? "Unknown";
+      if (!map[cat]) map[cat] = { sales: 0, units: 0, orders: 0, brands: new Set() };
+      map[cat].sales += e.amount;
+      map[cat].units += e.units ?? 0;
+      map[cat].orders += e.orders ?? 0;
+      map[cat].brands.add(e.brandId);
+    });
+    const rows = Object.entries(map)
+      .sort(([, a], [, b]) => b.sales - a.sales)
+      .map(([cat, d]) => ({
+        Category: cat,
+        "# Brands": d.brands.size,
+        "Total Sales": fmtCurrencyExport(d.sales),
+        "Total Units": d.units,
+        "Total Orders": d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+      }));
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Category", effectiveStart, effectiveEnd),
+      [{ name: "Category Summary", data: rows }],
+    );
+  }
+
+  function exportBrandMonthlyTrend() {
+    // month -> brand -> amount
+    const map: Record<string, Record<string, number>> = {};
+    const monthTotals: Record<string, number> = {};
+    const brandNames = new Set<string>();
+    currentPeriodSales.forEach((e) => {
+      const ym = e.date.slice(0, 7);
+      const bName = brandMap.get(e.brandId)?.name ?? "Unknown";
+      if (!map[ym]) map[ym] = {};
+      map[ym][bName] = (map[ym][bName] ?? 0) + e.amount;
+      monthTotals[ym] = (monthTotals[ym] ?? 0) + e.amount;
+      brandNames.add(bName);
+    });
+    const sortedMonths = Object.keys(map).sort();
+    const sortedBrands = Array.from(brandNames).sort();
+
+    const rows = sortedMonths.map((ym) => {
+      const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1);
+      const row: Record<string, any> = {
+        Month: d.toLocaleString("en-US", { month: "short", year: "numeric" }),
+      };
+      sortedBrands.forEach((bn) => {
+        row[bn] = fmtCurrencyExport(map[ym][bn] ?? 0);
+      });
+      row["Total"] = fmtCurrencyExport(monthTotals[ym] ?? 0);
+      return row;
+    });
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Monthly_Trend", effectiveStart, effectiveEnd),
+      [{ name: "Brand Monthly Trend", data: rows }],
+    );
+  }
+
+  function exportBrandChannelMatrix() {
+    // brand -> channel -> amount
+    const matrix: Record<string, Record<string, number>> = {};
+    const brandTotals: Record<string, number> = {};
+    const channelSet = new Set<string>();
+    currentPeriodSales.forEach((e) => {
+      const bName = brandMap.get(e.brandId)?.name ?? "Unknown";
+      const ch = posChannelMap.get(e.counterId) ?? "Unknown";
+      if (!matrix[bName]) matrix[bName] = {};
+      matrix[bName][ch] = (matrix[bName][ch] ?? 0) + e.amount;
+      brandTotals[bName] = (brandTotals[bName] ?? 0) + e.amount;
+      channelSet.add(ch);
+    });
+    const channelList = Array.from(channelSet).sort();
+
+    const rows = Object.entries(brandTotals)
+      .sort(([, a], [, b]) => b - a)
+      .map(([bName]) => {
+        const row: Record<string, any> = { Brand: bName };
+        channelList.forEach((ch) => {
+          row[ch] = fmtCurrencyExport(matrix[bName]?.[ch] ?? 0);
+        });
+        row["Total"] = fmtCurrencyExport(brandTotals[bName]);
+        return row;
+      });
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Channel_Matrix", effectiveStart, effectiveEnd),
+      [{ name: "Brand x Channel", data: rows }],
+    );
+  }
+
+  function exportCurrentView() {
+    // Summary sheet — adapt based on time period
+    const summaryRow: Record<string, any> = {
+      "Total Sales": fmtCurrencyExport(totalSales),
+      "Total Units": totalUnits,
+    };
+    if (timePeriod === "range") {
+      summaryRow["Avg Orders/Day"] = avgOrdersPerDay !== null ? Math.round(avgOrdersPerDay * 10) / 10 : "—";
+      summaryRow["Avg Units/Day"] = avgUnitsPerDay !== null ? Math.round(avgUnitsPerDay * 10) / 10 : "—";
+    } else if (timePeriod === "monthly" && monthlyMonth !== "all") {
+      summaryRow["vs Last Month %"] = vsLastMonth !== null ? Math.round(vsLastMonth * 100) / 100 : "—";
+      summaryRow["vs Last Year %"] = vsLastYear !== null ? Math.round(vsLastYear * 100) / 100 : "—";
+    }
+
+    // By Brand sheet
+    const brandRows = brandCompareData.map((r) => ({
+      Brand: r.name,
+      Sales: fmtCurrencyExport(r.amount),
+      "% of Total": totalSales > 0 ? Math.round((r.amount / totalSales) * 10000) / 100 : 0,
+    }));
+
+    // By Category sheet
+    const catRows = categoryData.map((r) => ({
+      Category: r.name,
+      Sales: fmtCurrencyExport(r.value),
+      "% of Total": totalSales > 0 ? Math.round((r.value / totalSales) * 10000) / 100 : 0,
+    }));
+
+    // By Channel sheet
+    const channelRows = channelPieData.map((r) => ({
+      Channel: r.name,
+      Sales: fmtCurrencyExport(r.value),
+      "% of Total": totalSales > 0 ? Math.round((r.value / totalSales) * 10000) / 100 : 0,
+    }));
+
+    downloadExcel(
+      dateRangeFilename("Brand_Analytics_Current_View", effectiveStart, effectiveEnd),
+      [
+        { name: "Summary", data: [summaryRow] },
+        { name: "By Brand", data: brandRows },
+        { name: "By Category", data: catRows },
+        { name: "By Channel", data: channelRows },
+      ],
+    );
+  }
+
   // ── Render ────────────────────────────────────
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
@@ -702,6 +929,24 @@ export default function BrandDashboard() {
                 </div>
               </PopoverContent>
             </Popover>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Download className="h-3.5 w-3.5" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportBrandPerformance}>Brand Performance Summary</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportBrandCounterMatrix}>Brand × Counter Matrix</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportCategorySummary}>Category Summary</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportBrandMonthlyTrend}>Brand Monthly Trend</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportBrandChannelMatrix}>Brand × Channel Matrix</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={exportCurrentView}>Export Current View</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardContent>
       </Card>

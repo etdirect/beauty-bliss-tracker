@@ -14,14 +14,19 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
   DollarSign, ShoppingCart, TrendingUp, Package,
-  Filter, ChevronDown,
+  Filter, ChevronDown, Download,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { CHART_COLORS } from "../dashboard";
+import { downloadExcel, dateRangeFilename, fmtCurrencyExport, fmtRatio } from "@/lib/exportExcel";
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -437,6 +442,192 @@ export default function ManagementDashboard() {
 
   const useBars = trendChartMode === "monthly-bar" && !showIndividualLines;
 
+  // Brand category lookup
+  const brandCategoryMap = useMemo(() => {
+    const m = new Map<string, string>();
+    brands.forEach((b) => m.set(b.id, b.category));
+    return m;
+  }, [brands]);
+
+  // ── Export functions ──────────────────────────
+
+  function exportDailySales() {
+    const map: Record<string, { sales: number; units: number; orders: number }> = {};
+    filteredSales.forEach((e) => {
+      if (!map[e.date]) map[e.date] = { sales: 0, units: 0, orders: 0 };
+      map[e.date].sales += e.amount;
+      map[e.date].units += e.units;
+      map[e.date].orders += e.orders ?? 0;
+    });
+    const rows = Object.entries(map)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => ({
+        Date: date,
+        "Total Sales": fmtCurrencyExport(d.sales),
+        "Total Units": d.units,
+        "Total Orders": d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+      }));
+    downloadExcel(
+      dateRangeFilename("Management_Daily_Sales", queryStart, queryEnd),
+      [{ name: "Daily Sales", data: rows }],
+    );
+  }
+
+  function exportPosPerformance() {
+    const map: Record<string, { sales: number; units: number; orders: number }> = {};
+    filteredSales.forEach((e) => {
+      if (!map[e.counterId]) map[e.counterId] = { sales: 0, units: 0, orders: 0 };
+      map[e.counterId].sales += e.amount;
+      map[e.counterId].units += e.units;
+      map[e.counterId].orders += e.orders ?? 0;
+    });
+    const rows = Object.entries(map)
+      .sort(([, a], [, b]) => b.sales - a.sales)
+      .map(([id, d]) => ({
+        Counter: posNameMap.get(id) ?? "Unknown",
+        Channel: posChannelMap.get(id) ?? "Unknown",
+        "Total Sales": fmtCurrencyExport(d.sales),
+        "Total Units": d.units,
+        "Total Orders": d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+        "% of Total": totalSales > 0 ? Math.round((d.sales / totalSales) * 10000) / 100 : 0,
+      }));
+    downloadExcel(
+      dateRangeFilename("Management_POS_Performance", queryStart, queryEnd),
+      [{ name: "POS Performance", data: rows }],
+    );
+  }
+
+  function exportChannelSummary() {
+    const map: Record<string, { sales: number; units: number; orders: number; counters: Set<string> }> = {};
+    filteredSales.forEach((e) => {
+      const ch = posChannelMap.get(e.counterId) ?? "Unknown";
+      if (!map[ch]) map[ch] = { sales: 0, units: 0, orders: 0, counters: new Set() };
+      map[ch].sales += e.amount;
+      map[ch].units += e.units;
+      map[ch].orders += e.orders ?? 0;
+      map[ch].counters.add(e.counterId);
+    });
+    const rows = Object.entries(map)
+      .sort(([, a], [, b]) => b.sales - a.sales)
+      .map(([ch, d]) => ({
+        Channel: ch,
+        "Total Sales": fmtCurrencyExport(d.sales),
+        "Total Units": d.units,
+        "Total Orders": d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+        "# Counters": d.counters.size,
+      }));
+    downloadExcel(
+      dateRangeFilename("Management_Channel_Summary", queryStart, queryEnd),
+      [{ name: "Channel Summary", data: rows }],
+    );
+  }
+
+  function exportMoMTrend() {
+    // Aggregate by month from all fetched sales (filtered by POS)
+    const allFiltered = sales.filter((s) => activeCounterIds.has(s.counterId));
+    const map: Record<string, { sales: number; units: number; orders: number }> = {};
+    allFiltered.forEach((e) => {
+      const ym = e.date.slice(0, 7);
+      if (!map[ym]) map[ym] = { sales: 0, units: 0, orders: 0 };
+      map[ym].sales += e.amount;
+      map[ym].units += e.units;
+      map[ym].orders += e.orders ?? 0;
+    });
+    const sortedMonths = Object.keys(map).sort();
+    const rows = sortedMonths.map((ym, i) => {
+      const d = map[ym];
+      const prev = i > 0 ? map[sortedMonths[i - 1]] : null;
+      const sameMonthLY = map[`${Number(ym.slice(0, 4)) - 1}${ym.slice(4)}`] ?? null;
+      const vsPrior = prev && prev.sales > 0
+        ? Math.round(((d.sales - prev.sales) / prev.sales) * 10000) / 100
+        : "—";
+      const vsLY = sameMonthLY && sameMonthLY.sales > 0
+        ? Math.round(((d.sales - sameMonthLY.sales) / sameMonthLY.sales) * 10000) / 100
+        : "—";
+      const date = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1);
+      return {
+        Month: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
+        Sales: fmtCurrencyExport(d.sales),
+        Units: d.units,
+        Orders: d.orders,
+        ATV: fmtRatio(d.sales, d.orders),
+        UPT: fmtRatio(d.units, d.orders),
+        "vs Prior Month %": vsPrior,
+        "vs Same Month LY %": vsLY,
+      };
+    });
+    downloadExcel(
+      dateRangeFilename("Management_MoM_Trend", queryStart, queryEnd),
+      [{ name: "Month over Month", data: rows }],
+    );
+  }
+
+  function exportRawData() {
+    const rows = filteredSales
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((e) => ({
+        Date: e.date,
+        Channel: posChannelMap.get(e.counterId) ?? "Unknown",
+        Counter: posNameMap.get(e.counterId) ?? "Unknown",
+        Brand: brandMap.get(e.brandId) ?? "Unknown",
+        Category: brandCategoryMap.get(e.brandId) ?? "Unknown",
+        Sales: fmtCurrencyExport(e.amount),
+        Units: e.units,
+        Orders: e.orders ?? 0,
+      }));
+    downloadExcel(
+      dateRangeFilename("Management_Raw_Data", queryStart, queryEnd),
+      [{ name: "Raw Data", data: rows }],
+    );
+  }
+
+  function exportCurrentView() {
+    const summaryData = [{
+      "Total Sales": fmtCurrencyExport(totalSales),
+      "Total Orders": totalOrders,
+      ATV: atv !== null ? fmtCurrencyExport(atv) : "—",
+      UPT: upt !== null ? Math.round(upt * 10) / 10 : "—",
+    }];
+
+    const counterRows = counterTableData.map((r) => ({
+      Counter: r.name,
+      Sales: fmtCurrencyExport(r.sales),
+      Units: r.units,
+      ATV: r.atv !== null ? fmtCurrencyExport(r.atv) : "—",
+      UPT: r.upt !== null ? Math.round(r.upt * 10) / 10 : "—",
+    }));
+
+    const brandRows = brandTableData.map((r) => ({
+      Brand: r.name,
+      Sales: fmtCurrencyExport(r.sales),
+      Units: r.units,
+      ATV: r.atv !== null ? fmtCurrencyExport(r.atv) : "—",
+      UPT: r.upt !== null ? Math.round(r.upt * 10) / 10 : "—",
+    }));
+
+    const channelRows = channelPieData.map((r) => ({
+      Channel: r.name,
+      Sales: fmtCurrencyExport(r.value),
+      "% of Total": totalSales > 0 ? Math.round((r.value / totalSales) * 10000) / 100 : 0,
+    }));
+
+    downloadExcel(
+      dateRangeFilename("Management_Current_View", queryStart, queryEnd),
+      [
+        { name: "Summary", data: summaryData },
+        { name: "By Counter", data: counterRows },
+        { name: "By Brand", data: brandRows },
+        { name: "By Channel", data: channelRows },
+      ],
+    );
+  }
+
   // ── Render ────────────────────────────────────
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
@@ -582,6 +773,25 @@ export default function ManagementDashboard() {
                 </div>
               </PopoverContent>
             </Popover>
+
+            {/* Export */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Download className="h-3.5 w-3.5" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportDailySales}>Daily Sales Summary</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportPosPerformance}>POS Performance Ranking</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportChannelSummary}>Channel Summary</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportMoMTrend}>Month-over-Month Trend</DropdownMenuItem>
+                <DropdownMenuItem onClick={exportRawData}>Raw Data Export</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={exportCurrentView}>Export Current View</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardContent>
       </Card>
