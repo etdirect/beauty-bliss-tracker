@@ -69,16 +69,11 @@ export default function BrandDashboard() {
   const currentYear = now.getFullYear();
 
   // ── Time period state ─────────────────────────
-  const [timePeriod, setTimePeriod] = useState<"weekly" | "monthly" | "yearly">("weekly");
+  const [timePeriod, setTimePeriod] = useState<"range" | "monthly" | "yearly">("range");
 
-  // Weekly state — compute current week (Mon-Sun)
-  const [weekStart, setWeekStart] = useState(() => {
-    const d = new Date();
-    const day = d.getDay(); // 0=Sun, 1=Mon
-    const diff = day === 0 ? 6 : day - 1; // days since Monday
-    d.setDate(d.getDate() - diff);
-    return d.toISOString().split("T")[0];
-  });
+  // Date range state
+  const [rangeStart, setRangeStart] = useState(monthStartStr);
+  const [rangeEnd, setRangeEnd] = useState(todayStr);
 
   // Monthly state — year + month selectors
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
@@ -94,17 +89,10 @@ export default function BrandDashboard() {
   const [selectedCounters, setSelectedCounters] = useState<Set<string> | null>(null);
   const [selectedChannels, setSelectedChannels] = useState<Set<string> | null>(null);
 
-  // Computed week end (6 days after start = Sunday)
-  const weekEnd = useMemo(() => {
-    const d = new Date(weekStart + "T00:00:00");
-    d.setDate(d.getDate() + 6);
-    return d.toISOString().split("T")[0];
-  }, [weekStart]);
-
   // ── Compute date range from time period ───────
   const { queryStart, queryEnd } = useMemo(() => {
-    if (timePeriod === "weekly") {
-      return { queryStart: weekStart, queryEnd: weekEnd };
+    if (timePeriod === "range") {
+      return { queryStart: rangeStart, queryEnd: rangeEnd };
     }
     if (timePeriod === "monthly") {
       const y = Number(monthlyYear);
@@ -114,7 +102,7 @@ export default function BrandDashboard() {
     // yearly: 2 years ending at yearlyEnd
     const ey = Number(yearlyEnd);
     return { queryStart: `${ey - 1}-01-01`, queryEnd: `${ey}-12-31` };
-  }, [timePeriod, weekStart, weekEnd, monthlyYear, yearlyEnd]);
+  }, [timePeriod, rangeStart, rangeEnd, monthlyYear, yearlyEnd]);
 
   // ── Queries ───────────────────────────────────
   const { data: sales = [] } = useQuery<SalesEntry[]>({
@@ -219,6 +207,18 @@ export default function BrandDashboard() {
   const totalSales = useMemo(() => kpiSales.reduce((s, e) => s + e.amount, 0), [kpiSales]);
   const totalUnits = useMemo(() => kpiSales.reduce((s, e) => s + (e.units ?? 0), 0), [kpiSales]);
   const totalOrders = useMemo(() => kpiSales.reduce((s, e) => s + (e.orders ?? 0), 0), [kpiSales]);
+
+  // Days in selected range (for averages)
+  const daysInRange = useMemo(() => {
+    if (timePeriod !== "range") return 0;
+    const start = new Date(rangeStart + "T00:00:00");
+    const end = new Date(rangeEnd + "T00:00:00");
+    return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+  }, [timePeriod, rangeStart, rangeEnd]);
+
+  const avgOrdersPerDay = daysInRange > 0 && totalOrders > 0 ? totalOrders / daysInRange : null;
+  const avgUnitsPerDay = daysInRange > 0 && totalUnits > 0 ? totalUnits / daysInRange : null;
+
   const activeBrandCount = useMemo(() => {
     const seen = new Set<string>();
     kpiSales.forEach((e) => seen.add(e.brandId));
@@ -270,7 +270,7 @@ export default function BrandDashboard() {
 
   // ── Sales Trend by Brand (multi-line) ─────────
   const brandTrendData = useMemo(() => {
-    if (timePeriod === "weekly") {
+    if (timePeriod === "range") {
       const allDates = dateRange(queryStart, queryEnd);
       // Build map: date -> brandId -> amount
       const map: Record<string, Record<string, number>> = {};
@@ -443,31 +443,39 @@ export default function BrandDashboard() {
           <div className="flex flex-wrap items-end gap-4">
             {/* Time Period */}
             <div className="flex gap-1">
-              {(["weekly", "monthly", "yearly"] as const).map((tp) => (
+              {(["range", "monthly", "yearly"] as const).map((tp) => (
                 <Button
                   key={tp}
                   variant={timePeriod === tp ? "default" : "outline"}
                   size="sm"
                   onClick={() => setTimePeriod(tp)}
                 >
-                  {tp.charAt(0).toUpperCase() + tp.slice(1)}
+                  {tp === "range" ? "Date Range" : tp.charAt(0).toUpperCase() + tp.slice(1)}
                 </Button>
               ))}
             </div>
 
             {/* Date controls based on time period */}
-            {timePeriod === "weekly" && (
+            {timePeriod === "range" && (
               <div className="flex items-end gap-2">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Week starting</Label>
+                  <Label className="text-xs text-muted-foreground">From</Label>
                   <Input
                     type="date"
-                    value={weekStart}
-                    onChange={(e) => setWeekStart(e.target.value)}
+                    value={rangeStart}
+                    onChange={(e) => setRangeStart(e.target.value)}
                     className="w-[130px] md:w-[150px]"
                   />
                 </div>
-                <span className="text-xs text-muted-foreground pb-2.5">to {weekEnd}</span>
+                <div>
+                  <Label className="text-xs text-muted-foreground">To</Label>
+                  <Input
+                    type="date"
+                    value={rangeEnd}
+                    onChange={(e) => setRangeEnd(e.target.value)}
+                    className="w-[130px] md:w-[150px]"
+                  />
+                </div>
               </div>
             )}
 
@@ -686,7 +694,7 @@ export default function BrandDashboard() {
       </Card>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className={`grid gap-4 ${timePeriod === "range" ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-5" : "grid-cols-2 md:grid-cols-4"}`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
@@ -696,20 +704,11 @@ export default function BrandDashboard() {
             <div className="text-2xl font-bold">{fmtCurrency(totalSales)}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Units</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "\u2014"}</div>
-          </CardContent>
-        </Card>
-        {timePeriod === "weekly" ? (
+        {timePeriod === "range" ? (
           <>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Orders</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
                 <Tag className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -718,16 +717,43 @@ export default function BrandDashboard() {
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Brands</CardTitle>
-                <Layers className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Total Units</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{activeBrandCount}</div>
+                <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "—"}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Orders/Day</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{avgOrdersPerDay !== null ? avgOrdersPerDay.toFixed(1) : "—"}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Units/Day</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{avgUnitsPerDay !== null ? avgUnitsPerDay.toFixed(1) : "—"}</div>
               </CardContent>
             </Card>
           </>
         ) : (
           <>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Units</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "—"}</div>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">vs. Last Month</CardTitle>
@@ -768,7 +794,7 @@ export default function BrandDashboard() {
           <CardTitle>
             Sales Trend by Brand
             <Badge variant="outline" className="ml-2 font-normal">
-              {timePeriod === "weekly" ? "Daily" : timePeriod.charAt(0).toUpperCase() + timePeriod.slice(1)}
+              {timePeriod === "range" ? "Daily" : timePeriod.charAt(0).toUpperCase() + timePeriod.slice(1)}
             </Badge>
           </CardTitle>
         </CardHeader>
