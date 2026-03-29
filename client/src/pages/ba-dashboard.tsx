@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { CHART_COLORS } from "./dashboard";
 
@@ -136,22 +136,35 @@ export default function BADashboard() {
   const atv = totalOrders > 0 ? totalSales / totalOrders : null;
   const upt = totalOrders > 0 ? totalUnits / totalOrders : null;
 
-  // ─── Daily Sales chart data ─────────────────────
+  // ─── Attribution breakdown (for non-restricted BA who can see all data) ─────
+  const attribution = useMemo(() => {
+    if (isRestricted) return null; // restricted users only see their own, no need to split
+    const mine = mySales.filter(e => e.submittedBy === user?.id);
+    const others = mySales.filter(e => e.submittedBy && e.submittedBy !== user?.id);
+    const imported = mySales.filter(e => !e.submittedBy); // legacy/imported
+    return {
+      mySales: mine.reduce((s, e) => s + e.amount, 0),
+      myOrders: mine.reduce((s, e) => s + (e.orders ?? 0), 0),
+      othersSales: others.reduce((s, e) => s + e.amount, 0),
+      othersOrders: others.reduce((s, e) => s + (e.orders ?? 0), 0),
+      importedSales: imported.reduce((s, e) => s + e.amount, 0),
+      importedOrders: imported.reduce((s, e) => s + (e.orders ?? 0), 0),
+    };
+  }, [mySales, isRestricted, user?.id]);
+
+  // ─── Daily Sales chart data (split by attribution for non-restricted) ─────────────────────
   const dailyChartData = useMemo(() => {
     const days = daysInMonth(selectedMonth);
-    const map: Record<string, number> = {};
+    const result: { date: string; mine: number; others: number; total: number }[] = [];
     for (let d = 1; d <= days; d++) {
       const key = `${selectedMonth}-${String(d).padStart(2, "0")}`;
-      map[key] = 0;
+      const dayEntries = mySales.filter(e => e.date === key);
+      const mine = dayEntries.filter(e => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
+      const others = dayEntries.filter(e => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
+      result.push({ date: String(d).padStart(2, "0"), mine, others, total: mine + others });
     }
-    mySales.forEach((e) => {
-      if (map[e.date] !== undefined) map[e.date] += e.amount;
-    });
-    return Object.entries(map).map(([date, amount]) => ({
-      date: date.slice(8), // DD
-      amount,
-    }));
-  }, [mySales, selectedMonth]);
+    return result;
+  }, [mySales, selectedMonth, user?.id]);
 
   // ─── Monthly Trend chart data ───────────────────
   const monthlyTrendData = useMemo(() => {
@@ -309,28 +322,76 @@ export default function BADashboard() {
         </Card>
       </div>
 
-      {/* Daily Sales Line Chart */}
+      {/* Sales Attribution (for full-access BA) */}
+      {attribution && (attribution.othersSales > 0 || attribution.importedSales > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Sales Attribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_COLORS[0] }} />
+                  <span className="text-muted-foreground">My Sales</span>
+                </div>
+                <div className="font-semibold">{fmtCurrency(attribution.mySales)}</div>
+                <div className="text-xs text-muted-foreground">{attribution.myOrders} orders</div>
+              </div>
+              {attribution.othersSales > 0 && (
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_COLORS[1] }} />
+                    <span className="text-muted-foreground">Part-Time</span>
+                  </div>
+                  <div className="font-semibold">{fmtCurrency(attribution.othersSales)}</div>
+                  <div className="text-xs text-muted-foreground">{attribution.othersOrders} orders</div>
+                </div>
+              )}
+              {attribution.importedSales > 0 && (
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-muted-foreground/30" />
+                    <span className="text-muted-foreground">Imported</span>
+                  </div>
+                  <div className="font-semibold">{fmtCurrency(attribution.importedSales)}</div>
+                  <div className="text-xs text-muted-foreground">{attribution.importedOrders} orders</div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Daily Sales Chart */}
       <Card>
         <CardHeader>
           <CardTitle>Daily Sales</CardTitle>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={dailyChartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-              <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-              <Line
-                type="monotone"
-                dataKey="amount"
-                stroke={CHART_COLORS[0]}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          {!isRestricted && dailyChartData.some(d => d.others > 0) ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={dailyChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name === "mine" ? "My Sales" : "Part-Time"]} />
+                <Legend formatter={(value) => value === "mine" ? "My Sales" : "Part-Time"} />
+                <Area type="monotone" dataKey="mine" stackId="1" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.6} />
+                <Area type="monotone" dataKey="others" stackId="1" stroke={CHART_COLORS[1]} fill={CHART_COLORS[1]} fillOpacity={0.6} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={dailyChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
+                <Line type="monotone" dataKey="total" stroke={CHART_COLORS[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </CardContent>
       </Card>
 
