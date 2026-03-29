@@ -292,7 +292,8 @@ export async function registerRoutes(
   app.post("/api/sales/batch", requireAuth, async (req, res) => {
     const parsed = batchSalesSubmissionSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    await storage.submitBatchSales(parsed.data);
+    const userId = req.session.userId;
+    await storage.submitBatchSales(parsed.data, userId);
     res.json({ success: true });
   });
 

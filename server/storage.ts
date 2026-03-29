@@ -45,7 +45,7 @@ export interface IStorage {
   getSalesEntries(filters?: { counterId?: string; brandId?: string; startDate?: string; endDate?: string; date?: string }): Promise<SalesEntry[]>;
   createSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
   upsertSalesEntry(entry: InsertSalesEntry): Promise<SalesEntry>;
-  submitBatchSales(submission: BatchSalesSubmission): Promise<void>;
+  submitBatchSales(submission: BatchSalesSubmission, submittedBy?: string): Promise<void>;
   deleteSalesEntry(id: string): Promise<void>;
   bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number>;
 
@@ -181,6 +181,7 @@ export class PgStorage implements IStorage {
         gwp_count INTEGER NOT NULL DEFAULT 0
       );
       ALTER TABLE sales_entries ADD COLUMN IF NOT EXISTS orders INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE sales_entries ADD COLUMN IF NOT EXISTS submitted_by TEXT;
       CREATE TABLE IF NOT EXISTS promotions (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         name TEXT NOT NULL,
@@ -413,7 +414,7 @@ export class PgStorage implements IStorage {
     return { id: r.id, counterId: r.counter_id, brandId: r.brand_id };
   }
   private mapSalesEntry(r: any): SalesEntry {
-    return { id: r.id, counterId: r.counter_id, brandId: r.brand_id, date: r.date, orders: Number(r.orders ?? 0), units: Number(r.units), amount: Number(r.amount), gwpCount: Number(r.gwp_count) };
+    return { id: r.id, counterId: r.counter_id, brandId: r.brand_id, date: r.date, orders: Number(r.orders ?? 0), units: Number(r.units), amount: Number(r.amount), gwpCount: Number(r.gwp_count), submittedBy: r.submitted_by ?? null };
   }
   private mapPromotion(r: any): Promotion {
     return {
@@ -572,17 +573,19 @@ export class PgStorage implements IStorage {
   async createSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
     const id = randomUUID();
     await this.q(
-      "INSERT INTO sales_entries (id, counter_id, brand_id, date, orders, units, amount, gwp_count) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [id, data.counterId, data.brandId, data.date, data.orders ?? 0, data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0],
+      "INSERT INTO sales_entries (id, counter_id, brand_id, date, orders, units, amount, gwp_count, submitted_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [id, data.counterId, data.brandId, data.date, data.orders ?? 0, data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0, data.submittedBy ?? null],
     );
-    return { id, counterId: data.counterId, brandId: data.brandId, date: data.date, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
+    return { id, counterId: data.counterId, brandId: data.brandId, date: data.date, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0, submittedBy: data.submittedBy ?? null };
   }
   async upsertSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
-    const { rows } = await this.q("SELECT id FROM sales_entries WHERE counter_id=$1 AND brand_id=$2 AND date=$3", [data.counterId, data.brandId, data.date]);
+    const { rows } = await this.q("SELECT id, submitted_by FROM sales_entries WHERE counter_id=$1 AND brand_id=$2 AND date=$3", [data.counterId, data.brandId, data.date]);
     if (rows.length > 0) {
       const existingId = rows[0].id;
-      await this.q("UPDATE sales_entries SET orders=$1, units=$2, amount=$3, gwp_count=$4 WHERE id=$5", [data.orders ?? 0, data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0, existingId]);
-      return { id: existingId, counterId: data.counterId, brandId: data.brandId, date: data.date, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 };
+      // Preserve submittedBy if not explicitly set in the update
+      const submitter = data.submittedBy !== undefined ? data.submittedBy : rows[0].submitted_by;
+      await this.q("UPDATE sales_entries SET orders=$1, units=$2, amount=$3, gwp_count=$4, submitted_by=$5 WHERE id=$6", [data.orders ?? 0, data.units ?? 0, data.amount ?? 0, data.gwpCount ?? 0, submitter, existingId]);
+      return { id: existingId, counterId: data.counterId, brandId: data.brandId, date: data.date, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0, submittedBy: submitter };
     }
     return this.createSalesEntry(data);
   }
@@ -613,7 +616,7 @@ export class PgStorage implements IStorage {
     }
     return imported;
   }
-  async submitBatchSales(submission: BatchSalesSubmission): Promise<void> {
+  async submitBatchSales(submission: BatchSalesSubmission, submittedBy?: string): Promise<void> {
     for (const entry of submission.entries) {
       if (entry.orders > 0 || entry.units > 0 || entry.amount > 0) {
         await this.upsertSalesEntry({
@@ -624,6 +627,7 @@ export class PgStorage implements IStorage {
           units: entry.units,
           amount: entry.amount,
           gwpCount: entry.gwpCount,
+          submittedBy: submittedBy ?? null,
         });
       }
     }
@@ -1031,16 +1035,16 @@ export class MemStorage implements IStorage {
     }
     return entries;
   }
-  async createSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> { const id = randomUUID(); const e: SalesEntry = { id, ...data, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 }; this.salesEntries.set(id, e); return e; }
+  async createSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> { const id = randomUUID(); const e: SalesEntry = { id, ...data, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0, submittedBy: data.submittedBy ?? null }; this.salesEntries.set(id, e); return e; }
   async upsertSalesEntry(data: InsertSalesEntry): Promise<SalesEntry> {
     const existing = Array.from(this.salesEntries.values()).find(e => e.counterId === data.counterId && e.brandId === data.brandId && e.date === data.date);
     if (existing) { const u: SalesEntry = { ...existing, orders: data.orders ?? 0, units: data.units ?? 0, amount: data.amount ?? 0, gwpCount: data.gwpCount ?? 0 }; this.salesEntries.set(existing.id, u); return u; }
     return this.createSalesEntry(data);
   }
-  async submitBatchSales(submission: BatchSalesSubmission): Promise<void> {
+  async submitBatchSales(submission: BatchSalesSubmission, submittedBy?: string): Promise<void> {
     for (const entry of submission.entries) {
       if (entry.units > 0 || entry.amount > 0) {
-        await this.upsertSalesEntry({ counterId: submission.counterId, brandId: entry.brandId, date: submission.date, orders: entry.orders, units: entry.units, amount: entry.amount, gwpCount: entry.gwpCount });
+        await this.upsertSalesEntry({ counterId: submission.counterId, brandId: entry.brandId, date: submission.date, orders: entry.orders, units: entry.units, amount: entry.amount, gwpCount: entry.gwpCount, submittedBy: submittedBy ?? null });
       }
     }
     if (submission.promotionResults) {

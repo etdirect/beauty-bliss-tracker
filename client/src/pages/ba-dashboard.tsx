@@ -26,19 +26,9 @@ function fmtCurrency(v: number) {
   return `HK$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-function getMonthOptions() {
-  const now = new Date();
-  const opts: { value: string; label: string }[] = [];
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    opts.push({
-      value: `${yyyy}-${mm}`,
-      label: d.toLocaleString("en-US", { month: "long", year: "numeric" }),
-    });
-  }
-  return opts;
+function getDefaultMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function daysInMonth(ym: string) {
@@ -66,12 +56,22 @@ export default function BADashboard() {
   const assignedPos = user?.assignedPos ?? [];
   const posIds = useMemo(() => assignedPos.map((p: any) => p.id), [assignedPos]);
 
-  const monthOptions = useMemo(() => getMonthOptions(), []);
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
+  const [selectedMonth, setSelectedMonth] = useState(getDefaultMonth);
 
   const monthStart = startOf(selectedMonth);
   const monthEnd = endOf(selectedMonth);
-  const { start: trendStart, end: trendEnd } = useMemo(() => sixMonthRange(selectedMonth), [selectedMonth]);
+  // Fetch a wide range (2 years back from selected month + 1 month ahead) to derive all available months
+  const { start: trendStart, end: trendEnd } = useMemo(() => {
+    const [y, m] = selectedMonth.split("-").map(Number);
+    const start = new Date(y - 2, m - 1, 1); // 2 years back
+    const end = new Date(y, m, 0); // end of next month
+    const sy = start.getFullYear();
+    const sm = String(start.getMonth() + 1).padStart(2, "0");
+    const ey = end.getFullYear();
+    const em = String(end.getMonth() + 1).padStart(2, "0");
+    const ed = String(end.getDate()).padStart(2, "0");
+    return { start: `${sy}-${sm}-01`, end: `${ey}-${em}-${ed}` };
+  }, [selectedMonth]);
 
   // ─── Queries ────────────────────────────────────
   const { data: monthlySales = [] } = useQuery<SalesEntry[]>({
@@ -94,16 +94,35 @@ export default function BADashboard() {
     queryKey: ["/api/promotion-results"],
   });
 
-  // ─── Filtered data (only user's POS) ───────────
-  const mySales = useMemo(
-    () => monthlySales.filter((s) => posIds.includes(s.counterId)),
-    [monthlySales, posIds],
-  );
+  const isPartTime = user?.role === "part_time";
 
-  const myTrendSales = useMemo(
-    () => trendSales.filter((s) => posIds.includes(s.counterId)),
-    [trendSales, posIds],
-  );
+  // ─── Filtered data (only user's POS, and for part-time: only their submissions) ───────────
+  const mySales = useMemo(() => {
+    let entries = monthlySales.filter((s) => posIds.includes(s.counterId));
+    if (isPartTime) entries = entries.filter((s) => s.submittedBy === user?.id);
+    return entries;
+  }, [monthlySales, posIds, isPartTime, user?.id]);
+
+  const myTrendSales = useMemo(() => {
+    let entries = trendSales.filter((s) => posIds.includes(s.counterId));
+    if (isPartTime) entries = entries.filter((s) => s.submittedBy === user?.id);
+    return entries;
+  }, [trendSales, posIds, isPartTime, user?.id]);
+
+  // Derive month options from the trend data + always include current month
+  const monthOptions = useMemo(() => {
+    const months = new Set<string>();
+    months.add(getDefaultMonth()); // always include current month
+    myTrendSales.forEach((s) => months.add(s.date.slice(0, 7)));
+    mySales.forEach((s) => months.add(s.date.slice(0, 7)));
+    return Array.from(months)
+      .sort()
+      .reverse()
+      .map((ym) => {
+        const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1);
+        return { value: ym, label: d.toLocaleString("en-US", { month: "long", year: "numeric" }) };
+      });
+  }, [myTrendSales, mySales]);
 
   // ─── KPIs ───────────────────────────────────────
   const totalSales = useMemo(() => mySales.reduce((s, e) => s + e.amount, 0), [mySales]);
@@ -238,6 +257,12 @@ export default function BADashboard() {
           </SelectContent>
         </Select>
       </div>
+
+      {isPartTime && (
+        <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
+          Showing only your submitted sales entries. Days without your submissions are not displayed.
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

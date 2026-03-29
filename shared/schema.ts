@@ -107,6 +107,7 @@ export const salesEntries = pgTable("sales_entries", {
   units: integer("units").notNull().default(0),
   amount: real("amount").notNull().default(0),
   gwpCount: integer("gwp_count").notNull().default(0),
+  submittedBy: varchar("submitted_by"), // userId of who submitted this entry (null = imported/legacy)
 });
 
 export const insertSalesEntrySchema = createInsertSchema(salesEntries).omit({ id: true });
