@@ -40,7 +40,7 @@ export default function BAEntry() {
   });
 
   // Fetch user's POS assignments
-  const { data: userAssignments = [] } = useQuery<Array<{ id: string; userId: string; posId: string }>>({
+  const { data: userAssignments = [], isLoading: assignmentsLoading } = useQuery<Array<{ id: string; userId: string; posId: string }>>({
     queryKey: ["/api/user-pos-assignments", `?userId=${user?.id || ""}`],
     enabled: !!user,
   });
@@ -59,6 +59,9 @@ export default function BAEntry() {
     enabled: !!selectedDate,
   });
 
+  // For management users, show all active POS locations; for BA, only assigned
+  const isManagement = user?.role === "management";
+
   // Fetch existing sales for selected POS + date (to detect previous entries)
   const { data: existingSales = [] } = useQuery<SalesEntry[]>({
     queryKey: ["/api/sales", `?startDate=${selectedDate}&endDate=${selectedDate}&counterId=${selectedCounter}`],
@@ -71,9 +74,6 @@ export default function BAEntry() {
     if (user?.canViewHistory) return true;
     return e.submittedBy === user?.id;
   });
-
-  // For management users, show all active POS locations; for BA, only assigned
-  const isManagement = user?.role === "management";
   const assignedPosIds = userAssignments.map(a => a.posId);
   const availablePos = isManagement
     ? posLocations.filter(p => p.isActive)
@@ -170,7 +170,7 @@ export default function BAEntry() {
   const totalAmount = Object.values(salesData).reduce((sum, d) => sum + (d.amount || 0), 0);
 
   // No assigned POS for BA users
-  if (!isManagement && availablePos.length === 0 && !submitted) {
+  if (!isManagement && availablePos.length === 0 && !submitted && !assignmentsLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md text-center">
