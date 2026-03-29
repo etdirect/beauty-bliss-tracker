@@ -392,18 +392,58 @@ export default function BAEntry() {
                       {brand && (
                         <p className="text-xs text-muted-foreground">Brand: {brand.name}</p>
                       )}
-                      <div className="flex gap-2 items-center pt-1">
-                        <label className="text-xs font-medium whitespace-nowrap">GWP Given:</label>
-                        <Input
-                          type="number"
-                          min={0}
-                          className="h-8 w-20 text-sm"
-                          value={promoData[promo.id]?.gwpGiven || ""}
-                          onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                          placeholder="0"
-                          data-testid={`promo-gwp-${promo.id}`}
-                        />
-                      </div>
+                      {promo.trackable && (
+                        <div className="space-y-1.5 pt-1 border-t border-dashed mt-1.5">
+                          {promo.type === "GWP" && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap">
+                                {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
+                              </label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
+                          {promo.type === "PWP" && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap">
+                                {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
+                              </label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
+                          {promo.type !== "GWP" && promo.type !== "PWP" && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap">Activity count:</label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
+                        <div className="flex gap-2 items-center pt-1">
+                          <label className="text-xs font-medium whitespace-nowrap">GWP Given:</label>
+                          <Input
+                            type="number" min={0} className="h-8 w-20 text-sm"
+                            value={promoData[promo.id]?.gwpGiven || ""}
+                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
