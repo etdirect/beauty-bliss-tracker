@@ -174,9 +174,18 @@ export default function BAEntry() {
             <p className="text-muted-foreground text-sm">
               {totalOrders} orders / {totalUnits} units / HK${totalAmount.toLocaleString()} recorded for {selectedDate}
             </p>
-            <Button onClick={handleReset} className="mt-4">
-              Enter More Sales
-            </Button>
+            <div className="flex flex-col gap-2 mt-4">
+              <Button onClick={handleReset}>
+                Enter More Sales
+              </Button>
+              {!isManagement && (
+                <Link href="/my-dashboard">
+                  <Button variant="outline" className="w-full">
+                    Visit My Dashboard
+                  </Button>
+                </Link>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

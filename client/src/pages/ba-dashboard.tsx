@@ -60,16 +60,20 @@ export default function BADashboard() {
 
   const monthStart = startOf(selectedMonth);
   const monthEnd = endOf(selectedMonth);
-  // Fetch a wide range (2 years back from selected month + 1 month ahead) to derive all available months
+  // Fetch a wide range: 2 years back to 3 months ahead (catches future-dated entries)
   const { start: trendStart, end: trendEnd } = useMemo(() => {
+    const now = new Date();
     const [y, m] = selectedMonth.split("-").map(Number);
-    const start = new Date(y - 2, m - 1, 1); // 2 years back
-    const end = new Date(y, m, 0); // end of next month
-    const sy = start.getFullYear();
-    const sm = String(start.getMonth() + 1).padStart(2, "0");
-    const ey = end.getFullYear();
-    const em = String(end.getMonth() + 1).padStart(2, "0");
-    const ed = String(end.getDate()).padStart(2, "0");
+    const startDate = new Date(Math.min(y, now.getFullYear()) - 2, 0, 1); // 2 years before earliest
+    const endDate = new Date(now.getFullYear(), now.getMonth() + 4, 0); // 3 months ahead of today
+    // Also ensure we cover beyond selectedMonth
+    const selEnd = new Date(y, m + 2, 0); // 2 months after selected
+    const finalEnd = endDate > selEnd ? endDate : selEnd;
+    const sy = startDate.getFullYear();
+    const sm = String(startDate.getMonth() + 1).padStart(2, "0");
+    const ey = finalEnd.getFullYear();
+    const em = String(finalEnd.getMonth() + 1).padStart(2, "0");
+    const ed = String(finalEnd.getDate()).padStart(2, "0");
     return { start: `${sy}-${sm}-01`, end: `${ey}-${em}-${ed}` };
   }, [selectedMonth]);
 
