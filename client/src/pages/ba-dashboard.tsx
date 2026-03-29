@@ -1,21 +1,25 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { SalesEntry, Brand, Promotion, PromotionResult } from "@shared/schema";
+import type { SalesEntry, Brand, Promotion, PromotionResult, PosLocation } from "@shared/schema";
 import { useAuth } from "@/App";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft,
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area,
+  BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { CHART_COLORS } from "./dashboard";
@@ -26,64 +30,96 @@ function fmtCurrency(v: number) {
   return `HK$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
+function fmtRatio(num: number, denom: number, decimals = 1): string {
+  return denom === 0 ? "—" : (num / denom).toFixed(decimals);
+}
+
+function todayStr() { return new Date().toISOString().split("T")[0]; }
+
+function yearStartStr() {
+  return `2026-01-01`;
+}
+
+function daysInMonth(y: number, m: number) { return new Date(y, m, 0).getDate(); }
+
+function dateRange(start: string, end: string): string[] {
+  const dates: string[] = [];
+  const d = new Date(start + "T00:00:00");
+  const last = new Date(end + "T00:00:00");
+  while (d <= last) {
+    dates.push(d.toISOString().split("T")[0]);
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 function getDefaultMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function daysInMonth(ym: string) {
+function ymEndDate(ym: string) {
   const [y, m] = ym.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-
-function startOf(ym: string) { return `${ym}-01`; }
-function endOf(ym: string) {
-  return `${ym}-${String(daysInMonth(ym)).padStart(2, "0")}`;
-}
-
-function sixMonthRange(ym: string) {
-  const [y, m] = ym.split("-").map(Number);
-  const start = new Date(y, m - 6, 1);
-  const sy = start.getFullYear();
-  const sm = String(start.getMonth() + 1).padStart(2, "0");
-  return { start: `${sy}-${sm}-01`, end: endOf(ym) };
+  return `${ym}-${String(daysInMonth(y, m)).padStart(2, "0")}`;
 }
 
 // ─── Component ──────────────────────────────────────
 
 export default function BADashboard() {
   const { user } = useAuth();
-  const assignedPos = user?.assignedPos ?? [];
+  const assignedPos: PosLocation[] = user?.assignedPos ?? [];
   const posIds = useMemo(() => assignedPos.map((p: any) => p.id), [assignedPos]);
 
+  const isRestricted = user?.role === "part_time" || (user?.role === "ba" && !user?.canViewHistory);
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  // ── Part-Time state ──────────────────────────────
   const [selectedMonth, setSelectedMonth] = useState(getDefaultMonth);
 
-  const monthStart = startOf(selectedMonth);
-  const monthEnd = endOf(selectedMonth);
-  // Fetch a wide range: 2 years back to 3 months ahead (catches future-dated entries)
-  const { start: trendStart, end: trendEnd } = useMemo(() => {
-    const now = new Date();
-    const [y, m] = selectedMonth.split("-").map(Number);
-    const startDate = new Date(Math.min(y, now.getFullYear()) - 2, 0, 1); // 2 years before earliest
-    const endDate = new Date(now.getFullYear(), now.getMonth() + 4, 0); // 3 months ahead of today
-    // Also ensure we cover beyond selectedMonth
-    const selEnd = new Date(y, m + 2, 0); // 2 months after selected
-    const finalEnd = endDate > selEnd ? endDate : selEnd;
-    const sy = startDate.getFullYear();
-    const sm = String(startDate.getMonth() + 1).padStart(2, "0");
-    const ey = finalEnd.getFullYear();
-    const em = String(finalEnd.getMonth() + 1).padStart(2, "0");
-    const ed = String(finalEnd.getDate()).padStart(2, "0");
-    return { start: `${sy}-${sm}-01`, end: `${ey}-${em}-${ed}` };
-  }, [selectedMonth]);
+  // ── BA time tab state ────────────────────────────
+  const [timeTab, setTimeTab] = useState<"daterange" | "monthly" | "yearly">("daterange");
+  const [drStart, setDrStart] = useState(yearStartStr);
+  const [drEnd, setDrEnd] = useState(todayStr);
+  const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
+  const [monthlyMonth, setMonthlyMonth] = useState("all");
+  const [selectedYears, setSelectedYears] = useState<Set<string>>(new Set([String(currentYear)]));
 
-  // ─── Queries ────────────────────────────────────
-  const { data: monthlySales = [] } = useQuery<SalesEntry[]>({
-    queryKey: ["/api/sales", `?startDate=${monthStart}&endDate=${monthEnd}`],
-  });
+  // ── BA counter filter ────────────────────────────
+  const [selectedCounters, setSelectedCounters] = useState<Set<string> | null>(null);
 
-  const { data: trendSales = [] } = useQuery<SalesEntry[]>({
-    queryKey: ["/api/sales", `?startDate=${trendStart}&endDate=${trendEnd}`],
+  // ── Compute query dates ──────────────────────────
+  const { queryStart, queryEnd } = useMemo(() => {
+    if (isRestricted) {
+      // Part-Time: 2 years back to 3 months ahead
+      const startDate = new Date(currentYear - 2, 0, 1);
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 4, 0);
+      const sy = startDate.getFullYear();
+      const ey = endDate.getFullYear();
+      const em = String(endDate.getMonth() + 1).padStart(2, "0");
+      const ed = String(endDate.getDate()).padStart(2, "0");
+      return { queryStart: `${sy}-01-01`, queryEnd: `${ey}-${em}-${ed}` };
+    }
+    if (timeTab === "daterange") {
+      return { queryStart: drStart, queryEnd: drEnd };
+    }
+    if (timeTab === "monthly") {
+      const y = Number(monthlyYear);
+      return { queryStart: `${y - 1}-01-01`, queryEnd: `${y}-12-31` };
+    }
+    // yearly
+    const years = Array.from(selectedYears).map(Number).sort();
+    const minY = years.length > 0 ? years[0] : currentYear;
+    const maxY = years.length > 0 ? years[years.length - 1] : currentYear;
+    return { queryStart: `${minY}-01-01`, queryEnd: `${maxY}-12-31` };
+  }, [isRestricted, timeTab, drStart, drEnd, monthlyYear, selectedYears, currentYear, now]);
+
+  // ── Queries ──────────────────────────────────────
+  const { data: sales = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
 
   const { data: allBrands = [] } = useQuery<Brand[]>({
@@ -98,28 +134,61 @@ export default function BADashboard() {
     queryKey: ["/api/promotion-results"],
   });
 
-  // Restricted view: part-time OR BA on probation (canViewHistory=false) — only see own submissions
-  const isRestricted = user?.role === "part_time" || (user?.role === "ba" && !user?.canViewHistory);
+  // ── Derive available years from sales data ───────
+  const availableYears = useMemo(() => {
+    const set = new Set<string>();
+    sales.forEach((s) => set.add(s.date.slice(0, 4)));
+    set.add(String(currentYear));
+    return Array.from(set).sort();
+  }, [sales, currentYear]);
 
-  // ─── Filtered data (only user's POS, and for restricted users: only their submissions) ───────────
-  const mySales = useMemo(() => {
-    let entries = monthlySales.filter((s) => posIds.includes(s.counterId));
-    if (isRestricted) entries = entries.filter((s) => s.submittedBy === user?.id);
-    return entries;
-  }, [monthlySales, posIds, isRestricted, user?.id]);
+  // ── Year options for monthly dropdown ────────────
+  const yearOptions = useMemo(() => {
+    const opts: string[] = [];
+    for (let y = currentYear; y >= currentYear - 5; y--) opts.push(String(y));
+    return opts;
+  }, [currentYear]);
 
-  const myTrendSales = useMemo(() => {
-    let entries = trendSales.filter((s) => posIds.includes(s.counterId));
-    if (isRestricted) entries = entries.filter((s) => s.submittedBy === user?.id);
-    return entries;
-  }, [trendSales, posIds, isRestricted, user?.id]);
+  // ── Active counter IDs ───────────────────────────
+  const activeCounterIds = useMemo(() => {
+    if (isRestricted) return new Set(posIds);
+    if (selectedCounters === null) return new Set(posIds);
+    return new Set(Array.from(selectedCounters).filter((id) => posIds.includes(id)));
+  }, [isRestricted, selectedCounters, posIds]);
 
-  // Derive month options from the trend data + always include current month
+  // ── Filtered sales ──────────────────────────────
+  const filteredSales = useMemo(() => {
+    let base = sales.filter((s) => activeCounterIds.has(s.counterId));
+    if (isRestricted) {
+      // Part-time: only own submissions, only selected month
+      base = base.filter((s) => s.submittedBy === user?.id);
+      base = base.filter((s) => s.date.startsWith(selectedMonth));
+      return base;
+    }
+    // BA filters
+    if (timeTab === "daterange") {
+      base = base.filter((s) => s.date >= drStart && s.date <= drEnd);
+    } else if (timeTab === "monthly") {
+      if (monthlyMonth !== "all") {
+        const prefix = `${monthlyYear}-${monthlyMonth}`;
+        base = base.filter((s) => s.date.startsWith(prefix));
+      } else {
+        base = base.filter((s) => s.date.startsWith(monthlyYear));
+      }
+    } else {
+      // yearly
+      base = base.filter((s) => selectedYears.has(s.date.slice(0, 4)));
+    }
+    return base;
+  }, [sales, activeCounterIds, isRestricted, user?.id, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears]);
+
+  // ── Part-Time: month options derived from data ───
   const monthOptions = useMemo(() => {
+    if (!isRestricted) return [];
     const months = new Set<string>();
-    months.add(getDefaultMonth()); // always include current month
-    myTrendSales.forEach((s) => months.add(s.date.slice(0, 7)));
-    mySales.forEach((s) => months.add(s.date.slice(0, 7)));
+    months.add(getDefaultMonth());
+    const ownSales = sales.filter((s) => posIds.includes(s.counterId) && s.submittedBy === user?.id);
+    ownSales.forEach((s) => months.add(s.date.slice(0, 7)));
     return Array.from(months)
       .sort()
       .reverse()
@@ -127,21 +196,26 @@ export default function BADashboard() {
         const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1);
         return { value: ym, label: d.toLocaleString("en-US", { month: "long", year: "numeric" }) };
       });
-  }, [myTrendSales, mySales]);
+  }, [isRestricted, sales, posIds, user?.id]);
 
-  // ─── KPIs ───────────────────────────────────────
-  const totalSales = useMemo(() => mySales.reduce((s, e) => s + e.amount, 0), [mySales]);
-  const totalOrders = useMemo(() => mySales.reduce((s, e) => s + (e.orders ?? 0), 0), [mySales]);
-  const totalUnits = useMemo(() => mySales.reduce((s, e) => s + (e.units ?? 0), 0), [mySales]);
-  const atv = totalOrders > 0 ? totalSales / totalOrders : null;
-  const upt = totalOrders > 0 ? totalUnits / totalOrders : null;
+  // ── Brand lookup ────────────────────────────────
+  const brandMap = useMemo(() => {
+    const m = new Map<string, Brand>();
+    allBrands.forEach((b) => m.set(b.id, b));
+    return m;
+  }, [allBrands]);
 
-  // ─── Attribution breakdown (for non-restricted BA who can see all data) ─────
+  // ── KPIs ────────────────────────────────────────
+  const totalSales = useMemo(() => filteredSales.reduce((s, e) => s + e.amount, 0), [filteredSales]);
+  const totalOrders = useMemo(() => filteredSales.reduce((s, e) => s + (e.orders ?? 0), 0), [filteredSales]);
+  const totalUnits = useMemo(() => filteredSales.reduce((s, e) => s + (e.units ?? 0), 0), [filteredSales]);
+
+  // ── Attribution (BA only) ──────────────────────
   const attribution = useMemo(() => {
-    if (isRestricted) return null; // restricted users only see their own, no need to split
-    const mine = mySales.filter(e => e.submittedBy === user?.id);
-    const others = mySales.filter(e => e.submittedBy && e.submittedBy !== user?.id);
-    const imported = mySales.filter(e => !e.submittedBy); // legacy/imported
+    if (isRestricted) return null;
+    const mine = filteredSales.filter((e) => e.submittedBy === user?.id);
+    const others = filteredSales.filter((e) => e.submittedBy && e.submittedBy !== user?.id);
+    const imported = filteredSales.filter((e) => !e.submittedBy);
     return {
       mySales: mine.reduce((s, e) => s + e.amount, 0),
       myOrders: mine.reduce((s, e) => s + (e.orders ?? 0), 0),
@@ -150,73 +224,161 @@ export default function BADashboard() {
       importedSales: imported.reduce((s, e) => s + e.amount, 0),
       importedOrders: imported.reduce((s, e) => s + (e.orders ?? 0), 0),
     };
-  }, [mySales, isRestricted, user?.id]);
+  }, [filteredSales, isRestricted, user?.id]);
 
-  // ─── Daily Sales chart data (split by attribution for non-restricted) ─────────────────────
+  // ── Daily Sales chart data ─────────────────────
   const dailyChartData = useMemo(() => {
-    const days = daysInMonth(selectedMonth);
-    const result: { date: string; mine: number; others: number; total: number }[] = [];
-    for (let d = 1; d <= days; d++) {
-      const key = `${selectedMonth}-${String(d).padStart(2, "0")}`;
-      const dayEntries = mySales.filter(e => e.date === key);
-      const mine = dayEntries.filter(e => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
-      const others = dayEntries.filter(e => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
-      result.push({ date: String(d).padStart(2, "0"), mine, others, total: mine + others });
+    if (isRestricted) {
+      // Part-Time: daily bars for selectedMonth
+      const [y, m] = selectedMonth.split("-").map(Number);
+      const days = daysInMonth(y, m);
+      const result: { date: string; total: number }[] = [];
+      for (let d = 1; d <= days; d++) {
+        const key = `${selectedMonth}-${String(d).padStart(2, "0")}`;
+        const total = filteredSales.filter((e) => e.date === key).reduce((s, e) => s + e.amount, 0);
+        result.push({ date: String(d), total });
+      }
+      return result;
+    }
+
+    // BA view: depends on time tab
+    if (timeTab === "daterange") {
+      const dates = dateRange(drStart, drEnd);
+      return dates.map((dt) => {
+        const dayEntries = filteredSales.filter((e) => e.date === dt);
+        const mine = dayEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
+        const others = dayEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
+        return { date: dt.slice(5), mine, others, total: mine + others };
+      });
+    }
+    if (timeTab === "monthly" && monthlyMonth !== "all") {
+      const y = Number(monthlyYear);
+      const m = Number(monthlyMonth);
+      const days = daysInMonth(y, m);
+      const prefix = `${monthlyYear}-${monthlyMonth}`;
+      const result: { date: string; mine: number; others: number; total: number }[] = [];
+      for (let d = 1; d <= days; d++) {
+        const key = `${prefix}-${String(d).padStart(2, "0")}`;
+        const dayEntries = filteredSales.filter((e) => e.date === key);
+        const mine = dayEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
+        const others = dayEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
+        result.push({ date: String(d), mine, others, total: mine + others });
+      }
+      return result;
+    }
+    if (timeTab === "monthly" && monthlyMonth === "all") {
+      const result: { date: string; mine: number; others: number; total: number }[] = [];
+      for (let m = 1; m <= 12; m++) {
+        const prefix = `${monthlyYear}-${String(m).padStart(2, "0")}`;
+        const monthEntries = filteredSales.filter((e) => e.date.startsWith(prefix));
+        const mine = monthEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
+        const others = monthEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
+        result.push({ date: MONTH_LABELS[m - 1], mine, others, total: mine + others });
+      }
+      return result;
+    }
+    // yearly
+    const yearsArr = Array.from(selectedYears).sort();
+    if (yearsArr.length === 1) {
+      const yr = yearsArr[0];
+      const result: { date: string; mine: number; others: number; total: number }[] = [];
+      for (let m = 1; m <= 12; m++) {
+        const prefix = `${yr}-${String(m).padStart(2, "0")}`;
+        const monthEntries = filteredSales.filter((e) => e.date.startsWith(prefix));
+        const mine = monthEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
+        const others = monthEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
+        result.push({ date: MONTH_LABELS[m - 1], mine, others, total: mine + others });
+      }
+      return result;
+    }
+    // multi-year: monthly lines overlaid per year
+    const result: Record<string, any>[] = [];
+    for (let m = 1; m <= 12; m++) {
+      const row: Record<string, any> = { date: MONTH_LABELS[m - 1] };
+      yearsArr.forEach((yr) => {
+        const prefix = `${yr}-${String(m).padStart(2, "0")}`;
+        row[yr] = filteredSales.filter((e) => e.date.startsWith(prefix)).reduce((s, e) => s + e.amount, 0);
+      });
+      result.push(row);
     }
     return result;
-  }, [mySales, selectedMonth, user?.id]);
+  }, [isRestricted, filteredSales, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears, user?.id]);
 
-  // ─── Monthly Trend chart data ───────────────────
+  const isMultiYearOverlay = !isRestricted && timeTab === "yearly" && selectedYears.size > 1;
+  const hasAttribution = !isRestricted && filteredSales.some((e) => e.submittedBy && e.submittedBy !== user?.id);
+
+  // ── Monthly Trend (BA monthly mode only) ───────
   const monthlyTrendData = useMemo(() => {
-    const map: Record<string, number> = {};
-    myTrendSales.forEach((e) => {
-      const ym = e.date.slice(0, 7);
-      map[ym] = (map[ym] ?? 0) + e.amount;
-    });
-    const [y, m] = selectedMonth.split("-").map(Number);
+    if (isRestricted || timeTab !== "monthly") return [];
     const result: { month: string; amount: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(y, m - 1 - i, 1);
-      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleString("en-US", { month: "short" });
-      result.push({ month: label, amount: map[ym] ?? 0 });
+    const yr = Number(monthlyYear);
+    for (let m = 1; m <= 12; m++) {
+      const prefix = `${yr}-${String(m).padStart(2, "0")}`;
+      const total = sales
+        .filter((s) => activeCounterIds.has(s.counterId) && s.date.startsWith(prefix))
+        .reduce((s, e) => s + e.amount, 0);
+      result.push({ month: MONTH_LABELS[m - 1], amount: total });
     }
     return result;
-  }, [myTrendSales, selectedMonth]);
+  }, [isRestricted, timeTab, sales, activeCounterIds, monthlyYear]);
 
-  // ─── Brand pie data ─────────────────────────────
-  const brandMap = useMemo(() => {
+  // ── Sales by Brand table data ──────────────────
+  const brandTableData = useMemo(() => {
+    const map: Record<string, { sales: number; orders: number; units: number }> = {};
+    filteredSales.forEach((e) => {
+      const b = brandMap.get(e.brandId);
+      const name = b?.name ?? "Unknown";
+      if (!map[name]) map[name] = { sales: 0, orders: 0, units: 0 };
+      map[name].sales += e.amount;
+      map[name].orders += (e.orders ?? 0);
+      map[name].units += (e.units ?? 0);
+    });
+    return Object.entries(map)
+      .map(([name, d]) => ({ name, ...d }))
+      .sort((a, b) => b.sales - a.sales);
+  }, [filteredSales, brandMap]);
+
+  // ── Promotion performance table ────────────────
+  const { promoStart, promoEnd } = useMemo(() => {
+    if (isRestricted) {
+      return { promoStart: `${selectedMonth}-01`, promoEnd: ymEndDate(selectedMonth) };
+    }
+    if (timeTab === "daterange") {
+      return { promoStart: drStart, promoEnd: drEnd };
+    }
+    if (timeTab === "monthly") {
+      if (monthlyMonth !== "all") {
+        const prefix = `${monthlyYear}-${monthlyMonth}`;
+        return { promoStart: `${prefix}-01`, promoEnd: ymEndDate(prefix) };
+      }
+      return { promoStart: `${monthlyYear}-01-01`, promoEnd: `${monthlyYear}-12-31` };
+    }
+    const years = Array.from(selectedYears).map(Number).sort();
+    const minY = years[0] ?? currentYear;
+    const maxY = years[years.length - 1] ?? currentYear;
+    return { promoStart: `${minY}-01-01`, promoEnd: `${maxY}-12-31` };
+  }, [isRestricted, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears, currentYear]);
+
+  const brandNameMap = useMemo(() => {
     const m = new Map<string, string>();
     allBrands.forEach((b) => m.set(b.id, b.name));
     return m;
   }, [allBrands]);
 
-  const brandPieData = useMemo(() => {
-    const map: Record<string, number> = {};
-    mySales.forEach((e) => {
-      const name = brandMap.get(e.brandId) ?? "Unknown";
-      map[name] = (map[name] ?? 0) + e.amount;
-    });
-    return Object.entries(map)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [mySales, brandMap]);
-
-  // ─── Promotion performance table ────────────────
   const promoTableData = useMemo(() => {
     const activePromos = allPromotions.filter((p) => {
       if (!p.isActive) return false;
-      return p.startDate <= monthEnd && p.endDate >= monthStart;
+      return p.startDate <= promoEnd && p.endDate >= promoStart;
     });
 
     const myResults = allPromoResults.filter(
-      (r) => posIds.includes(r.counterId) && r.date >= monthStart && r.date <= monthEnd,
+      (r) => activeCounterIds.has(r.counterId) && r.date >= promoStart && r.date <= promoEnd,
     );
 
     return activePromos.map((promo) => {
       const results = myResults.filter((r) => r.promotionId === promo.id);
       const totalGwp = results.reduce((s, r) => s + r.gwpGiven, 0);
-      const brandName = brandMap.get(promo.brandId ?? "") ?? "All Brands";
+      const brandName = brandNameMap.get(promo.brandId ?? "") ?? "All Brands";
       return {
         id: promo.id,
         name: promo.name,
@@ -228,9 +390,9 @@ export default function BADashboard() {
         trackable: promo.trackable,
       };
     });
-  }, [allPromotions, allPromoResults, posIds, monthStart, monthEnd, brandMap]);
+  }, [allPromotions, allPromoResults, activeCounterIds, promoStart, promoEnd, brandNameMap]);
 
-  // ─── No POS assigned guard ──────────────────────
+  // ── No POS assigned guard ──────────────────────
   if (posIds.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -248,7 +410,7 @@ export default function BADashboard() {
     );
   }
 
-  // ─── Render ─────────────────────────────────────
+  // ── Render ─────────────────────────────────────
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -264,21 +426,168 @@ export default function BADashboard() {
             {assignedPos.map((p: any) => p.storeName ?? p.name).join(", ")}
           </p>
         </div>
-        <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-          <SelectTrigger className="w-[200px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {monthOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
+
+      {/* ── Part-Time Filter Bar ─────────────────── */}
+      {isRestricted && (
+        <Card>
+          <CardContent className="pt-4 pb-4">
+            <div className="flex flex-wrap items-end gap-4">
+              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── BA Filter Bar ────────────────────────── */}
+      {!isRestricted && (
+        <Card>
+          <CardContent className="pt-4 pb-4">
+            <div className="flex flex-wrap items-end gap-4">
+              {/* Time period tabs */}
+              <div className="flex rounded-md border">
+                {(["daterange", "monthly", "yearly"] as const).map((tab) => (
+                  <Button
+                    key={tab}
+                    variant={timeTab === tab ? "default" : "ghost"}
+                    size="sm"
+                    className="rounded-none first:rounded-l-md last:rounded-r-md"
+                    onClick={() => setTimeTab(tab)}
+                  >
+                    {tab === "daterange" ? "Date Range" : tab === "monthly" ? "Monthly" : "Yearly"}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Date Range controls */}
+              {timeTab === "daterange" && (
+                <div className="flex items-end gap-2">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">From</Label>
+                    <Input type="date" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="w-[130px] md:w-[150px]" />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">To</Label>
+                    <Input type="date" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="w-[130px] md:w-[150px]" />
+                  </div>
+                </div>
+              )}
+
+              {/* Monthly controls */}
+              {timeTab === "monthly" && (
+                <div className="flex items-end gap-2">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Year</Label>
+                    <Select value={monthlyYear} onValueChange={setMonthlyYear}>
+                      <SelectTrigger className="w-[100px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {yearOptions.map((y) => (
+                          <SelectItem key={y} value={y}>{y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Month</Label>
+                    <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
+                      <SelectTrigger className="w-[120px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Months</SelectItem>
+                        {MONTH_LABELS.map((label, i) => (
+                          <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>{label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Yearly controls */}
+              {timeTab === "yearly" && (
+                <div className="flex flex-wrap gap-3">
+                  {availableYears.map((yr) => (
+                    <label key={yr} className="flex items-center gap-1.5 text-sm">
+                      <Checkbox
+                        checked={selectedYears.has(yr)}
+                        onCheckedChange={(checked) => {
+                          const next = new Set(selectedYears);
+                          if (checked) next.add(yr); else next.delete(yr);
+                          if (next.size > 0) setSelectedYears(next);
+                        }}
+                      />
+                      {yr}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {/* Counter filter (assigned POS only) */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1">
+                    <Filter className="h-3.5 w-3.5" />
+                    Counter
+                    {selectedCounters !== null && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{selectedCounters.size}</Badge>
+                    )}
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 max-h-[300px] overflow-auto" align="start">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between pb-2 border-b">
+                      <span className="text-sm font-medium">Counter</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => setSelectedCounters(null)}
+                      >
+                        Select All
+                      </Button>
+                    </div>
+                    {assignedPos.map((pos: any) => {
+                      const checked = selectedCounters === null || selectedCounters.has(pos.id);
+                      return (
+                        <label key={pos.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(c) => {
+                              const base = selectedCounters ?? new Set(posIds);
+                              const next = new Set(base);
+                              if (c) next.add(pos.id); else next.delete(pos.id);
+                              if (next.size === posIds.length) setSelectedCounters(null);
+                              else setSelectedCounters(next);
+                            }}
+                          />
+                          {pos.storeName ?? pos.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {isRestricted && (
         <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-          Showing only your submitted sales entries. Days without your submissions are not displayed.
+          Showing only your submitted sales entries.
         </div>
       )}
 
@@ -308,7 +617,7 @@ export default function BADashboard() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{atv !== null ? fmtCurrency(Math.round(atv)) : "—"}</div>
+            <div className="text-2xl font-bold">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</div>
           </CardContent>
         </Card>
         <Card>
@@ -317,12 +626,12 @@ export default function BADashboard() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{upt !== null ? upt.toFixed(1) : "—"}</div>
+            <div className="text-2xl font-bold">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Sales Attribution (for full-access BA) */}
+      {/* Sales Attribution (BA only) */}
       {attribution && (attribution.othersSales > 0 || attribution.importedSales > 0) && (
         <Card>
           <CardHeader className="pb-2">
@@ -366,40 +675,57 @@ export default function BADashboard() {
       {/* Daily Sales Chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Daily Sales</CardTitle>
+          <CardTitle>
+            {isRestricted
+              ? "Daily Sales"
+              : timeTab === "yearly" && selectedYears.size > 1
+                ? "Sales Trend (Year Overlay)"
+                : timeTab === "monthly" && monthlyMonth === "all"
+                  ? "Monthly Sales"
+                  : "Daily Sales"}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          {!isRestricted && dailyChartData.some(d => d.others > 0) ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={dailyChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name === "mine" ? "My Sales" : "Part-Time"]} />
-                <Legend formatter={(value) => value === "mine" ? "My Sales" : "Part-Time"} />
-                <Area type="monotone" dataKey="mine" stackId="1" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.6} />
-                <Area type="monotone" dataKey="others" stackId="1" stroke={CHART_COLORS[1]} fill={CHART_COLORS[1]} fillOpacity={0.6} />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={300}>
+            {isMultiYearOverlay ? (
               <LineChart data={dailyChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                 <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-                <Line type="monotone" dataKey="total" stroke={CHART_COLORS[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name]} />
+                <Legend />
+                {Array.from(selectedYears).sort().map((yr, i) => (
+                  <Line key={yr} type="monotone" dataKey={yr} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} />
+                ))}
               </LineChart>
-            </ResponsiveContainer>
-          )}
+            ) : hasAttribution ? (
+              <BarChart data={dailyChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name === "mine" ? "My Sales" : "Others"]} />
+                <Legend formatter={(value) => value === "mine" ? "My Sales" : "Others"} />
+                <Bar dataKey="mine" stackId="1" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
+                <Bar dataKey="others" stackId="1" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            ) : (
+              <BarChart data={dailyChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
+                <Bar dataKey="total" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            )}
+          </ResponsiveContainer>
         </CardContent>
       </Card>
 
-      {/* Monthly Trend + Brand Pie side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Monthly Sales Trend (BA monthly mode only) */}
+      {!isRestricted && timeTab === "monthly" && (
         <Card>
           <CardHeader>
-            <CardTitle>Monthly Sales Trend</CardTitle>
+            <CardTitle>Monthly Sales Trend ({monthlyYear})</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -413,39 +739,51 @@ export default function BADashboard() {
             </ResponsiveContainer>
           </CardContent>
         </Card>
+      )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Sales by Brand</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {brandPieData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No sales data
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={brandPieData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={100}
-                    dataKey="value"
-                    nameKey="name"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {brandPieData.map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {/* Sales by Brand Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sales by Brand</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {brandTableData.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No sales data for this period.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left">
+                    <th className="pb-2 font-medium">Brand</th>
+                    <th className="pb-2 font-medium text-right">Sales</th>
+                    <th className="pb-2 font-medium text-right">Units</th>
+                    <th className="pb-2 font-medium text-right">ATV</th>
+                    <th className="pb-2 font-medium text-right">UPT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brandTableData.map((row) => (
+                    <tr key={row.name} className="border-b last:border-0">
+                      <td className="py-2">{row.name}</td>
+                      <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
+                      <td className="py-2 text-right">{row.units.toLocaleString()}</td>
+                      <td className="py-2 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
+                      <td className="py-2 text-right">{fmtRatio(row.units, row.orders)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 font-semibold">
+                    <td className="py-2">Total</td>
+                    <td className="py-2 text-right">{fmtCurrency(totalSales)}</td>
+                    <td className="py-2 text-right">{totalUnits.toLocaleString()}</td>
+                    <td className="py-2 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
+                    <td className="py-2 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Promotion Performance Table */}
       <Card>
@@ -454,7 +792,7 @@ export default function BADashboard() {
         </CardHeader>
         <CardContent>
           {promoTableData.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No active promotions this month.</p>
+            <p className="text-muted-foreground text-sm">No active promotions for this period.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
