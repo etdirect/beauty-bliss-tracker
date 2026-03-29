@@ -55,6 +55,8 @@ export interface IStorage {
   getActivePromotions(date: string): Promise<Promotion[]>;
   createPromotion(promo: InsertPromotion): Promise<Promotion>;
   updatePromotion(id: string, data: Partial<InsertPromotion>): Promise<Promotion | undefined>;
+  deletePromotion(id: string): Promise<void>;
+  deletePromotionBySourceId(sourceScenarioId: string): Promise<number>;
   syncPromotionsFromImport(promotions: InsertPromotion[]): Promise<{ created: number; updated: number; total: number }>;
 
   // Promotion results
@@ -724,6 +726,13 @@ export class PgStorage implements IStorage {
     const { rows } = await this.q(`UPDATE promotions SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
     return rows[0] ? this.mapPromotion(rows[0]) : undefined;
   }
+  async deletePromotion(id: string): Promise<void> {
+    await this.q("DELETE FROM promotions WHERE id=$1", [id]);
+  }
+  async deletePromotionBySourceId(sourceScenarioId: string): Promise<number> {
+    const { rowCount } = await this.q("DELETE FROM promotions WHERE source_scenario_id=$1", [sourceScenarioId]);
+    return rowCount ?? 0;
+  }
   async syncPromotionsFromImport(incoming: InsertPromotion[]): Promise<{ created: number; updated: number; total: number }> {
     let created = 0; let updated = 0;
     const { rows: existing } = await this.q("SELECT * FROM promotions");
@@ -1068,6 +1077,12 @@ export class MemStorage implements IStorage {
   async getActivePromotions(date: string): Promise<Promotion[]> { return Array.from(this.promotions.values()).filter(p => p.isActive && p.startDate <= date && p.endDate >= date); }
   async createPromotion(data: InsertPromotion): Promise<Promotion> { const id = randomUUID(); const p = makePromotion(id, data); this.promotions.set(id, p); return p; }
   async updatePromotion(id: string, data: Partial<InsertPromotion>): Promise<Promotion | undefined> { const p = this.promotions.get(id); if (!p) return undefined; const u = { ...p, ...data }; this.promotions.set(id, u as Promotion); return u as Promotion; }
+  async deletePromotion(id: string): Promise<void> { this.promotions.delete(id); }
+  async deletePromotionBySourceId(sourceScenarioId: string): Promise<number> {
+    let count = 0;
+    for (const [id, p] of this.promotions) { if (p.sourceScenarioId === sourceScenarioId) { this.promotions.delete(id); count++; } }
+    return count;
+  }
   async syncPromotionsFromImport(incoming: InsertPromotion[]): Promise<{ created: number; updated: number; total: number }> {
     let created = 0; let updated = 0;
     const existing = Array.from(this.promotions.values());

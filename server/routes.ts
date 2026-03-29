@@ -335,6 +335,26 @@ export async function registerRoutes(
     res.json(promo);
   });
 
+  // DELETE promotion (management or server-to-server)
+  app.delete("/api/promotions/:id", requireManagement, async (req, res) => {
+    try {
+      await storage.deletePromotion(req.params.id as string);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE promotion by source scenario ID (server-to-server from Simulator, no auth)
+  app.delete("/api/promotions/by-source/:sourceId", async (req, res) => {
+    try {
+      const count = await storage.deletePromotionBySourceId(req.params.sourceId);
+      return res.json({ ok: true, deleted: count });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/promotions/push — receive promotion from Simulator (no auth — server-to-server)
   app.post("/api/promotions/push", async (req, res) => {
     try {
