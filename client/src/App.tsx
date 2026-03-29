@@ -16,6 +16,7 @@ interface AuthUser {
   username: string;
   name: string;
   role: string;
+  canViewHistory: boolean;
   assignedPos: any[];
 }
 

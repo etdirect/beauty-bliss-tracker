@@ -18,6 +18,7 @@ interface SafeUser {
   name: string;
   role: string;
   isActive: boolean;
+  canViewHistory: boolean;
 }
 
 interface UserPosAssignment {
@@ -167,8 +168,10 @@ export default function SettingsPage() {
   });
 
   const editUserMutation = useMutation({
-    mutationFn: async ({ id, name, username, role }: { id: string; name: string; username: string; role: string }) => {
-      await apiRequest("PATCH", `/api/users/${id}`, { name, username, role });
+    mutationFn: async ({ id, name, username, role, canViewHistory }: { id: string; name: string; username: string; role: string; canViewHistory?: boolean }) => {
+      const body: Record<string, any> = { name, username, role };
+      if (canViewHistory !== undefined) body.canViewHistory = canViewHistory;
+      await apiRequest("PATCH", `/api/users/${id}`, body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -638,6 +641,23 @@ export default function SettingsPage() {
                             </label>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Can View History toggle — BA only */}
+                    {user.role === "ba" && (
+                      <div className="ml-6 mt-2">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <Checkbox
+                            className="h-3.5 w-3.5"
+                            checked={user.canViewHistory}
+                            onCheckedChange={(checked) => {
+                              editUserMutation.mutate({ id: user.id, name: user.name, username: user.username, role: user.role, canViewHistory: !!checked });
+                            }}
+                          />
+                          <span>Can view past sales data</span>
+                          {!user.canViewHistory && <Badge variant="secondary" className="text-[10px] px-1">Probation</Badge>}
+                        </label>
                       </div>
                     )}
                   </div>

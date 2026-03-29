@@ -69,6 +69,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   role: text("role").notNull().default("ba"),
   isActive: boolean("is_active").notNull().default(true),
+  canViewHistory: boolean("can_view_history").notNull().default(false),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });

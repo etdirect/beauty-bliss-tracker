@@ -69,6 +69,7 @@ export async function registerRoutes(
         username: user.username,
         name: user.name,
         role: user.role,
+        canViewHistory: user.canViewHistory,
         assignedPos,
       });
     } catch (err: any) {
@@ -102,6 +103,7 @@ export async function registerRoutes(
       username: user.username,
       name: user.name,
       role: user.role,
+      canViewHistory: user.canViewHistory,
       assignedPos,
     });
   });
@@ -131,7 +133,7 @@ export async function registerRoutes(
   app.get("/api/users", requireManagement, async (_req, res) => {
     const users = await storage.getUsers();
     // Don't send PINs to client
-    const safe = users.map(u => ({ id: u.id, username: u.username, name: u.name, role: u.role, isActive: u.isActive }));
+    const safe = users.map(u => ({ id: u.id, username: u.username, name: u.name, role: u.role, isActive: u.isActive, canViewHistory: u.canViewHistory }));
     res.json(safe);
   });
 
@@ -143,7 +145,7 @@ export async function registerRoutes(
       }
       const hashed = await bcrypt.hash(pin, 10);
       const user = await storage.createUser({ username, pin: hashed, name, role: role || "ba", isActive: true });
-      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
+      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive, canViewHistory: user.canViewHistory });
     } catch (err: any) {
       const msg = err.message?.includes("unique") || err.message?.includes("UNIQUE") ? "Username already exists" : err.message;
       res.status(400).json({ error: msg });
@@ -158,7 +160,7 @@ export async function registerRoutes(
       }
       const user = await storage.updateUser(req.params.id as string, updates);
       if (!user) return res.status(404).json({ error: "Not found" });
-      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive });
+      res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive, canViewHistory: user.canViewHistory });
     } catch (err: any) {
       const msg = err.message?.includes("unique") || err.message?.includes("UNIQUE") ? "Username already exists" : err.message;
       res.status(400).json({ error: msg });

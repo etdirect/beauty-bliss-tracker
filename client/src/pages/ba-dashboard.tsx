@@ -94,20 +94,21 @@ export default function BADashboard() {
     queryKey: ["/api/promotion-results"],
   });
 
-  const isPartTime = user?.role === "part_time";
+  // Restricted view: part-time OR BA on probation (canViewHistory=false) — only see own submissions
+  const isRestricted = user?.role === "part_time" || (user?.role === "ba" && !user?.canViewHistory);
 
-  // ─── Filtered data (only user's POS, and for part-time: only their submissions) ───────────
+  // ─── Filtered data (only user's POS, and for restricted users: only their submissions) ───────────
   const mySales = useMemo(() => {
     let entries = monthlySales.filter((s) => posIds.includes(s.counterId));
-    if (isPartTime) entries = entries.filter((s) => s.submittedBy === user?.id);
+    if (isRestricted) entries = entries.filter((s) => s.submittedBy === user?.id);
     return entries;
-  }, [monthlySales, posIds, isPartTime, user?.id]);
+  }, [monthlySales, posIds, isRestricted, user?.id]);
 
   const myTrendSales = useMemo(() => {
     let entries = trendSales.filter((s) => posIds.includes(s.counterId));
-    if (isPartTime) entries = entries.filter((s) => s.submittedBy === user?.id);
+    if (isRestricted) entries = entries.filter((s) => s.submittedBy === user?.id);
     return entries;
-  }, [trendSales, posIds, isPartTime, user?.id]);
+  }, [trendSales, posIds, isRestricted, user?.id]);
 
   // Derive month options from the trend data + always include current month
   const monthOptions = useMemo(() => {
@@ -258,7 +259,7 @@ export default function BADashboard() {
         </Select>
       </div>
 
-      {isPartTime && (
+      {isRestricted && (
         <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
           Showing only your submitted sales entries. Days without your submissions are not displayed.
         </div>

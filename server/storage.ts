@@ -260,6 +260,7 @@ export class PgStorage implements IStorage {
         role TEXT NOT NULL DEFAULT 'ba',
         is_active BOOLEAN NOT NULL DEFAULT true
       );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_history BOOLEAN NOT NULL DEFAULT false;
       CREATE TABLE IF NOT EXISTS user_pos_assignments (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -452,7 +453,7 @@ export class PgStorage implements IStorage {
     return { id: r.id, salesChannel: r.sales_channel, storeCode: r.store_code, storeName: r.store_name, isActive: r.is_active };
   }
   private mapUser(r: any): User {
-    return { id: r.id, username: r.username, pin: r.pin, name: r.name, role: r.role, isActive: r.is_active };
+    return { id: r.id, username: r.username, pin: r.pin, name: r.name, role: r.role, isActive: r.is_active, canViewHistory: r.can_view_history ?? false };
   }
   private mapUserPosAssignment(r: any): UserPosAssignment {
     return { id: r.id, userId: r.user_id, posId: r.pos_id };
@@ -819,6 +820,7 @@ export class PgStorage implements IStorage {
     if (data.name !== undefined) { sets.push(`name=$${i++}`); vals.push(data.name); }
     if (data.role !== undefined) { sets.push(`role=$${i++}`); vals.push(data.role); }
     if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
+    if (data.canViewHistory !== undefined) { sets.push(`can_view_history=$${i++}`); vals.push(data.canViewHistory); }
     if (sets.length === 0) return this.getUser(id);
     vals.push(id);
     const { rows } = await this.q(`UPDATE users SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
@@ -968,8 +970,8 @@ export class MemStorage implements IStorage {
     const ba1Id = randomUUID();
     const adminHash = bcrypt.hashSync("1234", 10);
     const ba1Hash = bcrypt.hashSync("1111", 10);
-    this.usersMap.set(adminId, { id: adminId, username: "admin", pin: adminHash, name: "Admin", role: "management", isActive: true });
-    this.usersMap.set(ba1Id, { id: ba1Id, username: "ba1", pin: ba1Hash, name: "BA Demo", role: "ba", isActive: true });
+    this.usersMap.set(adminId, { id: adminId, username: "admin", pin: adminHash, name: "Admin", role: "management", isActive: true, canViewHistory: true });
+    this.usersMap.set(ba1Id, { id: ba1Id, username: "ba1", pin: ba1Hash, name: "BA Demo", role: "ba", isActive: true, canViewHistory: false });
 
     // BA1 assigned to LOGON/TS (index 2)
     const logonTsId = posIds[2];
