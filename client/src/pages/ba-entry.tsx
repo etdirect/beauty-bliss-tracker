@@ -3,13 +3,13 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/App";
-import type { Brand, Promotion, BrandPosAvailability, PosLocation } from "@shared/schema";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut } from "lucide-react";
+import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
@@ -57,6 +57,19 @@ export default function BAEntry() {
   const { data: activePromotions = [] } = useQuery<Promotion[]>({
     queryKey: ["/api/promotions/active", `?date=${selectedDate}`],
     enabled: !!selectedDate,
+  });
+
+  // Fetch existing sales for selected POS + date (to detect previous entries)
+  const { data: existingSales = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${selectedDate}&endDate=${selectedDate}&counterId=${selectedCounter}`],
+    enabled: !!selectedCounter && !!selectedDate,
+  });
+
+  // Filter existing sales: for non-management, only show entries they submitted (or all if canViewHistory)
+  const myExistingEntries = existingSales.filter(e => {
+    if (isManagement) return true;
+    if (user?.canViewHistory) return true;
+    return e.submittedBy === user?.id;
   });
 
   // For management users, show all active POS locations; for BA, only assigned
@@ -136,6 +149,20 @@ export default function BAEntry() {
     setSalesData({});
     setPromoData({});
     setSubmitted(false);
+  };
+
+  const loadExistingData = () => {
+    const data: Record<string, { orders: number; units: number; amount: number; gwpCount: number }> = {};
+    myExistingEntries.forEach(e => {
+      data[e.brandId] = {
+        orders: e.orders ?? 0,
+        units: e.units ?? 0,
+        amount: e.amount ?? 0,
+        gwpCount: e.gwpCount ?? 0,
+      };
+    });
+    setSalesData(data);
+    toast({ title: "Data loaded", description: "Previous entries loaded. Edit and re-submit to update." });
   };
 
   const totalOrders = Object.values(salesData).reduce((sum, d) => sum + (d.orders || 0), 0);
@@ -267,6 +294,35 @@ export default function BAEntry() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Existing Entries Notice */}
+        {selectedCounter && myExistingEntries.length > 0 && !submitted && (
+          <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                    Existing entries for this date
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                    {myExistingEntries.length} brand{myExistingEntries.length !== 1 ? "s" : ""} recorded
+                    {" — "}
+                    HK${myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-xs h-7 border-amber-300 text-amber-700 hover:bg-amber-100"
+                    onClick={loadExistingData}
+                  >
+                    <Pencil className="w-3 h-3 mr-1" /> Load & Edit
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Active Promotions Banner */}
         {selectedCounter && activePromotions.length > 0 && (
