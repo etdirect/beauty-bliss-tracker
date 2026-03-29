@@ -38,6 +38,17 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // === PUBLIC ENDPOINTS (no auth — server-to-server) ===
+  app.get("/api/public/pos-locations", async (_req, res) => {
+    try {
+      const locations = await storage.getPosLocations();
+      const active = locations.filter((l: any) => l.isActive);
+      res.json(active.map((l: any) => ({ id: l.id, salesChannel: l.salesChannel, storeCode: l.storeCode, storeName: l.storeName })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === AUTH ROUTES ===
   app.post("/api/auth/login", async (req, res) => {
     try {

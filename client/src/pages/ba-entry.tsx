@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -58,6 +58,20 @@ export default function BAEntry() {
     queryKey: ["/api/promotions/active", `?date=${selectedDate}`],
     enabled: !!selectedDate,
   });
+
+  // Filter promotions by selected counter's POS location
+  const filteredPromotions = useMemo(() => {
+    if (!selectedCounter) return activePromotions;
+    const pos = posLocations.find((p) => p.id === selectedCounter);
+    if (!pos) return activePromotions;
+    return activePromotions.filter((promo) => {
+      // No shopLocation = global promo, show to all
+      if (!promo.shopLocation) return true;
+      const loc = promo.shopLocation as string;
+      // Match "Channel / StoreName" against this counter
+      return loc.includes(pos.storeName) || loc.includes(`${pos.salesChannel} / ${pos.storeName}`);
+    });
+  }, [activePromotions, selectedCounter, posLocations]);
 
   // For management users, show all active POS locations; for BA, only assigned
   const isManagement = user?.role === "management";
@@ -325,15 +339,15 @@ export default function BAEntry() {
         )}
 
         {/* Active Promotions Banner */}
-        {selectedCounter && activePromotions.length > 0 && (
+        {selectedCounter && filteredPromotions.length > 0 && (
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center gap-2 mb-3">
                 <Gift className="w-4 h-4 text-primary" />
-                <span className="text-sm font-semibold">Active Promotions ({activePromotions.length})</span>
+                <span className="text-sm font-semibold">Active Promotions ({filteredPromotions.length})</span>
               </div>
               <div className="space-y-3">
-                {activePromotions.map(promo => {
+                {filteredPromotions.map(promo => {
                   const brand = brands.find(b => b.id === promo.brandId);
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   return (
