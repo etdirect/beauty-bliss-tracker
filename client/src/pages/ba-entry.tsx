@@ -79,7 +79,7 @@ export default function BAEntry() {
   const currentMonth = selectedDate?.substring(0, 7) || new Date().toISOString().substring(0, 7);
 
   const { data: activeIncentives = [] } = useQuery<IncentiveScheme[]>({
-    queryKey: ["/api/incentive-schemes/month", `/${currentMonth}`],
+    queryKey: [`/api/incentive-schemes/month/${currentMonth}`],
     enabled: !!currentMonth,
     staleTime: 60_000,
   });

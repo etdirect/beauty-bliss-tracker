@@ -92,7 +92,7 @@ export default function SettingsPage() {
 
   const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"] });
   const { data: incentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
-    queryKey: ["/api/incentive-schemes/month", `/${incentiveMonth}`],
+    queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`],
     enabled: !!incentiveMonth,
     staleTime: 30_000,
   });
@@ -133,7 +133,7 @@ export default function SettingsPage() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" });
       setIncentiveDialogOpen(false);
       toast({ title: editingIncentiveId ? "Incentive updated" : "Incentive created" });
     },
@@ -143,7 +143,7 @@ export default function SettingsPage() {
   const deleteIncentiveMutation = useMutation({
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/incentive-schemes/${id}`); },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" });
       toast({ title: "Incentive deleted" });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
@@ -153,7 +153,7 @@ export default function SettingsPage() {
     mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
       await apiRequest("PATCH", `/api/incentive-schemes/${id}`, { isActive });
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" }); },
   });
 
   // === POS Location mutations ===
