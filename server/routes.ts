@@ -43,7 +43,19 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  // === DIAGNOSTIC ENDPOINT (no auth) ===
+  // === DIAGNOSTIC ENDPOINTS (no auth) ===
+  app.get("/api/debug/session", (req, res) => {
+    res.json({
+      hasSession: !!req.session,
+      sessionId: req.sessionID,
+      userId: req.session?.userId || null,
+      role: req.session?.role || null,
+      cookieHeader: req.headers.cookie || null,
+      isSecure: req.secure,
+      protocol: req.protocol,
+      xForwardedProto: req.headers["x-forwarded-proto"] || null,
+    });
+  });
   app.get("/api/debug/status", async (_req, res) => {
     try {
       const users = await storage.getUsers();
