@@ -478,7 +478,16 @@ export default function BAEntry() {
         )}
 
         {/* Monthly Incentives */}
-        {selectedCounter && activeIncentives.filter(s => s.isActive).length > 0 && (
+        {selectedCounter && (() => {
+          // Filter incentives: active + matching POS (or no POS = all)
+          const filteredIncentives = activeIncentives.filter(s => {
+            if (!s.isActive) return false;
+            if (!s.posIds) return true; // no POS restriction
+            const ids = (s.posIds as string).split(",").filter(Boolean);
+            return ids.length === 0 || ids.includes(selectedCounter);
+          });
+          if (filteredIncentives.length === 0) return null;
+          return (
           <Card className="border-amber-300/50 dark:border-amber-700/50 bg-amber-50/50 dark:bg-amber-950/20">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center gap-2 mb-3">
@@ -486,7 +495,7 @@ export default function BAEntry() {
                 <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">Monthly Incentives — {currentMonth}</span>
               </div>
               <div className="space-y-3">
-                {activeIncentives.filter(s => s.isActive).map(scheme => {
+                {filteredIncentives.map(scheme => {
                   const progress = incentiveProgress[scheme.id] ?? 0;
                   const pct = scheme.threshold > 0 ? Math.min(100, (progress / scheme.threshold) * 100) : 0;
                   const achieved = progress >= scheme.threshold;
@@ -536,7 +545,8 @@ export default function BAEntry() {
               </div>
             </CardContent>
           </Card>
-        )}
+          );
+        })()}
 
         {/* Sales Entry by Brand */}
         {selectedCounter && categoryOrder.map(category => {

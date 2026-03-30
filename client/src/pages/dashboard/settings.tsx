@@ -1192,6 +1192,53 @@ export default function SettingsPage() {
                   )}
                 </div>
 
+                {/* POS Selection */}
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">POS Locations <span className="text-xs text-muted-foreground font-normal">(leave empty for all)</span></Label>
+                  <div className="max-h-[150px] overflow-y-auto border rounded-md p-2 space-y-1">
+                    {(() => {
+                      const selectedIds = (incForm.posIds as any as string || "").split(",").filter(Boolean);
+                      const channels = [...new Set(posLocations.filter(p => p.isActive).map(p => p.salesChannel))].sort();
+                      return channels.map(ch => {
+                        const stores = posLocations.filter(p => p.isActive && p.salesChannel === ch);
+                        const allSel = stores.every(s => selectedIds.includes(s.id));
+                        const someSel = stores.some(s => selectedIds.includes(s.id));
+                        return (
+                          <div key={ch} className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <Checkbox checked={allSel ? true : someSel ? "indeterminate" : false}
+                                onCheckedChange={ck => {
+                                  const ids = stores.map(s => s.id);
+                                  setIncForm(f => {
+                                    const cur = ((f.posIds as any as string) || "").split(",").filter(Boolean);
+                                    const next = ck ? [...new Set([...cur, ...ids])] : cur.filter(id => !ids.includes(id));
+                                    return { ...f, posIds: next.join(",") || undefined };
+                                  });
+                                }} />
+                              <span className="text-xs font-semibold">{ch}</span>
+                            </div>
+                            <div className="pl-6 space-y-0.5">
+                              {stores.map(s => (
+                                <div key={s.id} className="flex items-center gap-2">
+                                  <Checkbox checked={selectedIds.includes(s.id)}
+                                    onCheckedChange={ck => {
+                                      setIncForm(f => {
+                                        const cur = ((f.posIds as any as string) || "").split(",").filter(Boolean);
+                                        const next = ck ? [...cur, s.id] : cur.filter(id => id !== s.id);
+                                        return { ...f, posIds: next.join(",") || undefined };
+                                      });
+                                    }} />
+                                  <span className="text-xs">{s.storeName}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
                 <div className="space-y-1">
                   <Label className="text-sm font-medium">Notes (optional)</Label>
                   <Textarea value={incForm.notes || ""} onChange={e => setIncForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Additional details..." />

@@ -422,9 +422,11 @@ export async function registerRoutes(
   });
   app.post("/api/incentive-schemes", requireManagement, async (req, res) => {
     try {
-      const parsed = insertIncentiveSchemeSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-      const scheme = await storage.createIncentiveScheme(parsed.data);
+      const data = req.body;
+      if (!data.name || !data.month || !data.category || !data.metric) {
+        return res.status(400).json({ error: "name, month, category, and metric are required" });
+      }
+      const scheme = await storage.createIncentiveScheme(data);
       res.json(scheme);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });

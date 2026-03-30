@@ -230,6 +230,7 @@ export const incentiveSchemes = pgTable("incentive_schemes", {
   rewardPerAmountUnit: real("reward_per_amount_unit"), // e.g. per HK$1000 (when basis=per_amount)
   isActive: boolean("is_active").notNull().default(true),
   createdBy: varchar("created_by"),
+  posIds: text("pos_ids"),                      // comma-separated POS IDs (null = all POS)
   notes: text("notes"),
 });
 
