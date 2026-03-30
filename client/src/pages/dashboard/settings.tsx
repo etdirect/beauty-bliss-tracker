@@ -94,6 +94,7 @@ export default function SettingsPage() {
   const { data: incentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
     queryKey: ["/api/incentive-schemes/month", `/${incentiveMonth}`],
     enabled: !!incentiveMonth,
+    staleTime: 30_000,
   });
 
   const metricForCategory = (cat: string) => {
@@ -132,7 +133,7 @@ export default function SettingsPage() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" });
       setIncentiveDialogOpen(false);
       toast({ title: editingIncentiveId ? "Incentive updated" : "Incentive created" });
     },
@@ -142,7 +143,7 @@ export default function SettingsPage() {
   const deleteIncentiveMutation = useMutation({
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/incentive-schemes/${id}`); },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" });
       toast({ title: "Incentive deleted" });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
@@ -152,7 +153,7 @@ export default function SettingsPage() {
     mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
       await apiRequest("PATCH", `/api/incentive-schemes/${id}`, { isActive });
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"], refetchType: "active" }); },
   });
 
   // === POS Location mutations ===
