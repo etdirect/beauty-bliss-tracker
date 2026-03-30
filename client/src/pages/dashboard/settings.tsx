@@ -1128,8 +1128,14 @@ export default function SettingsPage() {
                       <Select value={incForm.targetId || ""} onValueChange={v => { const p = promotions.find(p => p.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: p?.name || "" })); }}>
                         <SelectTrigger><SelectValue placeholder="Select promotion" /></SelectTrigger>
                         <SelectContent>
-                          {promotions.filter(p => p.isActive).map(p => (
-                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          {promotions.filter(p => {
+                            if (!incForm.month) return p.isActive;
+                            // Show promos active during the selected month
+                            const mStart = `${incForm.month}-01`;
+                            const mEnd = `${incForm.month}-31`;
+                            return p.startDate <= mEnd && p.endDate >= mStart;
+                          }).map(p => (
+                            <SelectItem key={p.id} value={p.id}>{p.name} ({p.type})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1189,6 +1195,29 @@ export default function SettingsPage() {
                   <Label className="text-sm font-medium">Notes (optional)</Label>
                   <Textarea value={incForm.notes || ""} onChange={e => setIncForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Additional details..." />
                 </div>
+
+                {/* Auto-generated description preview */}
+                {incForm.name && incForm.category && (
+                  <div className="space-y-1 p-3 rounded-md bg-muted/50 border">
+                    <Label className="text-xs text-muted-foreground">Auto-generated Description</Label>
+                    <p className="text-sm leading-relaxed">
+                      {(() => {
+                        const catLabel = INCENTIVE_CATEGORY_LABELS[incForm.category as IncentiveCategory] || incForm.category;
+                        const target = incForm.targetName || "target";
+                        const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
+                        const thresholdText = isUnits ? `${incForm.threshold || 0} units` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
+                        let rewardText = "";
+                        if (incForm.rewardBasis === "per_unit") rewardText = `HK$${incForm.rewardAmount || 0} per unit sold`;
+                        else if (incForm.rewardBasis === "per_amount") rewardText = `HK$${incForm.rewardAmount || 0} per HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()} in sales`;
+                        else rewardText = `HK$${incForm.rewardAmount || 0} cash bonus`;
+                        if (incForm.category === "promo_achievement") {
+                          return `${incForm.name}: Achieve ${thresholdText} for ${target}. Earn ${rewardText}.`;
+                        }
+                        return `${incForm.name}: Reach ${thresholdText} of ${target} (${catLabel}). Earn ${rewardText}.`;
+                      })()}
+                    </p>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIncentiveDialogOpen(false)}>Cancel</Button>

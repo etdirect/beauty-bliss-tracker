@@ -21,10 +21,15 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-function requireManagement(req: Request, res: Response, next: NextFunction): void {
+async function requireManagement(req: Request, res: Response, next: NextFunction) {
   if (!req.session || !req.session.userId) {
     res.status(401).json({ error: "Not authenticated" });
     return;
+  }
+  // If role not in session (old session), fetch from DB
+  if (!req.session.role) {
+    const user = await storage.getUser(req.session.userId);
+    if (user) req.session.role = user.role;
   }
   if (req.session.role !== "management") {
     res.status(403).json({ error: "Management access required" });
