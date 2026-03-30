@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, CheckCircle, XCircle, Search, Filter } from "lucide-react";
+import { Plus, CheckCircle, XCircle, Search, Filter, Trash2 } from "lucide-react";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
   "GWP": "bg-pink-100 text-pink-800 border-pink-200",
@@ -142,6 +142,19 @@ export default function Promotions() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/promotions/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/promotions"], refetchType: "active" });
+      toast({ title: "Promotion deleted" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -382,6 +395,7 @@ export default function Promotions() {
                           onClick={() => toggleMutation.mutate({ id: promo.id, isActive: false })}
                           className="text-xs text-muted-foreground h-7 px-2"
                           data-testid={`button-deactivate-${promo.id}`}
+                          title="Deactivate"
                         >
                           <XCircle className="w-3.5 h-3.5" />
                         </Button>
@@ -391,10 +405,20 @@ export default function Promotions() {
                           size="sm"
                           onClick={() => toggleMutation.mutate({ id: promo.id, isActive: true })}
                           className="text-xs h-7 px-2"
+                          title="Activate"
                         >
                           <CheckCircle className="w-3.5 h-3.5" />
                         </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { if (confirm(`Delete "${promo.name}"?`)) deleteMutation.mutate(promo.id); }}
+                        className="text-xs text-destructive h-7 px-2"
+                        title="Delete promotion"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
                     </div>
                   </div>
 
