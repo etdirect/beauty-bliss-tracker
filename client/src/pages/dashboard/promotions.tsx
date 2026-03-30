@@ -107,7 +107,7 @@ export default function Promotions() {
 
   const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"] });
   const { data: counters = [] } = useQuery<Counter[]>({ queryKey: ["/api/counters"] });
-  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"] });
+  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 60_000, refetchOnWindowFocus: true });
   const { data: promotionResults = [] } = useQuery<PromotionResult[]>({ queryKey: ["/api/promotion-results"] });
 
   const activeBrands = brands.filter(b => b.isActive);

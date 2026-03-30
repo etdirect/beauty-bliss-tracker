@@ -57,6 +57,8 @@ export default function BAEntry() {
   const { data: activePromotions = [] } = useQuery<Promotion[]>({
     queryKey: ["/api/promotions/active", `?date=${selectedDate}`],
     enabled: !!selectedDate,
+    staleTime: 60_000, // re-fetch every 60 seconds so new pushes appear
+    refetchOnWindowFocus: true,
   });
 
   // Filter promotions by selected counter's POS location
