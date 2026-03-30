@@ -41,20 +41,6 @@ const sessionConfig: session.SessionOptions = {
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   },
 };
-// Use PostgreSQL session store in production (survives deploys)
-if (isPostgres && storage instanceof PgStorage) {
-  const PgSession = connectPgSimple(session);
-  sessionConfig.store = new PgSession({
-    pool: storage.getPool(),
-    tableName: "session",
-    createTableIfMissing: true,
-  });
-  console.log("[session] Using PostgreSQL session store");
-} else {
-  console.log("[session] Using in-memory session store (dev)");
-}
-app.use(session(sessionConfig));
-
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -93,10 +79,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Initialize storage (creates tables for PostgreSQL, no-op for MemStorage)
+  // Initialize storage FIRST (creates all tables including session table)
   await storage.init();
   if (isPostgres) log("PostgreSQL storage initialized");
   else log("Using in-memory storage (no DATABASE_URL)");
+
+  // Set up session store AFTER tables are created
+  if (isPostgres && storage instanceof PgStorage) {
+    const PgSession = connectPgSimple(session);
+    sessionConfig.store = new PgSession({
+      pool: storage.getPool(),
+      tableName: "session",
+      createTableIfMissing: false, // Already created in storage.init()
+    });
+    log("Using PostgreSQL session store", "session");
+  } else {
+    log("Using in-memory session store (dev)", "session");
+  }
+  app.use(session(sessionConfig));
 
   await registerRoutes(httpServer, app);
 
