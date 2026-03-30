@@ -43,6 +43,34 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // === DIAGNOSTIC ENDPOINT (no auth) ===
+  app.get("/api/debug/status", async (_req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const brands = await storage.getBrands();
+      const pos = await storage.getPosLocations();
+      const promos = await storage.getPromotions();
+      const isPostgres = !!process.env.DATABASE_URL;
+      res.json({
+        storage: isPostgres ? "postgresql" : "memory",
+        counts: {
+          users: users.length,
+          brands: brands.length,
+          posLocations: pos.length,
+          promotions: promos.length,
+        },
+        usernames: users.map(u => u.username),
+        brandNames: brands.slice(0, 5).map(b => b.name),
+        env: {
+          NODE_ENV: process.env.NODE_ENV,
+          hasDBUrl: !!process.env.DATABASE_URL,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message, stack: err.stack });
+    }
+  });
+
   // === PUBLIC ENDPOINTS (no auth — server-to-server) ===
   app.get("/api/public/pos-locations", async (_req, res) => {
     try {
