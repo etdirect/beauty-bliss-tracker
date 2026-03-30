@@ -338,17 +338,16 @@ export default function BAEntry() {
           </Card>
         )}
 
-        {/* Active Promotions Banner */}
-        {selectedCounter && filteredPromotions.length > 0 && (
+        {/* Active Promotions — Layer 1 (Brand) */}
+        {selectedCounter && filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length > 0 && (
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center gap-2 mb-3">
                 <Gift className="w-4 h-4 text-primary" />
-                <span className="text-sm font-semibold">Active Promotions ({filteredPromotions.length})</span>
+                <span className="text-sm font-semibold">Active Promotions</span>
               </div>
               <div className="space-y-3">
-                {filteredPromotions.map(promo => {
-                  const brand = brands.find(b => b.id === promo.brandId);
+                {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
@@ -356,93 +355,93 @@ export default function BAEntry() {
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
-                        <span className="font-medium text-sm">{promo.name}</span>
+                        <span className="font-medium text-sm break-words">{promo.name}</span>
                       </div>
                       {promo.mechanics && (
-                        <p className="text-xs text-foreground/90 leading-relaxed font-medium">
+                        <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
                           {promo.mechanics}
                         </p>
                       )}
                       {!promo.mechanics && promo.description && (
-                        <p className="text-xs text-muted-foreground">{promo.description}</p>
-                      )}
-                      {promo.shopLocation && (
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <MapPin className="w-3 h-3" />
-                          {promo.shopLocation}
-                        </p>
-                      )}
-                      {promo.applicableProducts && (
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Package className="w-3 h-3" />
-                          {promo.applicableProducts}
-                        </p>
+                        <p className="text-xs text-muted-foreground break-words">{promo.description}</p>
                       )}
                       {promo.exclusions && (
                         <p className="text-xs text-red-600 flex items-center gap-1">
-                          <Tag className="w-3 h-3" />
-                          Excl: {promo.exclusions}
+                          <Tag className="w-3 h-3 shrink-0" />
+                          <span className="break-words">Excl: {promo.exclusions}</span>
                         </p>
                       )}
-                      {promo.gwpItem && (
-                        <p className="text-xs text-foreground/80">
-                          GWP: {promo.gwpItem}{promo.gwpQty ? ` (x${promo.gwpQty})` : ""}
-                        </p>
-                      )}
-                      {brand && (
-                        <p className="text-xs text-muted-foreground">Brand: {brand.name}</p>
-                      )}
-                      {promo.trackable && (
-                        <div className="space-y-1.5 pt-1 border-t border-dashed mt-1.5">
-                          {promo.type === "GWP" && (
-                            <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap">
-                                {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
-                              </label>
-                              <Input
-                                type="number" min={0} className="h-7 w-20 text-sm"
-                                value={promoData[promo.id]?.gwpGiven || ""}
-                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                                placeholder="0"
-                              />
-                            </div>
-                          )}
-                          {promo.type === "PWP" && (
-                            <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap">
-                                {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
-                              </label>
-                              <Input
-                                type="number" min={0} className="h-7 w-20 text-sm"
-                                value={promoData[promo.id]?.gwpGiven || ""}
-                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                                placeholder="0"
-                              />
-                            </div>
-                          )}
-                          {promo.type !== "GWP" && promo.type !== "PWP" && (
-                            <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap">Activity count:</label>
-                              <Input
-                                type="number" min={0} className="h-7 w-20 text-sm"
-                                value={promoData[promo.id]?.gwpGiven || ""}
-                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                                placeholder="0"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
-                        <div className="flex gap-2 items-center pt-1">
-                          <label className="text-xs font-medium whitespace-nowrap">GWP Given:</label>
+                      {promo.trackable && promo.type === "GWP" && (
+                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
+                          <label className="text-xs font-medium whitespace-nowrap">
+                            {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
+                          </label>
                           <Input
-                            type="number" min={0} className="h-8 w-20 text-sm"
+                            type="number" min={0} className="h-7 w-20 text-sm"
                             value={promoData[promo.id]?.gwpGiven || ""}
                             onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
                             placeholder="0"
                           />
                         </div>
+                      )}
+                      {promo.trackable && promo.type === "PWP" && (
+                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
+                          <label className="text-xs font-medium whitespace-nowrap">
+                            {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
+                          </label>
+                          <Input
+                            type="number" min={0} className="h-7 w-20 text-sm"
+                            value={promoData[promo.id]?.gwpGiven || ""}
+                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
+                      )}
+                      {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
+                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
+                          <label className="text-xs font-medium whitespace-nowrap">{promo.gwpItem} given:</label>
+                          <Input
+                            type="number" min={0} className="h-7 w-20 text-sm"
+                            value={promoData[promo.id]?.gwpGiven || ""}
+                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                            placeholder="0"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Active Promotions — Layer 2 (Counter/Shop) in blue */}
+        {selectedCounter && filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length > 0 && (
+          <Card className="border-blue-300/50 dark:border-blue-700/50 bg-blue-50/60 dark:bg-blue-950/30">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-2 mb-3">
+                <Gift className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-sm font-semibold text-blue-800 dark:text-blue-200">Counter / Shop Promotions</span>
+              </div>
+              <div className="space-y-3">
+                {filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").map(promo => {
+                  const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
+                  return (
+                    <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-2.5 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
+                          {promo.type}
+                        </span>
+                        <span className="font-medium text-sm break-words">{promo.name}</span>
+                      </div>
+                      {promo.mechanics && (
+                        <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
+                          {promo.mechanics}
+                        </p>
+                      )}
+                      {!promo.mechanics && promo.description && (
+                        <p className="text-xs text-muted-foreground break-words">{promo.description}</p>
                       )}
                     </div>
                   );
