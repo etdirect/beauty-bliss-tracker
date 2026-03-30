@@ -11,6 +11,7 @@ import {
   type UserPosAssignment,
   type BrandPosAvailability,
   type Category, type InsertCategory,
+  type IncentiveScheme, type InsertIncentiveScheme,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
@@ -84,6 +85,15 @@ export interface IStorage {
   // Brand-POS Availability
   getBrandPosAvailability(posId?: string): Promise<BrandPosAvailability[]>;
   setBrandPosAvailability(brandId: string, posId: string, enabled: boolean): Promise<void>;
+
+  // Incentive Schemes
+  listIncentiveSchemes(): Promise<IncentiveScheme[]>;
+  getIncentiveScheme(id: string): Promise<IncentiveScheme | undefined>;
+  getIncentiveSchemesByMonth(month: string): Promise<IncentiveScheme[]>;
+  createIncentiveScheme(data: InsertIncentiveScheme): Promise<IncentiveScheme>;
+  updateIncentiveScheme(id: string, data: Partial<InsertIncentiveScheme>): Promise<IncentiveScheme | undefined>;
+  deleteIncentiveScheme(id: string): Promise<void>;
+  getIncentiveProgress(month: string, userId?: string, posId?: string): Promise<Record<string, number>>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -274,6 +284,22 @@ export class PgStorage implements IStorage {
         brand_id TEXT NOT NULL REFERENCES brands(id),
         pos_id TEXT NOT NULL REFERENCES pos_locations(id),
         UNIQUE(brand_id, pos_id)
+      );
+      CREATE TABLE IF NOT EXISTS incentive_schemes (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name TEXT NOT NULL,
+        month TEXT NOT NULL,
+        category TEXT NOT NULL,
+        target_id TEXT,
+        target_name TEXT,
+        metric TEXT NOT NULL,
+        threshold REAL NOT NULL,
+        reward_basis TEXT NOT NULL DEFAULT 'fixed',
+        reward_amount REAL NOT NULL,
+        reward_per_amount_unit REAL,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_by TEXT,
+        notes TEXT
       );
     `);
     console.log("[pg] Tables ensured");
@@ -875,6 +901,102 @@ export class PgStorage implements IStorage {
       await this.q("DELETE FROM brand_pos_availability WHERE brand_id=$1 AND pos_id=$2", [brandId, posId]);
     }
   }
+
+  // ── Incentive Schemes ──
+  private mapIncentiveScheme(r: any): IncentiveScheme {
+    return {
+      id: r.id, name: r.name, month: r.month, category: r.category,
+      targetId: r.target_id, targetName: r.target_name, metric: r.metric,
+      threshold: Number(r.threshold), rewardBasis: r.reward_basis,
+      rewardAmount: Number(r.reward_amount),
+      rewardPerAmountUnit: r.reward_per_amount_unit != null ? Number(r.reward_per_amount_unit) : null,
+      isActive: r.is_active, createdBy: r.created_by, notes: r.notes,
+    };
+  }
+
+  async listIncentiveSchemes(): Promise<IncentiveScheme[]> {
+    const { rows } = await this.q("SELECT * FROM incentive_schemes ORDER BY month DESC, name");
+    return rows.map((r: any) => this.mapIncentiveScheme(r));
+  }
+  async getIncentiveScheme(id: string): Promise<IncentiveScheme | undefined> {
+    const { rows } = await this.q("SELECT * FROM incentive_schemes WHERE id=$1", [id]);
+    return rows[0] ? this.mapIncentiveScheme(rows[0]) : undefined;
+  }
+  async getIncentiveSchemesByMonth(month: string): Promise<IncentiveScheme[]> {
+    const { rows } = await this.q("SELECT * FROM incentive_schemes WHERE month=$1 ORDER BY name", [month]);
+    return rows.map((r: any) => this.mapIncentiveScheme(r));
+  }
+  async createIncentiveScheme(data: InsertIncentiveScheme): Promise<IncentiveScheme> {
+    const id = randomUUID();
+    await this.q(
+      `INSERT INTO incentive_schemes (id, name, month, category, target_id, target_name, metric, threshold, reward_basis, reward_amount, reward_per_amount_unit, is_active, created_by, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [id, data.name, data.month, data.category, data.targetId ?? null, data.targetName ?? null,
+       data.metric, data.threshold, data.rewardBasis ?? "fixed", data.rewardAmount,
+       data.rewardPerAmountUnit ?? null, data.isActive ?? true, data.createdBy ?? null, data.notes ?? null]
+    );
+    return (await this.getIncentiveScheme(id))!;
+  }
+  async updateIncentiveScheme(id: string, data: Partial<InsertIncentiveScheme>): Promise<IncentiveScheme | undefined> {
+    const fieldMap: Record<string, string> = {
+      name: "name", month: "month", category: "category", targetId: "target_id",
+      targetName: "target_name", metric: "metric", threshold: "threshold",
+      rewardBasis: "reward_basis", rewardAmount: "reward_amount",
+      rewardPerAmountUnit: "reward_per_amount_unit", isActive: "is_active",
+      createdBy: "created_by", notes: "notes",
+    };
+    const sets: string[] = [];
+    const vals: any[] = [];
+    let idx = 1;
+    for (const [k, col] of Object.entries(fieldMap)) {
+      if (k in data) { sets.push(`${col}=$${idx++}`); vals.push((data as any)[k]); }
+    }
+    if (sets.length === 0) return this.getIncentiveScheme(id);
+    vals.push(id);
+    await this.q(`UPDATE incentive_schemes SET ${sets.join(",")} WHERE id=$${idx}`, vals);
+    return this.getIncentiveScheme(id);
+  }
+  async deleteIncentiveScheme(id: string): Promise<void> {
+    await this.q("DELETE FROM incentive_schemes WHERE id=$1", [id]);
+  }
+
+  async getIncentiveProgress(month: string, userId?: string, _posId?: string): Promise<Record<string, number>> {
+    const schemes = await this.getIncentiveSchemesByMonth(month);
+    const result: Record<string, number> = {};
+    for (const scheme of schemes.filter(s => s.isActive)) {
+      let total = 0;
+      const monthStart = `${month}-01`;
+      const monthEnd = `${month}-31`;
+
+      if (scheme.category === "brand_units" || scheme.category === "product_units") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(units), 0) as total FROM sales_entries WHERE brand_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
+          userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE brand_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
+          userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "promo_achievement") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(gwp_given), 0) as total FROM promotion_results WHERE promotion_id = $1 AND date >= $2 AND date <= $3`,
+          [scheme.targetId, monthStart, monthEnd]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "pos_volume") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE counter_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
+          userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
+        );
+        total = Number(rows[0]?.total || 0);
+      }
+      result[scheme.id] = total;
+    }
+    return result;
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -890,6 +1012,7 @@ export class MemStorage implements IStorage {
   private userPosAssignmentsMap: Map<string, UserPosAssignment> = new Map();
   private brandPosAvailabilityMap: Map<string, BrandPosAvailability> = new Map();
   private categoriesMap: Map<string, Category> = new Map();
+  private incentiveSchemesMap: Map<string, IncentiveScheme> = new Map();
 
   constructor() {
     this.seed();
@@ -1178,6 +1301,70 @@ export class MemStorage implements IStorage {
     const existing = Array.from(this.brandPosAvailabilityMap.values()).find(a => a.brandId === brandId && a.posId === posId);
     if (enabled && !existing) { const id = randomUUID(); this.brandPosAvailabilityMap.set(id, { id, brandId, posId }); }
     else if (!enabled && existing) { this.brandPosAvailabilityMap.delete(existing.id); }
+  }
+
+  // ── Incentive Schemes ──
+  async listIncentiveSchemes(): Promise<IncentiveScheme[]> {
+    return Array.from(this.incentiveSchemesMap.values()).sort((a, b) => b.month.localeCompare(a.month) || a.name.localeCompare(b.name));
+  }
+  async getIncentiveScheme(id: string): Promise<IncentiveScheme | undefined> {
+    return this.incentiveSchemesMap.get(id);
+  }
+  async getIncentiveSchemesByMonth(month: string): Promise<IncentiveScheme[]> {
+    return Array.from(this.incentiveSchemesMap.values()).filter(s => s.month === month).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async createIncentiveScheme(data: InsertIncentiveScheme): Promise<IncentiveScheme> {
+    const id = randomUUID();
+    const scheme: IncentiveScheme = {
+      id, name: data.name, month: data.month, category: data.category,
+      targetId: data.targetId ?? null, targetName: data.targetName ?? null,
+      metric: data.metric, threshold: data.threshold,
+      rewardBasis: data.rewardBasis ?? "fixed", rewardAmount: data.rewardAmount,
+      rewardPerAmountUnit: data.rewardPerAmountUnit ?? null,
+      isActive: data.isActive ?? true, createdBy: data.createdBy ?? null, notes: data.notes ?? null,
+    };
+    this.incentiveSchemesMap.set(id, scheme);
+    return scheme;
+  }
+  async updateIncentiveScheme(id: string, data: Partial<InsertIncentiveScheme>): Promise<IncentiveScheme | undefined> {
+    const existing = this.incentiveSchemesMap.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...data } as IncentiveScheme;
+    this.incentiveSchemesMap.set(id, updated);
+    return updated;
+  }
+  async deleteIncentiveScheme(id: string): Promise<void> {
+    this.incentiveSchemesMap.delete(id);
+  }
+  async getIncentiveProgress(month: string, userId?: string, _posId?: string): Promise<Record<string, number>> {
+    const schemes = await this.getIncentiveSchemesByMonth(month);
+    const result: Record<string, number> = {};
+    const sales = Array.from(this.salesEntries.values());
+    const promoResults = Array.from(this.promotionResults.values());
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-31`;
+    for (const scheme of schemes.filter(s => s.isActive)) {
+      let total = 0;
+      if (scheme.category === "brand_units" || scheme.category === "product_units") {
+        total = sales
+          .filter(e => e.brandId === scheme.targetId && e.date >= monthStart && e.date <= monthEnd && (!userId || e.submittedBy === userId))
+          .reduce((sum, e) => sum + (e.units || 0), 0);
+      } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
+        total = sales
+          .filter(e => e.brandId === scheme.targetId && e.date >= monthStart && e.date <= monthEnd && (!userId || e.submittedBy === userId))
+          .reduce((sum, e) => sum + (e.amount || 0), 0);
+      } else if (scheme.category === "promo_achievement") {
+        total = promoResults
+          .filter(e => e.promotionId === scheme.targetId && e.date >= monthStart && e.date <= monthEnd)
+          .reduce((sum, e) => sum + (e.gwpGiven || 0), 0);
+      } else if (scheme.category === "pos_volume") {
+        total = sales
+          .filter(e => e.counterId === scheme.targetId && e.date >= monthStart && e.date <= monthEnd && (!userId || e.submittedBy === userId))
+          .reduce((sum, e) => sum + (e.amount || 0), 0);
+      }
+      result[scheme.id] = total;
+    }
+    return result;
   }
 }
 

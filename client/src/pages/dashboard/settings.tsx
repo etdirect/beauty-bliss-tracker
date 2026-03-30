@@ -2,7 +2,8 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category } from "@shared/schema";
+import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory } from "@shared/schema";
+import { incentiveCategories, incentiveRewardBases, INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X, Trash2, Layers } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X, Trash2, Layers, Trophy } from "lucide-react";
 
 interface SafeUser {
   id: string;
@@ -79,6 +83,77 @@ export default function SettingsPage() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editCategoryName, setEditCategoryName] = useState("");
+
+  // Incentive state
+  const [incentiveMonth, setIncentiveMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [incentiveDialogOpen, setIncentiveDialogOpen] = useState(false);
+  const [editingIncentiveId, setEditingIncentiveId] = useState<string | null>(null);
+  const [incForm, setIncForm] = useState<Partial<InsertIncentiveScheme>>({});
+
+  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"] });
+  const { data: incentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
+    queryKey: ["/api/incentive-schemes/month", `/${incentiveMonth}`],
+    enabled: !!incentiveMonth,
+  });
+
+  const metricForCategory = (cat: string) => {
+    if (cat === "product_units" || cat === "brand_units") return "units";
+    if (cat === "product_amount" || cat === "brand_amount" || cat === "pos_volume") return "amount";
+    if (cat === "promo_achievement") return "gwp_given";
+    return "units";
+  };
+
+  const rewardBasisLabels: Record<string, string> = { per_unit: "Per Unit", per_amount: "Per Amount", fixed: "Fixed Bonus" };
+
+  const formatReward = (s: IncentiveScheme) => {
+    if (s.rewardBasis === "per_unit") return `HK$${s.rewardAmount} / unit`;
+    if (s.rewardBasis === "per_amount") return `HK$${s.rewardAmount} / HK$${(s.rewardPerAmountUnit || 1000).toLocaleString()}`;
+    return `HK$${s.rewardAmount} flat`;
+  };
+
+  const openIncDialog = (s?: IncentiveScheme) => {
+    if (s) {
+      setEditingIncentiveId(s.id);
+      setIncForm({ name: s.name, month: s.month, category: s.category as IncentiveCategory, targetId: s.targetId ?? undefined, targetName: s.targetName ?? undefined, metric: s.metric, threshold: s.threshold, rewardBasis: s.rewardBasis as any, rewardAmount: s.rewardAmount, rewardPerAmountUnit: s.rewardPerAmountUnit ?? undefined, notes: s.notes ?? undefined });
+    } else {
+      setEditingIncentiveId(null);
+      setIncForm({ month: incentiveMonth, rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
+    }
+    setIncentiveDialogOpen(true);
+  };
+
+  const saveIncentiveMutation = useMutation({
+    mutationFn: async () => {
+      const body = { ...incForm, metric: metricForCategory(incForm.category || "") };
+      if (editingIncentiveId) {
+        await apiRequest("PATCH", `/api/incentive-schemes/${editingIncentiveId}`, body);
+      } else {
+        await apiRequest("POST", "/api/incentive-schemes", body);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] });
+      setIncentiveDialogOpen(false);
+      toast({ title: editingIncentiveId ? "Incentive updated" : "Incentive created" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteIncentiveMutation = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/incentive-schemes/${id}`); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] });
+      toast({ title: "Incentive deleted" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const toggleIncentiveMutation = useMutation({
+    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
+      await apiRequest("PATCH", `/api/incentive-schemes/${id}`, { isActive });
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes/month"] }); },
+  });
 
   // === POS Location mutations ===
   const createPosMutation = useMutation({
@@ -327,6 +402,9 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="categories" data-testid="tab-categories">
             <Layers className="w-4 h-4 mr-1.5" /> Categories
+          </TabsTrigger>
+          <TabsTrigger value="incentives" data-testid="tab-incentives">
+            <Trophy className="w-4 h-4 mr-1.5" /> Incentives
           </TabsTrigger>
         </TabsList>
 
@@ -942,6 +1020,184 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Incentives Tab */}
+        <TabsContent value="incentives" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <CardTitle className="text-sm font-medium">Monthly Incentive Schemes</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Input type="month" value={incentiveMonth} onChange={e => setIncentiveMonth(e.target.value)} className="w-[160px] h-8 text-sm" />
+                  <Button size="sm" onClick={() => openIncDialog()}>
+                    <Plus className="w-4 h-4 mr-1" /> Create Incentive
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {incentiveSchemes.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">No incentive schemes for {incentiveMonth}. Create one to get started.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="py-2 pr-3 font-medium">Name</th>
+                        <th className="py-2 pr-3 font-medium">Category</th>
+                        <th className="py-2 pr-3 font-medium">Target</th>
+                        <th className="py-2 pr-3 font-medium">Threshold</th>
+                        <th className="py-2 pr-3 font-medium">Reward</th>
+                        <th className="py-2 pr-3 font-medium">Status</th>
+                        <th className="py-2 font-medium text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {incentiveSchemes.map(s => (
+                        <tr key={s.id} className="border-b last:border-0">
+                          <td className="py-2 pr-3 font-medium">{s.name}</td>
+                          <td className="py-2 pr-3"><Badge variant="outline" className="text-xs">{INCENTIVE_CATEGORY_LABELS[s.category as IncentiveCategory] || s.category}</Badge></td>
+                          <td className="py-2 pr-3 text-muted-foreground">{s.targetName || "—"}</td>
+                          <td className="py-2 pr-3">{s.metric === "units" || s.metric === "gwp_given" ? `${s.threshold} units` : `HK$${s.threshold.toLocaleString()}`}</td>
+                          <td className="py-2 pr-3">{formatReward(s)}</td>
+                          <td className="py-2 pr-3">
+                            <Badge variant={s.isActive ? "default" : "secondary"} className="text-xs cursor-pointer" onClick={() => toggleIncentiveMutation.mutate({ id: s.id, isActive: !s.isActive })}>
+                              {s.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </td>
+                          <td className="py-2 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openIncDialog(s)}><Pencil className="w-3.5 h-3.5" /></Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteIncentiveMutation.mutate(s.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Create/Edit Dialog */}
+          <Dialog open={incentiveDialogOpen} onOpenChange={setIncentiveDialogOpen}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>{editingIncentiveId ? "Edit Incentive" : "Create Incentive"}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">Name</Label>
+                  <Input value={incForm.name || ""} onChange={e => setIncForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Embryolisse Units Bonus" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Month</Label>
+                    <Input type="month" value={incForm.month || ""} onChange={e => setIncForm(f => ({ ...f, month: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Category</Label>
+                    <Select value={incForm.category || ""} onValueChange={v => setIncForm(f => ({ ...f, category: v as IncentiveCategory, metric: metricForCategory(v), targetId: undefined, targetName: undefined }))}>
+                      <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                      <SelectContent>
+                        {incentiveCategories.map(c => (
+                          <SelectItem key={c} value={c}>{INCENTIVE_CATEGORY_LABELS[c]}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Target selector based on category */}
+                {incForm.category && (
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Target</Label>
+                    {(incForm.category === "product_units" || incForm.category === "product_amount" || incForm.category === "brand_units" || incForm.category === "brand_amount") && (
+                      <Select value={incForm.targetId || ""} onValueChange={v => { const b = brands.find(b => b.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: b?.name || "" })); }}>
+                        <SelectTrigger><SelectValue placeholder="Select brand" /></SelectTrigger>
+                        <SelectContent>
+                          {brands.filter(b => b.isActive).map(b => (
+                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {incForm.category === "promo_achievement" && (
+                      <Select value={incForm.targetId || ""} onValueChange={v => { const p = promotions.find(p => p.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: p?.name || "" })); }}>
+                        <SelectTrigger><SelectValue placeholder="Select promotion" /></SelectTrigger>
+                        <SelectContent>
+                          {promotions.filter(p => p.isActive).map(p => (
+                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {incForm.category === "pos_volume" && (
+                      <Select value={incForm.targetId || ""} onValueChange={v => { const p = posLocations.find(p => p.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: p ? `${p.salesChannel} — ${p.storeName}` : "" })); }}>
+                        <SelectTrigger><SelectValue placeholder="Select POS location" /></SelectTrigger>
+                        <SelectContent>
+                          {posLocations.filter(p => p.isActive).map(p => (
+                            <SelectItem key={p.id} value={p.id}>{p.salesChannel} — {p.storeName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                )}
+
+                {incForm.category && (
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Metric</Label>
+                    <Badge variant="outline">{incForm.metric === "gwp_given" ? "GWP/PWP count" : incForm.metric || "—"}</Badge>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">
+                    Threshold {incForm.metric === "units" || incForm.metric === "gwp_given" ? "(minimum units)" : "(minimum HK$)"}
+                  </Label>
+                  <Input type="number" min={0} value={incForm.threshold ?? ""} onChange={e => setIncForm(f => ({ ...f, threshold: parseFloat(e.target.value) || 0 }))} />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">Reward Basis</Label>
+                  <div className="flex gap-1">
+                    {incentiveRewardBases.map(rb => (
+                      <Button key={rb} size="sm" variant={incForm.rewardBasis === rb ? "default" : "outline"} onClick={() => setIncForm(f => ({ ...f, rewardBasis: rb }))}>
+                        {rewardBasisLabels[rb]}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Reward Amount (HK$)</Label>
+                    <Input type="number" min={0} value={incForm.rewardAmount ?? ""} onChange={e => setIncForm(f => ({ ...f, rewardAmount: parseFloat(e.target.value) || 0 }))} />
+                  </div>
+                  {incForm.rewardBasis === "per_amount" && (
+                    <div className="space-y-1">
+                      <Label className="text-sm font-medium">Per HK$ (unit)</Label>
+                      <Input type="number" min={1} value={incForm.rewardPerAmountUnit ?? ""} onChange={e => setIncForm(f => ({ ...f, rewardPerAmountUnit: parseFloat(e.target.value) || 1000 }))} placeholder="1000" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">Notes (optional)</Label>
+                  <Textarea value={incForm.notes || ""} onChange={e => setIncForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Additional details..." />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIncentiveDialogOpen(false)}>Cancel</Button>
+                <Button onClick={() => saveIncentiveMutation.mutate()} disabled={!incForm.name || !incForm.month || !incForm.category}>
+                  {editingIncentiveId ? "Save Changes" : "Create"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
       </Tabs>

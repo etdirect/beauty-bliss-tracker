@@ -200,3 +200,49 @@ export const batchSalesSubmissionSchema = z.object({
 });
 
 export type BatchSalesSubmission = z.infer<typeof batchSalesSubmissionSchema>;
+
+// === Monthly BA Incentive Schemes ===
+
+export const incentiveCategories = [
+  "product_units",    // units sold per product
+  "product_amount",   // revenue per product
+  "promo_achievement",// GWP/PWP tracking
+  "brand_units",      // total units per brand
+  "brand_amount",     // total revenue per brand
+  "pos_volume",       // sales volume at POS (amount)
+] as const;
+export type IncentiveCategory = (typeof incentiveCategories)[number];
+
+export const incentiveRewardBases = ["per_unit", "per_amount", "fixed"] as const;
+export type IncentiveRewardBasis = (typeof incentiveRewardBases)[number];
+
+export const incentiveSchemes = pgTable("incentive_schemes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  month: text("month").notNull(),              // "2026-04" (YYYY-MM)
+  category: text("category").notNull(),         // IncentiveCategory
+  targetId: varchar("target_id"),               // product/brand/promotion/POS ID
+  targetName: text("target_name"),              // display name for the target
+  metric: text("metric").notNull(),             // "units" | "amount" | "gwp_given" | "pwp_sold"
+  threshold: real("threshold").notNull(),        // minimum to qualify
+  rewardBasis: text("reward_basis").notNull().default("fixed"),  // per_unit | per_amount | fixed
+  rewardAmount: real("reward_amount").notNull(), // HK$ per unit/amount or flat bonus
+  rewardPerAmountUnit: real("reward_per_amount_unit"), // e.g. per HK$1000 (when basis=per_amount)
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: varchar("created_by"),
+  notes: text("notes"),
+});
+
+export const insertIncentiveSchemeSchema = createInsertSchema(incentiveSchemes).omit({ id: true });
+export type InsertIncentiveScheme = z.infer<typeof insertIncentiveSchemeSchema>;
+export type IncentiveScheme = typeof incentiveSchemes.$inferSelect;
+
+// Incentive category display labels
+export const INCENTIVE_CATEGORY_LABELS: Record<IncentiveCategory, string> = {
+  product_units: "Product Sales (Units)",
+  product_amount: "Product Sales (Amount)",
+  promo_achievement: "Promotion Achievement",
+  brand_units: "Brand Sales (Units)",
+  brand_amount: "Brand Sales (Amount)",
+  pos_volume: "POS Sales Volume",
+};

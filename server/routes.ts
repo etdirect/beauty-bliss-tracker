@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema } from "@shared/schema";
+import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 // Extend express-session types
@@ -383,6 +383,58 @@ export async function registerRoutes(
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
+  });
+
+  // === INCENTIVE SCHEMES ===
+  app.get("/api/incentive-schemes", requireAuth, async (_req, res) => {
+    try {
+      const schemes = await storage.listIncentiveSchemes();
+      res.json(schemes);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.get("/api/incentive-schemes/month/:month", requireAuth, async (req, res) => {
+    try {
+      const schemes = await storage.getIncentiveSchemesByMonth(req.params.month);
+      res.json(schemes);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.get("/api/incentive-progress", requireAuth, async (req, res) => {
+    try {
+      const month = req.query.month as string;
+      const userId = req.query.userId as string | undefined;
+      const posId = req.query.posId as string | undefined;
+      if (!month) return res.status(400).json({ error: "month required" });
+      const progress = await storage.getIncentiveProgress(month, userId, posId);
+      res.json(progress);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.get("/api/incentive-schemes/:id", requireAuth, async (req, res) => {
+    try {
+      const scheme = await storage.getIncentiveScheme(req.params.id);
+      if (!scheme) return res.status(404).json({ error: "Not found" });
+      res.json(scheme);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/incentive-schemes", requireManagement, async (req, res) => {
+    try {
+      const parsed = insertIncentiveSchemeSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+      const scheme = await storage.createIncentiveScheme(parsed.data);
+      res.json(scheme);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.patch("/api/incentive-schemes/:id", requireManagement, async (req, res) => {
+    try {
+      const scheme = await storage.updateIncentiveScheme(req.params.id, req.body);
+      if (!scheme) return res.status(404).json({ error: "Not found" });
+      res.json(scheme);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.delete("/api/incentive-schemes/:id", requireManagement, async (req, res) => {
+    try {
+      await storage.deleteIncentiveScheme(req.params.id);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // === PROMOTION RESULTS ===

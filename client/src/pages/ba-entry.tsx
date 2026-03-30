@@ -3,13 +3,13 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/App";
-import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry } from "@shared/schema";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle } from "lucide-react";
+import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy } from "lucide-react";
 import { Link } from "wouter";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
@@ -74,6 +74,22 @@ export default function BAEntry() {
       return loc.includes(pos.storeName) || loc.includes(`${pos.salesChannel} / ${pos.storeName}`);
     });
   }, [activePromotions, selectedCounter, posLocations]);
+
+  // Incentive schemes
+  const currentMonth = selectedDate?.substring(0, 7) || new Date().toISOString().substring(0, 7);
+
+  const { data: activeIncentives = [] } = useQuery<IncentiveScheme[]>({
+    queryKey: ["/api/incentive-schemes/month", `/${currentMonth}`],
+    enabled: !!currentMonth,
+    staleTime: 60_000,
+  });
+
+  const { data: incentiveProgress = {} } = useQuery<Record<string, number>>({
+    queryKey: [`/api/incentive-progress?month=${currentMonth}&userId=${user?.id || ""}`],
+    enabled: !!currentMonth && !!user?.id,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
 
   // For management users, show all active POS locations; for BA, only assigned
   const isManagement = user?.role === "management";
@@ -453,6 +469,67 @@ export default function BAEntry() {
                       {!promo.mechanics && promo.description && (
                         <p className="text-xs text-muted-foreground break-words">{promo.description}</p>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Monthly Incentives */}
+        {selectedCounter && activeIncentives.filter(s => s.isActive).length > 0 && (
+          <Card className="border-amber-300/50 dark:border-amber-700/50 bg-amber-50/50 dark:bg-amber-950/20">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-2 mb-3">
+                <Trophy className="w-4 h-4 text-amber-600" />
+                <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">Monthly Incentives — {currentMonth}</span>
+              </div>
+              <div className="space-y-3">
+                {activeIncentives.filter(s => s.isActive).map(scheme => {
+                  const progress = incentiveProgress[scheme.id] ?? 0;
+                  const pct = scheme.threshold > 0 ? Math.min(100, (progress / scheme.threshold) * 100) : 0;
+                  const achieved = progress >= scheme.threshold;
+                  const isUnits = scheme.metric === "units" || scheme.metric === "gwp_given";
+
+                  let rewardText = "";
+                  if (scheme.rewardBasis === "per_unit") {
+                    rewardText = `HK$${scheme.rewardAmount} per unit`;
+                  } else if (scheme.rewardBasis === "per_amount") {
+                    rewardText = `HK$${scheme.rewardAmount} per HK$${(scheme.rewardPerAmountUnit || 1000).toLocaleString()}`;
+                  } else {
+                    rewardText = `HK$${scheme.rewardAmount} bonus`;
+                  }
+
+                  const progressText = isUnits
+                    ? `${Math.round(progress)} / ${Math.round(scheme.threshold)} units`
+                    : `HK$${progress.toLocaleString()} / HK$${scheme.threshold.toLocaleString()}`;
+
+                  let earned = 0;
+                  if (achieved || scheme.rewardBasis !== "fixed") {
+                    if (scheme.rewardBasis === "per_unit") earned = progress * scheme.rewardAmount;
+                    else if (scheme.rewardBasis === "per_amount") earned = (progress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
+                    else earned = scheme.rewardAmount;
+                  }
+                  if (scheme.rewardBasis === "fixed" && !achieved) earned = 0;
+
+                  return (
+                    <div key={scheme.id} className={`rounded-md p-2.5 space-y-1.5 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-medium text-sm">{scheme.name}</span>
+                          {scheme.targetName && <span className="text-xs text-muted-foreground ml-2">— {scheme.targetName}</span>}
+                        </div>
+                        {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ Achieved</span>}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{rewardText} · Min: {isUnits ? `${scheme.threshold} units` : `HK$${scheme.threshold.toLocaleString()}`}</div>
+                      <div className="w-full bg-muted rounded-full h-2">
+                        <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">{progressText}</span>
+                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>Earned: HK${Math.round(earned).toLocaleString()}</span>}
+                      </div>
                     </div>
                   );
                 })}
