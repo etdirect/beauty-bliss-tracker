@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, isPostgres, PgStorage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -44,16 +44,29 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   // === DIAGNOSTIC ENDPOINTS (no auth) ===
-  app.get("/api/debug/session", (req, res) => {
+  app.get("/api/debug/session", async (req, res) => {
+    // Check session table in DB
+    let sessionTableInfo: any = null;
+    try {
+      if (isPostgres && storage instanceof PgStorage) {
+        const pool = storage.getPool();
+        const { rows: tableCheck } = await pool.query("SELECT COUNT(*) as cnt FROM session");
+        const { rows: sessions } = await pool.query("SELECT sid, expire FROM session LIMIT 5");
+        sessionTableInfo = { sessionCount: tableCheck[0]?.cnt, sessions: sessions.map((s: any) => ({ sid: s.sid?.substring(0, 20) + '...', expire: s.expire })) };
+      }
+    } catch (e: any) {
+      sessionTableInfo = { error: e.message };
+    }
     res.json({
       hasSession: !!req.session,
       sessionId: req.sessionID,
       userId: req.session?.userId || null,
       role: req.session?.role || null,
-      cookieHeader: req.headers.cookie || null,
+      cookieHeader: req.headers.cookie?.substring(0, 60) || null,
       isSecure: req.secure,
       protocol: req.protocol,
       xForwardedProto: req.headers["x-forwarded-proto"] || null,
+      sessionTable: sessionTableInfo,
     });
   });
   app.get("/api/debug/status", async (_req, res) => {
