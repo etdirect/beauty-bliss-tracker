@@ -368,13 +368,35 @@ export async function registerRoutes(
         return res.status(400).json({ error: "name, type, startDate, endDate are required" });
       }
 
-      // Check if this promotion was already pushed (by sourceScenarioId)
+      const existing = await storage.getPromotions();
+
+      // Check 1: exact match by sourceScenarioId (same push, re-pushed)
       if (data.sourceScenarioId) {
-        const existing = await storage.getPromotions();
         const match = existing.find(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
         if (match) {
           const updated = await storage.updatePromotion(match.id, data);
           return res.json({ action: "updated", promotion: updated });
+        }
+      }
+
+      // Check 2: duplicate detection for counter/channel promos
+      // If another team already pushed an identical counter/channel promo for the same period, skip it
+      if (data.promotionLayer === "counter" || data.promotionLayer === "channel") {
+        const duplicate = existing.find(p =>
+          p.promotionLayer === data.promotionLayer &&
+          p.type === data.type &&
+          p.startDate === data.startDate &&
+          p.endDate === data.endDate &&
+          p.isActive &&
+          // Match by mechanics (the description of what the promo does)
+          p.mechanics === data.mechanics
+        );
+        if (duplicate) {
+          return res.json({
+            action: "skipped",
+            reason: `A ${data.promotionLayer} promotion with the same mechanics already exists for this period: "${duplicate.name}"`,
+            existingPromotion: duplicate,
+          });
         }
       }
 
