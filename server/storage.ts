@@ -147,6 +147,7 @@ function makePromotion(id: string, data: InsertPromotion): Promotion {
 // ─── PostgreSQL Storage ─────────────────────────────────────────
 export class PgStorage implements IStorage {
   private pool: pg.Pool;
+  getPool() { return this.pool; }
 
   constructor(databaseUrl: string) {
     this.pool = new pg.Pool({

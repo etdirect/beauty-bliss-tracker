@@ -1,9 +1,10 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { storage, isPostgres } from "./storage";
+import { storage, isPostgres, PgStorage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,19 +30,30 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 app.set("trust proxy", 1);
 
 // Session middleware — MUST be before routes
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "beauty-bliss-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    },
-  }),
-);
+const sessionConfig: session.SessionOptions = {
+  secret: process.env.SESSION_SECRET || "beauty-bliss-secret-key-change-in-production",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  },
+};
+// Use PostgreSQL session store in production (survives deploys)
+if (isPostgres && storage instanceof PgStorage) {
+  const PgSession = connectPgSimple(session);
+  sessionConfig.store = new PgSession({
+    pool: storage.getPool(),
+    tableName: "session",
+    createTableIfMissing: true,
+  });
+  console.log("[session] Using PostgreSQL session store");
+} else {
+  console.log("[session] Using in-memory session store (dev)");
+}
+app.use(session(sessionConfig));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
