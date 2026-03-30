@@ -351,12 +351,16 @@ export default function BAEntry() {
               <div className="space-y-3">
                 {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
+                  const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
+                        {promo.startDate && promo.endDate && (
+                          <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
+                        )}
                         <span className="font-medium text-sm break-words">{promo.name}</span>
                       </div>
                       {promo.mechanics && (
@@ -429,12 +433,16 @@ export default function BAEntry() {
               <div className="space-y-3">
                 {filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
+                  const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
                   return (
                     <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
+                        {promo.startDate && promo.endDate && (
+                          <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
+                        )}
                         <span className="font-medium text-sm break-words">{promo.name}</span>
                       </div>
                       {promo.mechanics && (
