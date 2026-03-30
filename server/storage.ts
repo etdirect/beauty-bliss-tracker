@@ -141,6 +141,8 @@ function makePromotion(id: string, data: InsertPromotion): Promotion {
     sourceScenarioId: data.sourceScenarioId ?? null,
     promotionLayer: data.promotionLayer ?? null,
     trackable: data.trackable ?? false,
+    descriptionZh: data.descriptionZh ?? null,
+    mechanicsZh: data.mechanicsZh ?? null,
   };
 }
 
@@ -254,6 +256,8 @@ export class PgStorage implements IStorage {
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS source_scenario_id TEXT`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS promotion_layer TEXT`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS trackable BOOLEAN NOT NULL DEFAULT false`);
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS description_zh TEXT`);
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS mechanics_zh TEXT`);
 
     // NEW tables for auth + POS restructure
     await this.q(`
@@ -338,71 +342,7 @@ export class PgStorage implements IStorage {
       }
     }
 
-    // Seed default management user if users table is empty
-    const { rows: existingUsers } = await this.q("SELECT id FROM users LIMIT 1");
-    if (existingUsers.length === 0) {
-      console.log("[pg] Seeding default admin user...");
-      const adminId = randomUUID();
-      const adminPin = bcrypt.hashSync("1234", 10);
-      await this.q(
-        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
-        [adminId, "admin", adminPin, "Admin", "management", true]
-      );
-
-      // Seed default BA user
-      const baId = randomUUID();
-      const baPin = bcrypt.hashSync("1111", 10);
-      await this.q(
-        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
-        [baId, "ba1", baPin, "BA Demo", "ba", true]
-      );
-
-      // Seed POS locations if empty
-      const { rows: existingPos } = await this.q("SELECT id FROM pos_locations LIMIT 1");
-      if (existingPos.length === 0) {
-        console.log("[pg] Seeding default POS locations...");
-        const posData = [
-          { channel: "FACESSS", code: "AD", name: "FACESSS Admiralty" },
-          { channel: "LOGON", code: "CWB", name: "LOG-ON Causeway Bay" },
-          { channel: "LOGON", code: "TS", name: "LOG-ON TST Harbour City" },
-          { channel: "LOGON", code: "MK", name: "LOG-ON Mong Kok" },
-          { channel: "LOGON", code: "KT", name: "LOG-ON Kowloon Tong" },
-          { channel: "LOGON", code: "ST", name: "LOG-ON Sha Tin" },
-          { channel: "SOGO", code: "KT", name: "SOGO Kai Tak" },
-        ];
-        const posIds: string[] = [];
-        for (const p of posData) {
-          const pid = randomUUID();
-          posIds.push(pid);
-          await this.q(
-            "INSERT INTO pos_locations (id, sales_channel, store_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5)",
-            [pid, p.channel, p.code, p.name, true]
-          );
-        }
-        // Assign BA to first LOGON/TS
-        const tsPos = posIds[2]; // LOGON/TS
-        if (tsPos) {
-          await this.q(
-            "INSERT INTO user_pos_assignments (id, user_id, pos_id) VALUES ($1,$2,$3)",
-            [randomUUID(), baId, tsPos]
-          );
-        }
-
-        // Seed brand-POS availability: all brands to all POS
-        const { rows: brands } = await this.q("SELECT id FROM brands");
-        for (const brand of brands) {
-          for (const pid of posIds) {
-            await this.q(
-              "INSERT INTO brand_pos_availability (id, brand_id, pos_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-              [randomUUID(), brand.id, pid]
-            );
-          }
-        }
-        console.log("[pg] Seed data created: 2 users, 7 POS locations, brand-POS availability");
-      }
-    }
-
-    // Always ensure all standard brands exist (idempotent)
+    // ── 1. Always ensure all standard brands exist (idempotent, runs first) ──
     const allBrands: { name: string; category: string }[] = [
       { name: "Embryolisse", category: "Skincare" },
       { name: "PHYTO", category: "Haircare" },
@@ -433,6 +373,79 @@ export class PgStorage implements IStorage {
       }
     }
     if (brandsAdded > 0) console.log(`[pg] Added ${brandsAdded} missing brands`);
+
+    // ── 2. Seed default users if users table is empty ──
+    const { rows: existingUsers } = await this.q("SELECT id FROM users LIMIT 1");
+    if (existingUsers.length === 0) {
+      console.log("[pg] Seeding default users...");
+      const adminId = randomUUID();
+      const adminPin = bcrypt.hashSync("1234", 10);
+      await this.q(
+        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
+        [adminId, "admin", adminPin, "Admin", "management", true]
+      );
+      const baId = randomUUID();
+      const baPin = bcrypt.hashSync("1111", 10);
+      await this.q(
+        "INSERT INTO users (id, username, pin, name, role, is_active) VALUES ($1,$2,$3,$4,$5,$6)",
+        [baId, "ba1", baPin, "BA Demo", "ba", true]
+      );
+      console.log("[pg] Seeded 2 default users (admin, ba1)");
+    }
+
+    // ── 3. Seed default POS locations if empty (independent of users) ──
+    const { rows: existingPos } = await this.q("SELECT id FROM pos_locations LIMIT 1");
+    if (existingPos.length === 0) {
+      console.log("[pg] Seeding default POS locations...");
+      const posData = [
+        { channel: "FACESSS", code: "AD", name: "FACESSS Admiralty" },
+        { channel: "LOGON", code: "CWB", name: "LOG-ON Causeway Bay" },
+        { channel: "LOGON", code: "TS", name: "LOG-ON TST Harbour City" },
+        { channel: "LOGON", code: "MK", name: "LOG-ON Mong Kok" },
+        { channel: "LOGON", code: "KT", name: "LOG-ON Kowloon Tong" },
+        { channel: "LOGON", code: "ST", name: "LOG-ON Sha Tin" },
+        { channel: "SOGO", code: "KT", name: "SOGO Kai Tak" },
+      ];
+      const posIds: string[] = [];
+      for (const p of posData) {
+        const pid = randomUUID();
+        posIds.push(pid);
+        await this.q(
+          "INSERT INTO pos_locations (id, sales_channel, store_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5)",
+          [pid, p.channel, p.code, p.name, true]
+        );
+      }
+      console.log(`[pg] Seeded ${posIds.length} POS locations`);
+
+      // Assign BA users to LOGON/TS if a BA exists
+      const { rows: baUsers } = await this.q("SELECT id FROM users WHERE role='ba' LIMIT 1");
+      const tsPos = posIds[2]; // LOGON/TS
+      if (baUsers.length > 0 && tsPos) {
+        await this.q(
+          "INSERT INTO user_pos_assignments (id, user_id, pos_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+          [randomUUID(), baUsers[0].id, tsPos]
+        );
+      }
+    }
+
+    // ── 4. Ensure brand-POS availability (all brands × all POS) ──
+    const { rows: bpaCheck } = await this.q("SELECT id FROM brand_pos_availability LIMIT 1");
+    if (bpaCheck.length === 0) {
+      const { rows: allBrandRows } = await this.q("SELECT id FROM brands");
+      const { rows: allPosRows } = await this.q("SELECT id FROM pos_locations");
+      if (allBrandRows.length > 0 && allPosRows.length > 0) {
+        console.log(`[pg] Seeding brand-POS availability (${allBrandRows.length} brands × ${allPosRows.length} POS)...`);
+        for (const brand of allBrandRows) {
+          for (const pos of allPosRows) {
+            await this.q(
+              "INSERT INTO brand_pos_availability (id, brand_id, pos_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+              [randomUUID(), brand.id, pos.id]
+            );
+          }
+        }
+        console.log("[pg] Brand-POS availability seeded");
+      }
+    }
   }
 
   // ── Row mappers ──
@@ -475,6 +488,7 @@ export class PgStorage implements IStorage {
       sourceListId: r.source_list_id, lastSyncedAt: r.last_synced_at,
       sourceApp: r.source_app, sourceScenarioId: r.source_scenario_id,
       promotionLayer: r.promotion_layer, trackable: r.trackable ?? false,
+      descriptionZh: r.description_zh, mechanicsZh: r.mechanics_zh,
     };
   }
   private mapPromotionResult(r: any): PromotionResult {
@@ -705,8 +719,9 @@ export class PgStorage implements IStorage {
        spend_get_spend_amount, spend_get_discount_amount,
        condition_minimum_spend, condition_minimum_qty, condition_required_items, condition_other,
        reference_original_price, reference_promo_price, remarks, entered_by, date_entered,
-       source_list_id, last_synced_at, source_app, source_scenario_id, promotion_layer, trackable)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43)`,
+       source_list_id, last_synced_at, source_app, source_scenario_id, promotion_layer, trackable,
+       description_zh, mechanics_zh)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45)`,
       [
         id, data.name, data.brandId ?? null, data.type, data.description, data.startDate, data.endDate, data.isActive ?? true,
         data.shopLocation ?? null, data.mechanics ?? null, data.promoAppliesTo ?? null, data.applicableProducts ?? null, data.exclusions ?? null,
@@ -718,6 +733,7 @@ export class PgStorage implements IStorage {
         data.referenceOriginalPrice ?? null, data.referencePromoPrice ?? null, data.remarks ?? null, data.enteredBy ?? null, data.dateEntered ?? null,
         data.sourceListId ?? null, data.lastSyncedAt ?? null,
         data.sourceApp ?? null, data.sourceScenarioId ?? null, data.promotionLayer ?? null, data.trackable ?? false,
+        data.descriptionZh ?? null, data.mechanicsZh ?? null,
       ],
     );
     return makePromotion(id, data);
@@ -742,6 +758,7 @@ export class PgStorage implements IStorage {
       sourceListId: "source_list_id", lastSyncedAt: "last_synced_at",
       sourceApp: "source_app", sourceScenarioId: "source_scenario_id",
       promotionLayer: "promotion_layer", trackable: "trackable",
+      descriptionZh: "description_zh", mechanicsZh: "mechanics_zh",
     };
     const sets: string[] = []; const vals: any[] = []; let i = 1;
     for (const [key, col] of Object.entries(fieldMap)) {

@@ -69,15 +69,15 @@ export default function SettingsPage() {
   const [editBrandName, setEditBrandName] = useState("");
   const [editBrandCategory, setEditBrandCategory] = useState("");
 
-  // Queries
-  const { data: posLocations = [] } = useQuery<PosLocation[]>({ queryKey: ["/api/pos-locations"] });
-  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"] });
-  const { data: users = [] } = useQuery<SafeUser[]>({ queryKey: ["/api/users"] });
-  const { data: userPosAssignments = [] } = useQuery<UserPosAssignment[]>({ queryKey: ["/api/user-pos-assignments"] });
-  const { data: brandPosAvail = [] } = useQuery<BrandPosAvailability[]>({ queryKey: ["/api/brand-pos-availability"] });
-  const { data: counters = [] } = useQuery<Counter[]>({ queryKey: ["/api/counters"] });
-  const { data: counterBrands = [] } = useQuery<CounterBrand[]>({ queryKey: ["/api/counter-brands"] });
-  const { data: categoryList = [] } = useQuery<Category[]>({ queryKey: ["/api/categories"] });
+  // Queries — staleTime: 30_000 to override global Infinity default
+  const { data: posLocations = [] } = useQuery<PosLocation[]>({ queryKey: ["/api/pos-locations"], staleTime: 30_000 });
+  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"], staleTime: 30_000 });
+  const { data: users = [] } = useQuery<SafeUser[]>({ queryKey: ["/api/users"], staleTime: 30_000 });
+  const { data: userPosAssignments = [] } = useQuery<UserPosAssignment[]>({ queryKey: ["/api/user-pos-assignments"], staleTime: 30_000 });
+  const { data: brandPosAvail = [] } = useQuery<BrandPosAvailability[]>({ queryKey: ["/api/brand-pos-availability"], staleTime: 30_000 });
+  const { data: counters = [] } = useQuery<Counter[]>({ queryKey: ["/api/counters"], staleTime: 30_000 });
+  const { data: counterBrands = [] } = useQuery<CounterBrand[]>({ queryKey: ["/api/counter-brands"], staleTime: 30_000 });
+  const { data: categoryList = [] } = useQuery<Category[]>({ queryKey: ["/api/categories"], staleTime: 30_000 });
 
   // Category state
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -90,7 +90,7 @@ export default function SettingsPage() {
   const [editingIncentiveId, setEditingIncentiveId] = useState<string | null>(null);
   const [incForm, setIncForm] = useState<Partial<InsertIncentiveScheme>>({});
 
-  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"] });
+  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000 });
   const { data: incentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
     queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`],
     enabled: !!incentiveMonth,

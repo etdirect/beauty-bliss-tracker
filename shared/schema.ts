@@ -161,6 +161,8 @@ export const promotions = pgTable("promotions", {
   sourceScenarioId: text("source_scenario_id"),  // ID from simulator for update tracking
   promotionLayer: text("promotion_layer"),       // "brand" | "counter" | "channel"
   trackable: boolean("trackable").notNull().default(false),  // true for GWP/PWP/Spend&Get(gift) — types where daily redemptions can be counted
+  descriptionZh: text("description_zh"),   // Traditional Chinese description for BA view
+  mechanicsZh: text("mechanics_zh"),       // Traditional Chinese mechanics for BA view
 });
 
 export const insertPromotionSchema = createInsertSchema(promotions).omit({ id: true });

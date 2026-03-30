@@ -379,18 +379,18 @@ export default function BAEntry() {
                         )}
                         <span className="font-medium text-sm break-words">{promo.name}</span>
                       </div>
-                      {promo.mechanics && (
+                      {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
-                          {promo.mechanics}
+                          {promo.mechanicsZh || promo.mechanics}
                         </p>
                       )}
-                      {!promo.mechanics && promo.description && (
-                        <p className="text-xs text-muted-foreground break-words">{promo.description}</p>
+                      {!(promo.mechanicsZh || promo.mechanics) && (promo.descriptionZh || promo.description) && (
+                        <p className="text-xs text-muted-foreground break-words">{promo.descriptionZh || promo.description}</p>
                       )}
                       {promo.exclusions && (
                         <p className="text-xs text-red-600 flex items-center gap-1">
                           <Tag className="w-3 h-3 shrink-0" />
-                          <span className="break-words">Excl: {promo.exclusions}</span>
+                          <span className="break-words">除外: {promo.exclusions}</span>
                         </p>
                       )}
                       {promo.trackable && promo.type === "GWP" && (
@@ -461,13 +461,13 @@ export default function BAEntry() {
                         )}
                         <span className="font-medium text-sm break-words">{promo.name}</span>
                       </div>
-                      {promo.mechanics && (
+                      {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
-                          {promo.mechanics}
+                          {promo.mechanicsZh || promo.mechanics}
                         </p>
                       )}
-                      {!promo.mechanics && promo.description && (
-                        <p className="text-xs text-muted-foreground break-words">{promo.description}</p>
+                      {!(promo.mechanicsZh || promo.mechanics) && (promo.descriptionZh || promo.description) && (
+                        <p className="text-xs text-muted-foreground break-words">{promo.descriptionZh || promo.description}</p>
                       )}
                     </div>
                   );
