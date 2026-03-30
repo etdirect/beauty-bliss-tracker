@@ -1244,24 +1244,32 @@ export default function SettingsPage() {
                   <Textarea value={incForm.notes || ""} onChange={e => setIncForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Additional details..." />
                 </div>
 
-                {/* Auto-generated description preview */}
+                {/* Auto-generated description preview — Traditional Chinese */}
                 {incForm.name && incForm.category && (
                   <div className="space-y-1 p-3 rounded-md bg-muted/50 border">
-                    <Label className="text-xs text-muted-foreground">Auto-generated Description</Label>
+                    <Label className="text-xs text-muted-foreground">自動生成描述</Label>
                     <p className="text-sm leading-relaxed">
                       {(() => {
-                        const catLabel = INCENTIVE_CATEGORY_LABELS[incForm.category as IncentiveCategory] || incForm.category;
-                        const target = incForm.targetName || "target";
+                        const catZh: Record<string, string> = {
+                          product_units: "產品銷售（件數）",
+                          product_amount: "產品銷售（金額）",
+                          promo_achievement: "推廣達標",
+                          brand_units: "品牌銷售（件數）",
+                          brand_amount: "品牌銷售（金額）",
+                          pos_volume: "銷售點銷售額",
+                        };
+                        const catLabel = catZh[incForm.category as string] || incForm.category;
+                        const target = incForm.targetName || "目標";
                         const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
-                        const thresholdText = isUnits ? `${incForm.threshold || 0} units` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
+                        const thresholdText = isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
                         let rewardText = "";
-                        if (incForm.rewardBasis === "per_unit") rewardText = `HK$${incForm.rewardAmount || 0} per unit sold`;
-                        else if (incForm.rewardBasis === "per_amount") rewardText = `HK$${incForm.rewardAmount || 0} per HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()} in sales`;
-                        else rewardText = `HK$${incForm.rewardAmount || 0} cash bonus`;
+                        if (incForm.rewardBasis === "per_unit") rewardText = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
+                        else if (incForm.rewardBasis === "per_amount") rewardText = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
+                        else rewardText = `可獲固定獎金HK$${incForm.rewardAmount || 0}`;
                         if (incForm.category === "promo_achievement") {
-                          return `${incForm.name}: Achieve ${thresholdText} for ${target}. Earn ${rewardText}.`;
+                          return `${incForm.name}：達成${target}推廣目標${thresholdText}，${rewardText}。`;
                         }
-                        return `${incForm.name}: Reach ${thresholdText} of ${target} (${catLabel}). Earn ${rewardText}.`;
+                        return `${incForm.name}：${target}（${catLabel}）達${thresholdText}，${rewardText}。`;
                       })()}
                     </p>
                   </div>
