@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -85,19 +85,34 @@ export default function BAEntry() {
     refetchOnWindowFocus: true,
   });
 
-  const { data: incentiveProgress = {} } = useQuery<Record<string, number>>({
-    queryKey: [`/api/incentive-progress?month=${currentMonth}&userId=${user?.id || ""}`],
-    enabled: !!currentMonth && !!user?.id,
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-  });
-
-  const { data: incentiveDailyProgress = {} } = useQuery<Record<string, number>>({
-    queryKey: [`/api/incentive-progress-daily?month=${currentMonth}&date=${selectedDate}&userId=${user?.id || ""}`],
+  // Incentive entries: daily (today) and accumulated (month total) — from BA manual input
+  const { data: incentiveDailyEntries = {}, refetch: refetchDailyEntries } = useQuery<Record<string, number>>({
+    queryKey: [`/api/incentive-entries-daily?month=${currentMonth}&date=${selectedDate}&userId=${user?.id || ""}`],
     enabled: !!currentMonth && !!selectedDate && !!user?.id,
-    staleTime: 30_000,
+    staleTime: 10_000,
     refetchOnWindowFocus: true,
   });
+  const { data: incentiveTotalEntries = {}, refetch: refetchTotalEntries } = useQuery<Record<string, number>>({
+    queryKey: [`/api/incentive-entries-total?month=${currentMonth}&userId=${user?.id || ""}`],
+    enabled: !!currentMonth && !!user?.id,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+  });
+  // Local state for today's input values (so typing doesn't flicker)
+  const [incentiveInputs, setIncentiveInputs] = useState<Record<string, string>>({});
+  // Sync from server when data loads
+  const prevDailyRef = useRef<string>("");
+  useEffect(() => {
+    const key = JSON.stringify(incentiveDailyEntries);
+    if (key !== prevDailyRef.current) {
+      prevDailyRef.current = key;
+      const inputs: Record<string, string> = {};
+      for (const [id, val] of Object.entries(incentiveDailyEntries)) {
+        inputs[id] = val > 0 ? String(val) : "";
+      }
+      setIncentiveInputs(inputs);
+    }
+  }, [incentiveDailyEntries]);
 
   // For management users, show all active POS locations; for BA, only assigned
   const isManagement = user?.role === "management";
@@ -504,9 +519,9 @@ export default function BAEntry() {
               </div>
               <div className="space-y-3">
                 {filteredIncentives.map(scheme => {
-                  const progress = incentiveProgress[scheme.id] ?? 0;
-                  const pct = scheme.threshold > 0 ? Math.min(100, (progress / scheme.threshold) * 100) : 0;
-                  const achieved = progress >= scheme.threshold;
+                  const totalProgress = incentiveTotalEntries[scheme.id] ?? 0;
+                  const pct = scheme.threshold > 0 ? Math.min(100, (totalProgress / scheme.threshold) * 100) : 0;
+                  const achieved = totalProgress >= scheme.threshold;
                   const isUnits = scheme.metric === "units" || scheme.metric === "gwp_given";
 
                   // Chinese description
@@ -526,38 +541,56 @@ export default function BAEntry() {
                     : `${target ? target + "，" : ""}${catZh[scheme.category] || scheme.category}達${thresholdZh}，${rewardZh}。`;
 
                   const progressText = isUnits
-                    ? `${Math.round(progress)} / ${Math.round(scheme.threshold)}件`
-                    : `HK$${progress.toLocaleString()} / HK$${scheme.threshold.toLocaleString()}`;
+                    ? `${Math.round(totalProgress)} / ${Math.round(scheme.threshold)}件`
+                    : `HK$${totalProgress.toLocaleString()} / HK$${scheme.threshold.toLocaleString()}`;
 
                   let earned = 0;
                   if (achieved || scheme.rewardBasis !== "fixed") {
-                    if (scheme.rewardBasis === "per_unit") earned = progress * scheme.rewardAmount;
-                    else if (scheme.rewardBasis === "per_amount") earned = (progress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
+                    if (scheme.rewardBasis === "per_unit") earned = totalProgress * scheme.rewardAmount;
+                    else if (scheme.rewardBasis === "per_amount") earned = (totalProgress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
                     else earned = scheme.rewardAmount;
                   }
                   if (scheme.rewardBasis === "fixed" && !achieved) earned = 0;
 
-                  const dailyVal = incentiveDailyProgress[scheme.id] ?? 0;
-                  const dailyText = isUnits ? `${Math.round(dailyVal)}件` : `HK$${dailyVal.toLocaleString()}`;
-
                   return (
-                    <div key={scheme.id} className={`rounded-md p-2.5 space-y-1.5 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
+                    <div key={scheme.id} className={`rounded-md p-2.5 space-y-2 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-sm">{scheme.name}</span>
                         {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ 已達標</span>}
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">{descZh}</p>
+
+                      {/* 今日達成 — BA input */}
+                      <div className="flex items-center gap-2 pt-1 border-t border-dashed">
+                        <label className="text-xs font-medium whitespace-nowrap">今日達成:</label>
+                        <Input
+                          type="number" min={0} className="h-7 w-24 text-sm"
+                          value={incentiveInputs[scheme.id] ?? ""}
+                          onChange={e => setIncentiveInputs(prev => ({ ...prev, [scheme.id]: e.target.value }))}
+                          onBlur={async () => {
+                            const val = parseFloat(incentiveInputs[scheme.id] || "0") || 0;
+                            try {
+                              await apiRequest("POST", "/api/incentive-entry", {
+                                schemeId: scheme.id,
+                                date: selectedDate,
+                                value: val,
+                                posId: selectedCounter || undefined,
+                              });
+                              refetchDailyEntries();
+                              refetchTotalEntries();
+                            } catch { /* silent */ }
+                          }}
+                          placeholder="0"
+                        />
+                        <span className="text-[10px] text-muted-foreground">{isUnits ? "件" : "HK$"}</span>
+                      </div>
+
                       <div className="w-full bg-muted rounded-full h-2">
                         <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
                       </div>
-                      <div className="space-y-0.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">今日達成: <span className="font-medium text-foreground">{dailyText}</span></span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">累計達成: <span className="font-medium text-foreground">{progressText}</span></span>
-                          {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
-                        </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">累計達成: <span className="font-medium text-foreground">{progressText}</span></span>
+                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
                       </div>
                     </div>
                   );

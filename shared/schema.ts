@@ -240,6 +240,20 @@ export const insertIncentiveSchemeSchema = createInsertSchema(incentiveSchemes).
 export type InsertIncentiveScheme = z.infer<typeof insertIncentiveSchemeSchema>;
 export type IncentiveScheme = typeof incentiveSchemes.$inferSelect;
 
+// Incentive daily entries (BA input per day per scheme)
+export const incentiveEntries = pgTable("incentive_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schemeId: varchar("scheme_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  posId: varchar("pos_id"),
+  date: text("date").notNull(), // YYYY-MM-DD
+  value: real("value").notNull().default(0), // units or amount
+});
+
+export const insertIncentiveEntrySchema = createInsertSchema(incentiveEntries).omit({ id: true });
+export type InsertIncentiveEntry = z.infer<typeof insertIncentiveEntrySchema>;
+export type IncentiveEntry = typeof incentiveEntries.$inferSelect;
+
 // Incentive category display labels
 export const INCENTIVE_CATEGORY_LABELS: Record<IncentiveCategory, string> = {
   product_units: "Product Sales (Units)",

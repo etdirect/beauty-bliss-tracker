@@ -400,8 +400,16 @@ export async function registerRoutes(
         }
       }
 
+      // Resolve brandName to brandId if provided
+      let brandId = data.brandId || null;
+      if (!brandId && data.brandName) {
+        const allBrands = await storage.getBrands();
+        const match = allBrands.find(b => b.name.toLowerCase() === data.brandName.toLowerCase());
+        if (match) brandId = match.id;
+      }
       const promo = await storage.createPromotion({
         ...data,
+        brandId,
         sourceApp: data.sourceApp || "simulator",
         trackable: data.trackable ?? false,
         isActive: data.isActive ?? true,
@@ -446,6 +454,60 @@ export async function registerRoutes(
       res.json(progress);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
+  // Incentive daily entries (BA input)
+  app.get("/api/incentive-entries", requireAuth, async (req, res) => {
+    try {
+      const { schemeId, userId, month } = req.query as { schemeId: string; userId: string; month: string };
+      if (!schemeId || !userId || !month) return res.status(400).json({ error: "schemeId, userId, month required" });
+      const entries = await storage.getIncentiveEntries(schemeId, userId, month);
+      res.json(entries);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.get("/api/incentive-entry", requireAuth, async (req, res) => {
+    try {
+      const { schemeId, userId, date } = req.query as { schemeId: string; userId: string; date: string };
+      if (!schemeId || !userId || !date) return res.status(400).json({ error: "schemeId, userId, date required" });
+      const value = await storage.getIncentiveEntry(schemeId, userId, date);
+      res.json({ value });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/incentive-entry", requireAuth, async (req, res) => {
+    try {
+      const { schemeId, date, value, posId } = req.body;
+      const userId = req.session.userId;
+      if (!schemeId || !date || value === undefined || !userId) return res.status(400).json({ error: "schemeId, date, value required" });
+      await storage.upsertIncentiveEntry(schemeId, userId, date, Number(value), posId);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  // Bulk get today's entries for all schemes (for BA view)
+  app.get("/api/incentive-entries-daily", requireAuth, async (req, res) => {
+    try {
+      const { month, date, userId } = req.query as { month: string; date: string; userId: string };
+      if (!month || !date || !userId) return res.status(400).json({ error: "month, date, userId required" });
+      const schemes = await storage.getIncentiveSchemesByMonth(month);
+      const result: Record<string, number> = {};
+      for (const s of schemes) {
+        result[s.id] = await storage.getIncentiveEntry(s.id, userId, date);
+      }
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+  // Bulk get accumulated entries for all schemes in a month
+  app.get("/api/incentive-entries-total", requireAuth, async (req, res) => {
+    try {
+      const { month, userId } = req.query as { month: string; userId: string };
+      if (!month || !userId) return res.status(400).json({ error: "month, userId required" });
+      const schemes = await storage.getIncentiveSchemesByMonth(month);
+      const result: Record<string, number> = {};
+      for (const s of schemes) {
+        const entries = await storage.getIncentiveEntries(s.id, userId, month);
+        result[s.id] = entries.reduce((sum, e) => sum + e.value, 0);
+      }
+      res.json(result);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   app.get("/api/incentive-schemes/:id", requireAuth, async (req, res) => {
     try {
       const scheme = await storage.getIncentiveScheme(req.params.id);

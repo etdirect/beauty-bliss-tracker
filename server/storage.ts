@@ -95,6 +95,10 @@ export interface IStorage {
   deleteIncentiveScheme(id: string): Promise<void>;
   getIncentiveProgress(month: string, userId?: string, posId?: string): Promise<Record<string, number>>;
   getIncentiveProgressDaily(month: string, date: string, userId?: string): Promise<Record<string, number>>;
+  // Incentive daily entries (BA manual input)
+  getIncentiveEntries(schemeId: string, userId: string, month: string): Promise<{ date: string; value: number }[]>;
+  getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number>;
+  upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number, posId?: string): Promise<void>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -321,6 +325,15 @@ export class PgStorage implements IStorage {
         notes TEXT
       );
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS pos_ids TEXT;
+      CREATE TABLE IF NOT EXISTS incentive_entries (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        scheme_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        pos_id TEXT,
+        date TEXT NOT NULL,
+        value REAL NOT NULL DEFAULT 0,
+        UNIQUE(scheme_id, user_id, date)
+      );
     `);
     console.log("[pg] Tables ensured");
 
@@ -1065,6 +1078,29 @@ export class PgStorage implements IStorage {
     }
     return result;
   }
+
+  // ── Incentive daily entries ──
+  async getIncentiveEntries(schemeId: string, userId: string, month: string): Promise<{ date: string; value: number }[]> {
+    const { rows } = await this.q(
+      "SELECT date, value FROM incentive_entries WHERE scheme_id=$1 AND user_id=$2 AND date LIKE $3 ORDER BY date",
+      [schemeId, userId, `${month}%`]
+    );
+    return rows.map((r: any) => ({ date: r.date, value: Number(r.value) }));
+  }
+  async getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number> {
+    const { rows } = await this.q(
+      "SELECT value FROM incentive_entries WHERE scheme_id=$1 AND user_id=$2 AND date=$3",
+      [schemeId, userId, date]
+    );
+    return rows[0] ? Number(rows[0].value) : 0;
+  }
+  async upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number, posId?: string): Promise<void> {
+    await this.q(
+      `INSERT INTO incentive_entries (id, scheme_id, user_id, date, value, pos_id) VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5)
+       ON CONFLICT (scheme_id, user_id, date) DO UPDATE SET value = $4`,
+      [schemeId, userId, date, value, posId || null]
+    );
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -1454,6 +1490,22 @@ export class MemStorage implements IStorage {
       result[scheme.id] = total;
     }
     return result;
+  }
+
+  private incentiveEntriesMap: Map<string, number> = new Map(); // key: schemeId:userId:date
+  async getIncentiveEntries(schemeId: string, userId: string, month: string): Promise<{ date: string; value: number }[]> {
+    const entries: { date: string; value: number }[] = [];
+    for (const [key, value] of this.incentiveEntriesMap) {
+      const [sId, uId, date] = key.split(":");
+      if (sId === schemeId && uId === userId && date.startsWith(month)) entries.push({ date, value });
+    }
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  }
+  async getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number> {
+    return this.incentiveEntriesMap.get(`${schemeId}:${userId}:${date}`) ?? 0;
+  }
+  async upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number): Promise<void> {
+    this.incentiveEntriesMap.set(`${schemeId}:${userId}:${date}`, value);
   }
 }
 
