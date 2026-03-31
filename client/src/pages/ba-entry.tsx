@@ -81,7 +81,8 @@ export default function BAEntry() {
   const { data: activeIncentives = [] } = useQuery<IncentiveScheme[]>({
     queryKey: [`/api/incentive-schemes/month/${currentMonth}`],
     enabled: !!currentMonth,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: incentiveProgress = {} } = useQuery<Record<string, number>>({
@@ -377,15 +378,12 @@ export default function BAEntry() {
                         {promo.startDate && promo.endDate && (
                           <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
-                        <span className="font-medium text-sm break-words">{promo.name}</span>
+                        <span className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</span>
                       </div>
                       {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
                           {promo.mechanicsZh || promo.mechanics}
                         </p>
-                      )}
-                      {!(promo.mechanicsZh || promo.mechanics) && (promo.descriptionZh || promo.description) && (
-                        <p className="text-xs text-muted-foreground break-words">{promo.descriptionZh || promo.description}</p>
                       )}
                       {promo.exclusions && (
                         <p className="text-xs text-red-600 flex items-center gap-1">
@@ -459,15 +457,12 @@ export default function BAEntry() {
                         {promo.startDate && promo.endDate && (
                           <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
-                        <span className="font-medium text-sm break-words">{promo.name}</span>
+                        <span className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</span>
                       </div>
                       {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
                           {promo.mechanicsZh || promo.mechanics}
                         </p>
-                      )}
-                      {!(promo.mechanicsZh || promo.mechanics) && (promo.descriptionZh || promo.description) && (
-                        <p className="text-xs text-muted-foreground break-words">{promo.descriptionZh || promo.description}</p>
                       )}
                     </div>
                   );
