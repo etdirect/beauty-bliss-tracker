@@ -85,17 +85,31 @@ export default function SettingsPage() {
   const [editCategoryName, setEditCategoryName] = useState("");
 
   // Incentive state
-  const [incentiveMonth, setIncentiveMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [incentiveFilterMonth, setIncentiveFilterMonth] = useState("");
+  const [incentiveFilterCategory, setIncentiveFilterCategory] = useState("");
+  const [incentiveFilterTarget, setIncentiveFilterTarget] = useState("");
   const [incentiveDialogOpen, setIncentiveDialogOpen] = useState(false);
   const [editingIncentiveId, setEditingIncentiveId] = useState<string | null>(null);
   const [incForm, setIncForm] = useState<Partial<InsertIncentiveScheme>>({});
 
   const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000 });
-  const { data: incentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
-    queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`],
-    enabled: !!incentiveMonth,
+  const { data: allIncentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
+    queryKey: ["/api/incentive-schemes"],
     staleTime: 30_000,
   });
+
+  // Client-side filtered incentives
+  const incentiveSchemes = useMemo(() => {
+    let list = allIncentiveSchemes;
+    if (incentiveFilterMonth) list = list.filter(s => s.month === incentiveFilterMonth);
+    if (incentiveFilterCategory) list = list.filter(s => s.category === incentiveFilterCategory);
+    if (incentiveFilterTarget) list = list.filter(s => (s.targetName || "").toLowerCase().includes(incentiveFilterTarget.toLowerCase()));
+    return list;
+  }, [allIncentiveSchemes, incentiveFilterMonth, incentiveFilterCategory, incentiveFilterTarget]);
+
+  // Unique months and targets for filter dropdowns
+  const incentiveMonths = useMemo(() => Array.from(new Set(allIncentiveSchemes.map(s => s.month))).sort().reverse(), [allIncentiveSchemes]);
+  const incentiveTargets = useMemo(() => Array.from(new Set(allIncentiveSchemes.map(s => s.targetName).filter(Boolean))).sort() as string[], [allIncentiveSchemes]);
 
   const metricForCategory = (cat: string) => {
     if (cat === "product_units" || cat === "brand_units") return "units";
@@ -118,7 +132,7 @@ export default function SettingsPage() {
       setIncForm({ name: s.name, month: s.month, category: s.category as IncentiveCategory, targetId: s.targetId ?? undefined, targetName: s.targetName ?? undefined, metric: s.metric, threshold: s.threshold, rewardBasis: s.rewardBasis as any, rewardAmount: s.rewardAmount, rewardPerAmountUnit: s.rewardPerAmountUnit ?? undefined, notes: s.notes ?? undefined });
     } else {
       setEditingIncentiveId(null);
-      setIncForm({ month: incentiveMonth, rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
+      setIncForm({ month: incentiveFilterMonth || new Date().toISOString().substring(0, 7), rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
     }
     setIncentiveDialogOpen(true);
   };
@@ -133,7 +147,7 @@ export default function SettingsPage() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes"], refetchType: "active" });
       setIncentiveDialogOpen(false);
       toast({ title: editingIncentiveId ? "Incentive updated" : "Incentive created" });
     },
@@ -143,7 +157,7 @@ export default function SettingsPage() {
   const deleteIncentiveMutation = useMutation({
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/incentive-schemes/${id}`); },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes"], refetchType: "active" });
       toast({ title: "Incentive deleted" });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
@@ -153,7 +167,7 @@ export default function SettingsPage() {
     mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
       await apiRequest("PATCH", `/api/incentive-schemes/${id}`, { isActive });
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/incentive-schemes/month/${incentiveMonth}`], refetchType: "active" }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/incentive-schemes"], refetchType: "active" }); },
   });
 
   // === POS Location mutations ===
@@ -1028,24 +1042,50 @@ export default function SettingsPage() {
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <CardTitle className="text-sm font-medium">Monthly Incentive Schemes</CardTitle>
-                <div className="flex items-center gap-2">
-                  <Input type="month" value={incentiveMonth} onChange={e => setIncentiveMonth(e.target.value)} className="w-[160px] h-8 text-sm" />
-                  <Button size="sm" onClick={() => openIncDialog()}>
-                    <Plus className="w-4 h-4 mr-1" /> Create Incentive
-                  </Button>
-                </div>
+                <CardTitle className="text-sm font-medium">Incentive Schemes</CardTitle>
+                <Button size="sm" onClick={() => openIncDialog()}>
+                  <Plus className="w-4 h-4 mr-1" /> Create Incentive
+                </Button>
+              </div>
+              {/* Filters */}
+              <div className="flex items-center gap-2 flex-wrap pt-2">
+                <Select value={incentiveFilterMonth || "__all__"} onValueChange={v => setIncentiveFilterMonth(v === "__all__" ? "" : v)}>
+                  <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="All Months" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All Months</SelectItem>
+                    {incentiveMonths.map(m => {
+                      const [y, mo] = m.split("-");
+                      const label = `${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(mo)-1]} ${y}`;
+                      return <SelectItem key={m} value={m}>{label}</SelectItem>;
+                    })}
+                  </SelectContent>
+                </Select>
+                <Select value={incentiveFilterCategory || "__all__"} onValueChange={v => setIncentiveFilterCategory(v === "__all__" ? "" : v)}>
+                  <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="All Categories" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All Categories</SelectItem>
+                    {incentiveCategories.map(c => <SelectItem key={c} value={c}>{INCENTIVE_CATEGORY_LABELS[c]}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input placeholder="Filter by target..." value={incentiveFilterTarget} onChange={e => setIncentiveFilterTarget(e.target.value)} className="w-[150px] h-8 text-xs" />
+                {(incentiveFilterMonth || incentiveFilterCategory || incentiveFilterTarget) && (
+                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setIncentiveFilterMonth(""); setIncentiveFilterCategory(""); setIncentiveFilterTarget(""); }}>Clear</Button>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">{incentiveSchemes.length} of {allIncentiveSchemes.length} schemes</span>
               </div>
             </CardHeader>
             <CardContent>
               {incentiveSchemes.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-6 text-center">No incentive schemes for {incentiveMonth}. Create one to get started.</p>
+                <p className="text-sm text-muted-foreground py-6 text-center">
+                  {allIncentiveSchemes.length === 0 ? "No incentive schemes yet. Create one to get started." : "No schemes match the current filters."}
+                </p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
                         <th className="py-2 pr-3 font-medium">Name</th>
+                        <th className="py-2 pr-3 font-medium">Month</th>
                         <th className="py-2 pr-3 font-medium">Category</th>
                         <th className="py-2 pr-3 font-medium">Target</th>
                         <th className="py-2 pr-3 font-medium">Threshold</th>
@@ -1055,9 +1095,13 @@ export default function SettingsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {incentiveSchemes.map(s => (
+                      {incentiveSchemes.map(s => {
+                        const [yr, mo] = s.month.split("-");
+                        const monthLabel = `${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(mo)-1]} ${yr}`;
+                        return (
                         <tr key={s.id} className="border-b last:border-0">
                           <td className="py-2 pr-3 font-medium">{s.name}</td>
+                          <td className="py-2 pr-3 text-xs whitespace-nowrap">{monthLabel}</td>
                           <td className="py-2 pr-3"><Badge variant="outline" className="text-xs">{INCENTIVE_CATEGORY_LABELS[s.category as IncentiveCategory] || s.category}</Badge></td>
                           <td className="py-2 pr-3 text-muted-foreground">{s.targetName || "—"}</td>
                           <td className="py-2 pr-3">{s.metric === "units" || s.metric === "gwp_given" ? `${s.threshold} units` : `HK$${s.threshold.toLocaleString()}`}</td>
@@ -1074,7 +1118,8 @@ export default function SettingsPage() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
