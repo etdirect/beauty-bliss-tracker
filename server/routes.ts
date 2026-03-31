@@ -368,6 +368,13 @@ export async function registerRoutes(
         return res.status(400).json({ error: "name, type, startDate, endDate are required" });
       }
 
+      // Resolve brandName to brandId early (needed for both create and update)
+      if (!data.brandId && data.brandName) {
+        const allBrands = await storage.getBrands();
+        const brandMatch = allBrands.find((b: any) => b.name.toLowerCase() === data.brandName.toLowerCase());
+        if (brandMatch) data.brandId = brandMatch.id;
+      }
+
       const existing = await storage.getPromotions();
 
       // Check 1: exact match by sourceScenarioId (same push, re-pushed)
@@ -400,16 +407,8 @@ export async function registerRoutes(
         }
       }
 
-      // Resolve brandName to brandId if provided
-      let brandId = data.brandId || null;
-      if (!brandId && data.brandName) {
-        const allBrands = await storage.getBrands();
-        const match = allBrands.find(b => b.name.toLowerCase() === data.brandName.toLowerCase());
-        if (match) brandId = match.id;
-      }
       const promo = await storage.createPromotion({
         ...data,
-        brandId,
         sourceApp: data.sourceApp || "simulator",
         trackable: data.trackable ?? false,
         isActive: data.isActive ?? true,
