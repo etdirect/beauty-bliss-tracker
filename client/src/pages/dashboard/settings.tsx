@@ -1134,10 +1134,6 @@ export default function SettingsPage() {
                 <DialogTitle>{editingIncentiveId ? "Edit Incentive" : "Create Incentive"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 pt-2">
-                <div className="space-y-1">
-                  <Label className="text-sm font-medium">Name</Label>
-                  <Input value={incForm.name || ""} onChange={e => setIncForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Embryolisse Units Bonus" />
-                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-sm font-medium">Month</Label>
@@ -1175,7 +1171,8 @@ export default function SettingsPage() {
                         <SelectTrigger><SelectValue placeholder="Select promotion" /></SelectTrigger>
                         <SelectContent>
                           {promotions.filter(p => {
-                            if (!incForm.month) return p.isActive;
+                            if (!p.isActive) return false;
+                            if (!incForm.month) return true;
                             // Show promos active during the selected month
                             const mStart = `${incForm.month}-01`;
                             const mEnd = `${incForm.month}-31`;
@@ -1289,36 +1286,48 @@ export default function SettingsPage() {
                   <Textarea value={incForm.notes || ""} onChange={e => setIncForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Additional details..." />
                 </div>
 
-                {/* Auto-generated description preview — Traditional Chinese */}
-                {incForm.name && incForm.category && (
-                  <div className="space-y-1 p-3 rounded-md bg-muted/50 border">
-                    <Label className="text-xs text-muted-foreground">自動生成描述</Label>
-                    <p className="text-sm leading-relaxed">
-                      {(() => {
-                        const catZh: Record<string, string> = {
-                          product_units: "產品銷售（件數）",
-                          product_amount: "產品銷售（金額）",
-                          promo_achievement: "推廣達標",
-                          brand_units: "品牌銷售（件數）",
-                          brand_amount: "品牌銷售（金額）",
-                          pos_volume: "銷售點銷售額",
-                        };
-                        const catLabel = catZh[incForm.category as string] || incForm.category;
-                        const target = incForm.targetName || "目標";
-                        const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
-                        const thresholdText = isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
-                        let rewardText = "";
-                        if (incForm.rewardBasis === "per_unit") rewardText = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
-                        else if (incForm.rewardBasis === "per_amount") rewardText = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
-                        else rewardText = `可獲固定獎金HK$${incForm.rewardAmount || 0}`;
-                        if (incForm.category === "promo_achievement") {
-                          return `${incForm.name}：達成${target}推廣目標${thresholdText}，${rewardText}。`;
-                        }
-                        return `${incForm.name}：${target}（${catLabel}）達${thresholdText}，${rewardText}。`;
-                      })()}
-                    </p>
-                  </div>
-                )}
+                {/* Auto-generated name + description — Traditional Chinese */}
+                {incForm.category && (() => {
+                  const target = incForm.targetName || "";
+                  const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
+                  const thresholdText = isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
+                  let rewardShort = "";
+                  if (incForm.rewardBasis === "per_unit") rewardShort = `HK$${incForm.rewardAmount || 0}/件`;
+                  else if (incForm.rewardBasis === "per_amount") rewardShort = `HK$${incForm.rewardAmount || 0}/HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}`;
+                  else rewardShort = `獎金HK$${incForm.rewardAmount || 0}`;
+                  const autoName = target
+                    ? `${target} ${thresholdText} ${rewardShort}`
+                    : `${thresholdText} ${rewardShort}`;
+                  // Sync name into form if not editing
+                  if (!editingIncentiveId && incForm.name !== autoName) {
+                    setTimeout(() => setIncForm(f => ({ ...f, name: autoName })), 0);
+                  }
+                  const catZh: Record<string, string> = {
+                    product_units: "產品銷售（件數）", product_amount: "產品銷售（金額）",
+                    promo_achievement: "推廣達標", brand_units: "品牌銷售（件數）",
+                    brand_amount: "品牌銷售（金額）", pos_volume: "銷售點銷售額",
+                  };
+                  const catLabel = catZh[incForm.category as string] || incForm.category;
+                  let rewardLong = "";
+                  if (incForm.rewardBasis === "per_unit") rewardLong = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
+                  else if (incForm.rewardBasis === "per_amount") rewardLong = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
+                  else rewardLong = `可獲固定獎金HK$${incForm.rewardAmount || 0}`;
+                  const descZh = incForm.category === "promo_achievement"
+                    ? `達成${target || "目標"}推廣目標${thresholdText}，${rewardLong}。`
+                    : `${target || "目標"}（${catLabel}）達${thresholdText}，${rewardLong}。`;
+                  return (
+                    <div className="space-y-2 p-3 rounded-md bg-muted/50 border">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">名稱 (Name)</Label>
+                        <Input value={editingIncentiveId ? (incForm.name || "") : autoName} onChange={e => setIncForm(f => ({ ...f, name: e.target.value }))} className="text-sm h-8" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">自動生成描述</Label>
+                        <p className="text-sm leading-relaxed">{descZh}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIncentiveDialogOpen(false)}>Cancel</Button>
