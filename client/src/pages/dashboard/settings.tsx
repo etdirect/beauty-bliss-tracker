@@ -91,6 +91,7 @@ export default function SettingsPage() {
   const [incentiveDialogOpen, setIncentiveDialogOpen] = useState(false);
   const [editingIncentiveId, setEditingIncentiveId] = useState<string | null>(null);
   const [incForm, setIncForm] = useState<Partial<InsertIncentiveScheme>>({});
+  const [incProductName, setIncProductName] = useState("");
 
   const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000 });
   const { data: allIncentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
@@ -130,9 +131,20 @@ export default function SettingsPage() {
     if (s) {
       setEditingIncentiveId(s.id);
       setIncForm({ name: s.name, month: s.month, category: s.category as IncentiveCategory, targetId: s.targetId ?? undefined, targetName: s.targetName ?? undefined, metric: s.metric, threshold: s.threshold, rewardBasis: s.rewardBasis as any, rewardAmount: s.rewardAmount, rewardPerAmountUnit: s.rewardPerAmountUnit ?? undefined, notes: s.notes ?? undefined });
+      // Try to extract product name from stored name (format: "Brand ProductName, ...")
+      const storedName = s.name || "";
+      const target = s.targetName || "";
+      if (target && storedName.startsWith(target + " ")) {
+        const afterBrand = storedName.substring(target.length + 1);
+        const commaIdx = afterBrand.indexOf(",");
+        setIncProductName(commaIdx > 0 ? afterBrand.substring(0, commaIdx).trim() : "");
+      } else {
+        setIncProductName("");
+      }
     } else {
       setEditingIncentiveId(null);
       setIncForm({ month: incentiveFilterMonth || new Date().toISOString().substring(0, 7), rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
+      setIncProductName("");
     }
     setIncentiveDialogOpen(true);
   };
@@ -1166,6 +1178,12 @@ export default function SettingsPage() {
                         </SelectContent>
                       </Select>
                     )}
+                    {(incForm.category === "product_units" || incForm.category === "product_amount") && incForm.targetId && (
+                      <div className="space-y-1 mt-2">
+                        <Label className="text-sm font-medium">Product Name</Label>
+                        <Input value={incProductName} onChange={e => setIncProductName(e.target.value)} placeholder="e.g. Trio Zinc Spray 100ml" className="text-sm" />
+                      </div>
+                    )}
                     {incForm.category === "promo_achievement" && (
                       <Select value={incForm.targetId || ""} onValueChange={v => { const p = promotions.find(p => p.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: p?.name || "" })); }}>
                         <SelectTrigger><SelectValue placeholder="Select promotion" /></SelectTrigger>
@@ -1289,15 +1307,19 @@ export default function SettingsPage() {
                 {/* Auto-generated name + description — Traditional Chinese */}
                 {incForm.category && (() => {
                   const target = incForm.targetName || "";
+                  const isProductCat = incForm.category === "product_units" || incForm.category === "product_amount";
+                  const prodName = isProductCat ? incProductName : "";
                   const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
                   const thresholdText = isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
                   let rewardShort = "";
                   if (incForm.rewardBasis === "per_unit") rewardShort = `HK$${incForm.rewardAmount || 0}/件`;
                   else if (incForm.rewardBasis === "per_amount") rewardShort = `HK$${incForm.rewardAmount || 0}/HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}`;
                   else rewardShort = `獎金HK$${incForm.rewardAmount || 0}`;
-                  const autoName = target
-                    ? `${target} ${thresholdText} ${rewardShort}`
-                    : `${thresholdText} ${rewardShort}`;
+                  // Name format: [Brand] [Product], [Threshold], [Reward]
+                  const namePrefix = target && prodName ? `${target} ${prodName}` : target || prodName;
+                  const autoName = namePrefix
+                    ? `${namePrefix}, ${thresholdText}, ${rewardShort}`
+                    : `${thresholdText}, ${rewardShort}`;
                   // Sync name into form if not editing
                   if (!editingIncentiveId && incForm.name !== autoName) {
                     setTimeout(() => setIncForm(f => ({ ...f, name: autoName })), 0);
@@ -1312,9 +1334,10 @@ export default function SettingsPage() {
                   if (incForm.rewardBasis === "per_unit") rewardLong = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
                   else if (incForm.rewardBasis === "per_amount") rewardLong = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
                   else rewardLong = `可獲固定獎金HK$${incForm.rewardAmount || 0}`;
+                  const descSubject = isProductCat && prodName ? `${target} ${prodName}` : (target || "目標");
                   const descZh = incForm.category === "promo_achievement"
                     ? `達成${target || "目標"}推廣目標${thresholdText}，${rewardLong}。`
-                    : `${target || "目標"}（${catLabel}）達${thresholdText}，${rewardLong}。`;
+                    : `${descSubject}，${catLabel}達${thresholdText}，${rewardLong}。`;
                   return (
                     <div className="space-y-2 p-3 rounded-md bg-muted/50 border">
                       <div className="space-y-1">
