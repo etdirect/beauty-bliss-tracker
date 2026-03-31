@@ -369,6 +369,7 @@ export default function BAEntry() {
                 {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
+                  const brandName = promo.brandId ? brands.find(b => b.id === promo.brandId)?.name : null;
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -378,7 +379,7 @@ export default function BAEntry() {
                         {promo.startDate && promo.endDate && (
                           <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
-                        <span className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</span>
+                        <span className="font-medium text-sm break-words">{brandName ? `[${brandName}]` : ""}{promo.descriptionZh || promo.name}</span>
                       </div>
                       {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
@@ -496,17 +497,24 @@ export default function BAEntry() {
                   const achieved = progress >= scheme.threshold;
                   const isUnits = scheme.metric === "units" || scheme.metric === "gwp_given";
 
-                  let rewardText = "";
-                  if (scheme.rewardBasis === "per_unit") {
-                    rewardText = `HK$${scheme.rewardAmount} per unit`;
-                  } else if (scheme.rewardBasis === "per_amount") {
-                    rewardText = `HK$${scheme.rewardAmount} per HK$${(scheme.rewardPerAmountUnit || 1000).toLocaleString()}`;
-                  } else {
-                    rewardText = `HK$${scheme.rewardAmount} bonus`;
-                  }
+                  // Chinese description
+                  const catZh: Record<string, string> = {
+                    product_units: "產品銷售（件數）", product_amount: "產品銷售（金額）",
+                    promo_achievement: "推廣達標", brand_units: "品牌銷售（件數）",
+                    brand_amount: "品牌銷售（金額）", pos_volume: "銷售點銷售額",
+                  };
+                  const thresholdZh = isUnits ? `${scheme.threshold}件` : `HK$${scheme.threshold.toLocaleString()}`;
+                  let rewardZh = "";
+                  if (scheme.rewardBasis === "per_unit") rewardZh = `每售出一件可獲HK$${scheme.rewardAmount}`;
+                  else if (scheme.rewardBasis === "per_amount") rewardZh = `每達HK$${(scheme.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${scheme.rewardAmount}`;
+                  else rewardZh = `可獲固定獎金HK$${scheme.rewardAmount}`;
+                  const target = scheme.targetName || "";
+                  const descZh = scheme.category === "promo_achievement"
+                    ? `達成${target}推廣目標${thresholdZh}，${rewardZh}。`
+                    : `${target ? target + "，" : ""}${catZh[scheme.category] || scheme.category}達${thresholdZh}，${rewardZh}。`;
 
                   const progressText = isUnits
-                    ? `${Math.round(progress)} / ${Math.round(scheme.threshold)} units`
+                    ? `${Math.round(progress)} / ${Math.round(scheme.threshold)}件`
                     : `HK$${progress.toLocaleString()} / HK$${scheme.threshold.toLocaleString()}`;
 
                   let earned = 0;
@@ -520,19 +528,16 @@ export default function BAEntry() {
                   return (
                     <div key={scheme.id} className={`rounded-md p-2.5 space-y-1.5 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
                       <div className="flex items-center justify-between">
-                        <div>
-                          <span className="font-medium text-sm">{scheme.name}</span>
-                          {scheme.targetName && <span className="text-xs text-muted-foreground ml-2">— {scheme.targetName}</span>}
-                        </div>
-                        {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ Achieved</span>}
+                        <span className="font-medium text-sm">{scheme.name}</span>
+                        {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ 已達標</span>}
                       </div>
-                      <div className="text-xs text-muted-foreground">{rewardText} · Min: {isUnits ? `${scheme.threshold} units` : `HK$${scheme.threshold.toLocaleString()}`}</div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{descZh}</p>
                       <div className="w-full bg-muted rounded-full h-2">
                         <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
                       </div>
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">{progressText}</span>
-                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>Earned: HK${Math.round(earned).toLocaleString()}</span>}
+                        <span className="text-muted-foreground">累計達成: {progressText}</span>
+                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
                       </div>
                     </div>
                   );
