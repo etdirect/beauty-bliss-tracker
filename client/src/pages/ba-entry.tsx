@@ -601,18 +601,12 @@ export default function BAEntry() {
           );
         })()}
 
-        {/* Sales Entry by Brand */}
-        {selectedCounter && categoryOrder.map(category => {
-          const catBrands = brandsByCategory[category];
-          if (!catBrands || catBrands.length === 0) return null;
-          return (
-            <div key={category} className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
-                {category}
-              </h3>
-              {catBrands.map(brand => {
-                const hasActivePromo = activePromotions.some(p => p.brandId === brand.id);
-                return (
+        {/* Sales Entry by Brand (alphabetical) */}
+        {selectedCounter && availableBrands.length > 0 && (
+          <div className="space-y-2">
+            {availableBrands.map(brand => {
+              const hasActivePromo = activePromotions.some(p => p.brandId === brand.id);
+              return (
                   <Card key={brand.id} className={hasActivePromo ? "border-primary/20" : ""}>
                     <CardContent className="pt-3 pb-3">
                       <div className="flex items-center justify-between mb-2">
@@ -664,11 +658,10 @@ export default function BAEntry() {
                       </div>
                     </CardContent>
                   </Card>
-                );
-              })}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
 
         {!selectedCounter && (
           <div className="text-center py-12 text-muted-foreground">
