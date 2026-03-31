@@ -94,6 +94,7 @@ export interface IStorage {
   updateIncentiveScheme(id: string, data: Partial<InsertIncentiveScheme>): Promise<IncentiveScheme | undefined>;
   deleteIncentiveScheme(id: string): Promise<void>;
   getIncentiveProgress(month: string, userId?: string, posId?: string): Promise<Record<string, number>>;
+  getIncentiveProgressDaily(month: string, date: string, userId?: string): Promise<Record<string, number>>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -1029,6 +1030,41 @@ export class PgStorage implements IStorage {
     }
     return result;
   }
+
+  async getIncentiveProgressDaily(month: string, date: string, userId?: string): Promise<Record<string, number>> {
+    const schemes = await this.getIncentiveSchemesByMonth(month);
+    const result: Record<string, number> = {};
+    for (const scheme of schemes.filter(s => s.isActive)) {
+      let total = 0;
+      if (scheme.category === "brand_units" || scheme.category === "product_units") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(units), 0) as total FROM sales_entries WHERE brand_id = $1 AND date = $2${userId ? " AND submitted_by = $3" : ""}`,
+          userId ? [scheme.targetId, date, userId] : [scheme.targetId, date]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE brand_id = $1 AND date = $2${userId ? " AND submitted_by = $3" : ""}`,
+          userId ? [scheme.targetId, date, userId] : [scheme.targetId, date]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "promo_achievement") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(gwp_given), 0) as total FROM promotion_results WHERE promotion_id = $1 AND date = $2`,
+          [scheme.targetId, date]
+        );
+        total = Number(rows[0]?.total || 0);
+      } else if (scheme.category === "pos_volume") {
+        const { rows } = await this.q(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE counter_id = $1 AND date = $2${userId ? " AND submitted_by = $3" : ""}`,
+          userId ? [scheme.targetId, date, userId] : [scheme.targetId, date]
+        );
+        total = Number(rows[0]?.total || 0);
+      }
+      result[scheme.id] = total;
+    }
+    return result;
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -1393,6 +1429,27 @@ export class MemStorage implements IStorage {
         total = sales
           .filter(e => e.counterId === scheme.targetId && e.date >= monthStart && e.date <= monthEnd && (!userId || e.submittedBy === userId))
           .reduce((sum, e) => sum + (e.amount || 0), 0);
+      }
+      result[scheme.id] = total;
+    }
+    return result;
+  }
+
+  async getIncentiveProgressDaily(month: string, date: string, userId?: string): Promise<Record<string, number>> {
+    const schemes = await this.getIncentiveSchemesByMonth(month);
+    const result: Record<string, number> = {};
+    const sales = Array.from(this.salesEntries.values());
+    const promoResults = Array.from(this.promotionResults.values());
+    for (const scheme of schemes.filter(s => s.isActive)) {
+      let total = 0;
+      if (scheme.category === "brand_units" || scheme.category === "product_units") {
+        total = sales.filter(e => e.brandId === scheme.targetId && e.date === date && (!userId || e.submittedBy === userId)).reduce((sum, e) => sum + (e.units || 0), 0);
+      } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
+        total = sales.filter(e => e.brandId === scheme.targetId && e.date === date && (!userId || e.submittedBy === userId)).reduce((sum, e) => sum + (e.amount || 0), 0);
+      } else if (scheme.category === "promo_achievement") {
+        total = promoResults.filter(e => e.promotionId === scheme.targetId && e.date === date).reduce((sum, e) => sum + (e.gwpGiven || 0), 0);
+      } else if (scheme.category === "pos_volume") {
+        total = sales.filter(e => e.counterId === scheme.targetId && e.date === date && (!userId || e.submittedBy === userId)).reduce((sum, e) => sum + (e.amount || 0), 0);
       }
       result[scheme.id] = total;
     }

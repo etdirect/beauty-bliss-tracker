@@ -435,6 +435,17 @@ export async function registerRoutes(
       res.json(progress);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
+  // Daily incentive progress for a specific date
+  app.get("/api/incentive-progress-daily", requireAuth, async (req, res) => {
+    try {
+      const month = req.query.month as string;
+      const date = req.query.date as string;
+      const userId = req.query.userId as string | undefined;
+      if (!month || !date) return res.status(400).json({ error: "month and date required" });
+      const progress = await storage.getIncentiveProgressDaily(month, date, userId);
+      res.json(progress);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
   app.get("/api/incentive-schemes/:id", requireAuth, async (req, res) => {
     try {
       const scheme = await storage.getIncentiveScheme(req.params.id);

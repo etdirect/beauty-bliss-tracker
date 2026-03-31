@@ -92,6 +92,13 @@ export default function BAEntry() {
     refetchOnWindowFocus: true,
   });
 
+  const { data: incentiveDailyProgress = {} } = useQuery<Record<string, number>>({
+    queryKey: [`/api/incentive-progress-daily?month=${currentMonth}&date=${selectedDate}&userId=${user?.id || ""}`],
+    enabled: !!currentMonth && !!selectedDate && !!user?.id,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
   // For management users, show all active POS locations; for BA, only assigned
   const isManagement = user?.role === "management";
 
@@ -369,7 +376,12 @@ export default function BAEntry() {
                 {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
-                  const brandName = promo.brandId ? brands.find(b => b.id === promo.brandId)?.name : null;
+                  // Resolve brand: from brandId, or try matching brand name in promo name/applicableProducts
+                  let brandName = promo.brandId ? brands.find(b => b.id === promo.brandId)?.name : null;
+                  if (!brandName) {
+                    const nameLC = (promo.name || "").toLowerCase();
+                    brandName = brands.find(b => nameLC.includes(b.name.toLowerCase()))?.name || null;
+                  }
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -525,6 +537,9 @@ export default function BAEntry() {
                   }
                   if (scheme.rewardBasis === "fixed" && !achieved) earned = 0;
 
+                  const dailyVal = incentiveDailyProgress[scheme.id] ?? 0;
+                  const dailyText = isUnits ? `${Math.round(dailyVal)}件` : `HK$${dailyVal.toLocaleString()}`;
+
                   return (
                     <div key={scheme.id} className={`rounded-md p-2.5 space-y-1.5 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
                       <div className="flex items-center justify-between">
@@ -535,9 +550,14 @@ export default function BAEntry() {
                       <div className="w-full bg-muted rounded-full h-2">
                         <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
                       </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">累計達成: {progressText}</span>
-                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
+                      <div className="space-y-0.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">今日達成: <span className="font-medium text-foreground">{dailyText}</span></span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">累計達成: <span className="font-medium text-foreground">{progressText}</span></span>
+                          {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
+                        </div>
                       </div>
                     </div>
                   );
