@@ -167,6 +167,10 @@ export class PgStorage implements IStorage {
     return this.pool.query(text, params);
   }
 
+  async query(text: string, params?: any[]): Promise<pg.QueryResult> {
+    return this.pool.query(text, params);
+  }
+
   async init(): Promise<void> {
     // Session table for connect-pg-simple (must exist before session store initializes)
     await this.q(`
