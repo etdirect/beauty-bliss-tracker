@@ -212,10 +212,11 @@ export const incentiveCategories = [
   "brand_units",      // total units per brand
   "brand_amount",     // total revenue per brand
   "pos_volume",       // sales volume at POS (amount)
+  "transaction_amount",// per-transaction amount threshold (e.g. EM $10 per transaction >$530)
 ] as const;
 export type IncentiveCategory = (typeof incentiveCategories)[number];
 
-export const incentiveRewardBases = ["per_unit", "per_amount", "fixed"] as const;
+export const incentiveRewardBases = ["per_unit", "per_amount", "fixed", "per_transaction"] as const;
 export type IncentiveRewardBasis = (typeof incentiveRewardBases)[number];
 
 export const incentiveSchemes = pgTable("incentive_schemes", {
@@ -225,16 +226,26 @@ export const incentiveSchemes = pgTable("incentive_schemes", {
   category: text("category").notNull(),         // IncentiveCategory
   targetId: varchar("target_id"),               // product/brand/promotion/POS ID
   targetName: text("target_name"),              // display name for the target
-  metric: text("metric").notNull(),             // "units" | "amount" | "gwp_given" | "pwp_sold"
-  threshold: real("threshold").notNull(),        // minimum to qualify
-  rewardBasis: text("reward_basis").notNull().default("fixed"),  // per_unit | per_amount | fixed
+  metric: text("metric").notNull(),             // "units" | "amount" | "gwp_given" | "pwp_sold" | "transaction_amount"
+  threshold: real("threshold").notNull(),        // minimum to qualify (global default)
+  rewardBasis: text("reward_basis").notNull().default("fixed"),  // per_unit | per_amount | fixed | per_transaction
   rewardAmount: real("reward_amount").notNull(), // HK$ per unit/amount or flat bonus
   rewardPerAmountUnit: real("reward_per_amount_unit"), // e.g. per HK$1000 (when basis=per_amount)
   isActive: boolean("is_active").notNull().default(true),
   createdBy: varchar("created_by"),
   posIds: text("pos_ids"),                      // comma-separated POS IDs (null = all POS)
   notes: text("notes"),
+  // New fields for April 2026 incentive program
+  rewardTiers: text("reward_tiers"),            // JSON: [{minQty, maxQty?, rewardAmount}] for tiered per-unit rates (TA/LA)
+  storeThresholds: text("store_thresholds"),    // JSON: [{posId, posName, threshold}] per-store minimum targets (AD)
+  incentiveOffset: real("incentive_offset"),     // start counting from Nth piece (PE: offset=2 means from 3rd piece)
+  comboBonus: text("combo_bonus"),              // JSON: {description, amount, products?[]} combo/set bonus (TA device+serum $30)
 });
+
+// Reward tier type for tiered incentive rates
+export type RewardTier = { minQty: number; maxQty?: number; rewardAmount: number };
+export type StoreThreshold = { posId: string; posName: string; threshold: number };
+export type ComboBonus = { description: string; amount: number; products?: string[] };
 
 export const insertIncentiveSchemeSchema = createInsertSchema(incentiveSchemes).omit({ id: true });
 export type InsertIncentiveScheme = z.infer<typeof insertIncentiveSchemeSchema>;
@@ -262,4 +273,5 @@ export const INCENTIVE_CATEGORY_LABELS: Record<IncentiveCategory, string> = {
   brand_units: "Brand Sales (Units)",
   brand_amount: "Brand Sales (Amount)",
   pos_volume: "POS Sales Volume",
+  transaction_amount: "Per-Transaction Amount",
 };

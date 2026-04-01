@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory } from "@shared/schema";
+import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory, RewardTier, StoreThreshold, ComboBonus } from "@shared/schema";
 import { incentiveCategories, incentiveRewardBases, INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -116,21 +116,39 @@ export default function SettingsPage() {
     if (cat === "product_units" || cat === "brand_units") return "units";
     if (cat === "product_amount" || cat === "brand_amount" || cat === "pos_volume") return "amount";
     if (cat === "promo_achievement") return "gwp_given";
+    if (cat === "transaction_amount") return "transaction_amount";
     return "units";
   };
 
-  const rewardBasisLabels: Record<string, string> = { per_unit: "Per Unit", per_amount: "Per Amount", fixed: "Fixed Bonus" };
+  const rewardBasisLabels: Record<string, string> = { per_unit: "Per Unit", per_amount: "Per Amount", fixed: "Fixed Bonus", per_transaction: "Per Transaction" };
 
   const formatReward = (s: IncentiveScheme) => {
+    // Show tiered info if present
+    const tiers: RewardTier[] = s.rewardTiers ? JSON.parse(s.rewardTiers) : [];
+    if (tiers.length > 0) {
+      return tiers.map(t => `$${t.rewardAmount}/${t.minQty}+`).join(", ");
+    }
     if (s.rewardBasis === "per_unit") return `HK$${s.rewardAmount} / unit`;
     if (s.rewardBasis === "per_amount") return `HK$${s.rewardAmount} / HK$${(s.rewardPerAmountUnit || 1000).toLocaleString()}`;
+    if (s.rewardBasis === "per_transaction") return `HK$${s.rewardAmount} / txn`;
     return `HK$${s.rewardAmount} flat`;
   };
+
+  // Local state for tiers/store-thresholds/combo parsed from JSON
+  const [incTiers, setIncTiers] = useState<RewardTier[]>([]);
+  const [incStoreThresholds, setIncStoreThresholds] = useState<StoreThreshold[]>([]);
+  const [incOffset, setIncOffset] = useState<number | null>(null);
+  const [incCombo, setIncCombo] = useState<ComboBonus | null>(null);
 
   const openIncDialog = (s?: IncentiveScheme) => {
     if (s) {
       setEditingIncentiveId(s.id);
       setIncForm({ name: s.name, month: s.month, category: s.category as IncentiveCategory, targetId: s.targetId ?? undefined, targetName: s.targetName ?? undefined, metric: s.metric, threshold: s.threshold, rewardBasis: s.rewardBasis as any, rewardAmount: s.rewardAmount, rewardPerAmountUnit: s.rewardPerAmountUnit ?? undefined, notes: s.notes ?? undefined });
+      // Parse JSON fields
+      setIncTiers(s.rewardTiers ? JSON.parse(s.rewardTiers) : []);
+      setIncStoreThresholds(s.storeThresholds ? JSON.parse(s.storeThresholds) : []);
+      setIncOffset(s.incentiveOffset ?? null);
+      setIncCombo(s.comboBonus ? JSON.parse(s.comboBonus) : null);
       // Try to extract product name from stored name (format: "Brand ProductName, ...")
       const storedName = s.name || "";
       const target = s.targetName || "";
@@ -145,13 +163,24 @@ export default function SettingsPage() {
       setEditingIncentiveId(null);
       setIncForm({ month: incentiveFilterMonth || new Date().toISOString().substring(0, 7), rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
       setIncProductName("");
+      setIncTiers([]);
+      setIncStoreThresholds([]);
+      setIncOffset(null);
+      setIncCombo(null);
     }
     setIncentiveDialogOpen(true);
   };
 
   const saveIncentiveMutation = useMutation({
     mutationFn: async () => {
-      const body = { ...incForm, metric: metricForCategory(incForm.category || "") };
+      const body: any = {
+        ...incForm,
+        metric: metricForCategory(incForm.category || ""),
+        rewardTiers: incTiers.length > 0 ? JSON.stringify(incTiers) : null,
+        storeThresholds: incStoreThresholds.length > 0 ? JSON.stringify(incStoreThresholds) : null,
+        incentiveOffset: incOffset,
+        comboBonus: incCombo ? JSON.stringify(incCombo) : null,
+      };
       if (editingIncentiveId) {
         await apiRequest("PATCH", `/api/incentive-schemes/${editingIncentiveId}`, body);
       } else {
@@ -1117,7 +1146,13 @@ export default function SettingsPage() {
                           <td className="py-2 pr-3"><Badge variant="outline" className="text-xs">{INCENTIVE_CATEGORY_LABELS[s.category as IncentiveCategory] || s.category}</Badge></td>
                           <td className="py-2 pr-3 text-muted-foreground">{s.targetName || "—"}</td>
                           <td className="py-2 pr-3">{s.metric === "units" || s.metric === "gwp_given" ? `${s.threshold} units` : `HK$${s.threshold.toLocaleString()}`}</td>
-                          <td className="py-2 pr-3">{formatReward(s)}</td>
+                          <td className="py-2 pr-3">
+                            <span>{formatReward(s)}</span>
+                            {s.rewardTiers && JSON.parse(s.rewardTiers).length > 0 && <Badge variant="outline" className="ml-1 text-[10px] border-blue-300 text-blue-700">Tiered</Badge>}
+                            {s.incentiveOffset && s.incentiveOffset > 0 && <Badge variant="outline" className="ml-1 text-[10px] border-orange-300 text-orange-700">+{s.incentiveOffset} offset</Badge>}
+                            {s.comboBonus && <Badge variant="outline" className="ml-1 text-[10px] border-purple-300 text-purple-700">Combo</Badge>}
+                            {s.storeThresholds && JSON.parse(s.storeThresholds).length > 0 && <Badge variant="outline" className="ml-1 text-[10px] border-teal-300 text-teal-700">Per-store</Badge>}
+                          </td>
                           <td className="py-2 pr-3">
                             <Badge variant={s.isActive ? "default" : "secondary"} className="text-xs cursor-pointer" onClick={() => toggleIncentiveMutation.mutate({ id: s.id, isActive: !s.isActive })}>
                               {s.isActive ? "Active" : "Inactive"}
@@ -1141,7 +1176,7 @@ export default function SettingsPage() {
 
           {/* Create/Edit Dialog */}
           <Dialog open={incentiveDialogOpen} onOpenChange={setIncentiveDialogOpen}>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingIncentiveId ? "Edit Incentive" : "Create Incentive"}</DialogTitle>
               </DialogHeader>
@@ -1168,7 +1203,7 @@ export default function SettingsPage() {
                 {incForm.category && (
                   <div className="space-y-1">
                     <Label className="text-sm font-medium">Target</Label>
-                    {(incForm.category === "product_units" || incForm.category === "product_amount" || incForm.category === "brand_units" || incForm.category === "brand_amount") && (
+                    {(incForm.category === "product_units" || incForm.category === "product_amount" || incForm.category === "brand_units" || incForm.category === "brand_amount" || incForm.category === "transaction_amount") && (
                       <Select value={incForm.targetId || ""} onValueChange={v => { const b = brands.find(b => b.id === v); setIncForm(f => ({ ...f, targetId: v, targetName: b?.name || "" })); }}>
                         <SelectTrigger><SelectValue placeholder="Select brand" /></SelectTrigger>
                         <SelectContent>
@@ -1217,13 +1252,13 @@ export default function SettingsPage() {
                 {incForm.category && (
                   <div className="space-y-1">
                     <Label className="text-sm font-medium">Metric</Label>
-                    <Badge variant="outline">{incForm.metric === "gwp_given" ? "GWP/PWP count" : incForm.metric || "—"}</Badge>
+                    <Badge variant="outline">{incForm.metric === "gwp_given" ? "GWP/PWP count" : incForm.metric === "transaction_amount" ? "Transaction Amount" : incForm.metric || "—"}</Badge>
                   </div>
                 )}
 
                 <div className="space-y-1">
                   <Label className="text-sm font-medium">
-                    Threshold {incForm.metric === "units" || incForm.metric === "gwp_given" ? "(minimum units)" : "(minimum HK$)"}
+                    Threshold {incForm.metric === "transaction_amount" ? "(min amount per transaction HK$)" : incForm.metric === "units" || incForm.metric === "gwp_given" ? "(minimum units)" : "(minimum HK$)"}
                   </Label>
                   <Input type="number" min={0} value={incForm.threshold ?? ""} onChange={e => setIncForm(f => ({ ...f, threshold: parseFloat(e.target.value) || 0 }))} />
                 </div>
@@ -1248,6 +1283,102 @@ export default function SettingsPage() {
                     <div className="space-y-1">
                       <Label className="text-sm font-medium">Per HK$ (unit)</Label>
                       <Input type="number" min={1} value={incForm.rewardPerAmountUnit ?? ""} onChange={e => setIncForm(f => ({ ...f, rewardPerAmountUnit: parseFloat(e.target.value) || 1000 }))} placeholder="1000" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Reward Tiers — for tiered per-unit rates (TA/LA) */}
+                {incForm.rewardBasis === "per_unit" && (
+                  <div className="space-y-2 p-3 rounded-md border bg-blue-50/50 dark:bg-blue-950/20">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">Tiered Rates <span className="text-xs text-muted-foreground font-normal">(optional — overrides flat rate)</span></Label>
+                      <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => setIncTiers(prev => [...prev, { minQty: prev.length > 0 ? (prev[prev.length - 1].maxQty ?? prev[prev.length - 1].minQty) + 1 : 1, rewardAmount: 0 }])}>
+                        <Plus className="w-3 h-3 mr-1" /> Add Tier
+                      </Button>
+                    </div>
+                    {incTiers.length > 0 && (
+                      <div className="space-y-1.5">
+                        {incTiers.map((tier, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground w-6">#{i + 1}</span>
+                            <Input type="number" min={0} className="h-7 w-20 text-xs" placeholder="From" value={tier.minQty}
+                              onChange={e => { const v = parseInt(e.target.value) || 0; setIncTiers(prev => prev.map((t, j) => j === i ? { ...t, minQty: v } : t)); }} />
+                            <span className="text-xs">–</span>
+                            <Input type="number" min={0} className="h-7 w-20 text-xs" placeholder="∞" value={tier.maxQty ?? ""}
+                              onChange={e => { const v = e.target.value ? parseInt(e.target.value) : undefined; setIncTiers(prev => prev.map((t, j) => j === i ? { ...t, maxQty: v } : t)); }} />
+                            <span className="text-xs text-muted-foreground">pcs →</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs">$</span>
+                              <Input type="number" min={0} className="h-7 w-16 text-xs" value={tier.rewardAmount}
+                                onChange={e => { const v = parseFloat(e.target.value) || 0; setIncTiers(prev => prev.map((t, j) => j === i ? { ...t, rewardAmount: v } : t)); }} />
+                            </div>
+                            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setIncTiers(prev => prev.filter((_, j) => j !== i))}><X className="w-3 h-3" /></Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Incentive Offset — start counting from Nth piece (PE) */}
+                {(incForm.rewardBasis === "per_unit" || incForm.rewardBasis === "per_transaction") && (
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium">Offset <span className="text-xs text-muted-foreground font-normal">(start counting from Nth piece, e.g. 2 = from 3rd piece)</span></Label>
+                    <Input type="number" min={0} className="w-32" value={incOffset ?? ""}
+                      onChange={e => setIncOffset(e.target.value ? parseInt(e.target.value) : null)}
+                      placeholder="0 (no offset)" />
+                  </div>
+                )}
+
+                {/* Combo Bonus — additional bonus for combo/set (TA device+serum) */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={!!incCombo} onCheckedChange={ck => setIncCombo(ck ? { description: "", amount: 0 } : null)} />
+                    <Label className="text-sm font-medium">Combo / Set Bonus <span className="text-xs text-muted-foreground font-normal">(additional bonus for selling specific combo)</span></Label>
+                  </div>
+                  {incCombo && (
+                    <div className="pl-6 space-y-2 p-3 rounded-md border bg-purple-50/50 dark:bg-purple-950/20">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Description</Label>
+                        <Input value={incCombo.description} onChange={e => setIncCombo(prev => prev ? { ...prev, description: e.target.value } : null)} placeholder="e.g. Device + Serum combo" className="text-sm h-8" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Bonus Amount (HK$)</Label>
+                        <Input type="number" min={0} value={incCombo.amount} onChange={e => setIncCombo(prev => prev ? { ...prev, amount: parseFloat(e.target.value) || 0 } : null)} className="w-32 h-8" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Per-Store Thresholds — store-specific minimums (AD) */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={incStoreThresholds.length > 0}
+                      onCheckedChange={ck => {
+                        if (ck) {
+                          // Populate from selected POS or all active POS
+                          const selectedPosIds = (incForm.posIds as any as string || "").split(",").filter(Boolean);
+                          const locations = selectedPosIds.length > 0
+                            ? posLocations.filter(p => selectedPosIds.includes(p.id))
+                            : posLocations.filter(p => p.isActive);
+                          setIncStoreThresholds(locations.map(p => ({ posId: p.id, posName: `${p.salesChannel} — ${p.storeName}`, threshold: incForm.threshold || 0 })));
+                        } else {
+                          setIncStoreThresholds([]);
+                        }
+                      }} />
+                    <Label className="text-sm font-medium">Per-Store Thresholds <span className="text-xs text-muted-foreground font-normal">(different min targets per store)</span></Label>
+                  </div>
+                  {incStoreThresholds.length > 0 && (
+                    <div className="max-h-[150px] overflow-y-auto border rounded-md p-2 space-y-1">
+                      {incStoreThresholds.map((st, i) => (
+                        <div key={st.posId} className="flex items-center gap-2">
+                          <span className="text-xs flex-1 truncate">{st.posName}</span>
+                          <Input type="number" min={0} className="h-7 w-20 text-xs" value={st.threshold}
+                            onChange={e => setIncStoreThresholds(prev => prev.map((s, j) => j === i ? { ...s, threshold: parseFloat(e.target.value) || 0 } : s))} />
+                          <span className="text-[10px] text-muted-foreground">{incForm.metric === "units" ? "pcs" : "HK$"}</span>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setIncStoreThresholds(prev => prev.filter((_, j) => j !== i))}><X className="w-3 h-3" /></Button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1310,11 +1441,17 @@ export default function SettingsPage() {
                   const isProductCat = incForm.category === "product_units" || incForm.category === "product_amount";
                   const prodName = isProductCat ? incProductName : "";
                   const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
-                  const thresholdText = isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
+                  const isTxn = incForm.metric === "transaction_amount";
+                  const thresholdText = isTxn ? `每筆>HK$${(incForm.threshold || 0).toLocaleString()}` : isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
                   let rewardShort = "";
-                  if (incForm.rewardBasis === "per_unit") rewardShort = `HK$${incForm.rewardAmount || 0}/件`;
+                  if (incTiers.length > 0) {
+                    rewardShort = incTiers.map(t => `$${t.rewardAmount}/${t.minQty}+`).join(", ");
+                  } else if (incForm.rewardBasis === "per_unit") rewardShort = `HK$${incForm.rewardAmount || 0}/件`;
                   else if (incForm.rewardBasis === "per_amount") rewardShort = `HK$${incForm.rewardAmount || 0}/HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}`;
+                  else if (incForm.rewardBasis === "per_transaction") rewardShort = `HK$${incForm.rewardAmount || 0}/筆`;
                   else rewardShort = `獎金HK$${incForm.rewardAmount || 0}`;
+                  if (incOffset && incOffset > 0) rewardShort += ` (第${incOffset + 1}件起)`;
+                  if (incCombo) rewardShort += ` +$${incCombo.amount}組合`;
                   // Name format: [Brand] [Product], [Threshold], [Reward]
                   const namePrefix = target && prodName ? `${target} ${prodName}` : target || prodName;
                   const autoName = namePrefix
@@ -1328,16 +1465,30 @@ export default function SettingsPage() {
                     product_units: "產品銷售（件數）", product_amount: "產品銷售（金額）",
                     promo_achievement: "推廣達標", brand_units: "品牌銷售（件數）",
                     brand_amount: "品牌銷售（金額）", pos_volume: "銷售點銷售額",
+                    transaction_amount: "每筆交易金額",
                   };
                   const catLabel = catZh[incForm.category as string] || incForm.category;
                   let rewardLong = "";
-                  if (incForm.rewardBasis === "per_unit") rewardLong = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
+                  if (incTiers.length > 0) {
+                    rewardLong = "階梯獎勵: " + incTiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ");
+                  } else if (incForm.rewardBasis === "per_unit") rewardLong = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
                   else if (incForm.rewardBasis === "per_amount") rewardLong = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
+                  else if (incForm.rewardBasis === "per_transaction") rewardLong = `每筆合資格交易可獲HK$${incForm.rewardAmount || 0}`;
                   else rewardLong = `可獲固定獎金HK$${incForm.rewardAmount || 0}`;
+                  if (incOffset && incOffset > 0) rewardLong += `（由第${incOffset + 1}件起計）`;
+                  if (incCombo) rewardLong += `。另加組合獎金HK$${incCombo.amount}（${incCombo.description || "組合"}）`;
                   const descSubject = isProductCat && prodName ? `${target} ${prodName}` : (target || "目標");
-                  const descZh = incForm.category === "promo_achievement"
-                    ? `達成${target || "目標"}推廣目標${thresholdText}，${rewardLong}。`
-                    : `${descSubject}，${catLabel}達${thresholdText}，${rewardLong}。`;
+                  let descZh = "";
+                  if (isTxn) {
+                    descZh = `${descSubject}，每筆交易金額超過HK$${(incForm.threshold || 0).toLocaleString()}，${rewardLong}。`;
+                  } else if (incForm.category === "promo_achievement") {
+                    descZh = `達成${target || "目標"}推廣目標${thresholdText}，${rewardLong}。`;
+                  } else {
+                    descZh = `${descSubject}，${catLabel}達${thresholdText}，${rewardLong}。`;
+                  }
+                  if (incStoreThresholds.length > 0) {
+                    descZh += " 各店目標: " + incStoreThresholds.map(st => `${st.posName.split(" — ").pop() || st.posName}=${st.threshold}`).join(", ") + "。";
+                  }
                   return (
                     <div className="space-y-2 p-3 rounded-md bg-muted/50 border">
                       <div className="space-y-1">

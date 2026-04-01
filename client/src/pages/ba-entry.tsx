@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/App";
-import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme } from "@shared/schema";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme, RewardTier, StoreThreshold, ComboBonus } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -520,37 +520,104 @@ export default function BAEntry() {
               <div className="space-y-3">
                 {filteredIncentives.map(scheme => {
                   const totalProgress = incentiveTotalEntries[scheme.id] ?? 0;
-                  const pct = scheme.threshold > 0 ? Math.min(100, (totalProgress / scheme.threshold) * 100) : 0;
-                  const achieved = totalProgress >= scheme.threshold;
+                  // Parse new fields
+                  const tiers: RewardTier[] = scheme.rewardTiers ? JSON.parse(scheme.rewardTiers) : [];
+                  const storeThresholds: StoreThreshold[] = scheme.storeThresholds ? JSON.parse(scheme.storeThresholds) : [];
+                  const offset = scheme.incentiveOffset ?? 0;
+                  const combo: ComboBonus | null = scheme.comboBonus ? JSON.parse(scheme.comboBonus) : null;
+
+                  // Determine effective threshold (per-store or global)
+                  const storeThreshold = storeThresholds.find(st => st.posId === selectedCounter);
+                  const effectiveThreshold = storeThreshold ? storeThreshold.threshold : scheme.threshold;
+
+                  const pct = effectiveThreshold > 0 ? Math.min(100, (totalProgress / effectiveThreshold) * 100) : 0;
+                  const achieved = totalProgress >= effectiveThreshold;
                   const isUnits = scheme.metric === "units" || scheme.metric === "gwp_given";
+                  const isTxn = scheme.metric === "transaction_amount";
 
                   // Chinese description
                   const catZh: Record<string, string> = {
                     product_units: "產品銷售（件數）", product_amount: "產品銷售（金額）",
                     promo_achievement: "推廣達標", brand_units: "品牌銷售（件數）",
                     brand_amount: "品牌銷售（金額）", pos_volume: "銷售點銷售額",
+                    transaction_amount: "每筆交易金額",
                   };
-                  const thresholdZh = isUnits ? `${scheme.threshold}件` : `HK$${scheme.threshold.toLocaleString()}`;
+                  const thresholdZh = isTxn
+                    ? `每筆>HK$${effectiveThreshold.toLocaleString()}`
+                    : isUnits ? `${effectiveThreshold}件` : `HK$${effectiveThreshold.toLocaleString()}`;
                   let rewardZh = "";
-                  if (scheme.rewardBasis === "per_unit") rewardZh = `每售出一件可獲HK$${scheme.rewardAmount}`;
+                  if (tiers.length > 0) {
+                    rewardZh = "階梯獎勵: " + tiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ");
+                  } else if (scheme.rewardBasis === "per_unit") rewardZh = `每售出一件可獲HK$${scheme.rewardAmount}`;
                   else if (scheme.rewardBasis === "per_amount") rewardZh = `每達HK$${(scheme.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${scheme.rewardAmount}`;
+                  else if (scheme.rewardBasis === "per_transaction") rewardZh = `每筆合資格交易可獲HK$${scheme.rewardAmount}`;
                   else rewardZh = `可獲固定獎金HK$${scheme.rewardAmount}`;
+                  if (offset > 0) rewardZh += `（由第${offset + 1}件起計）`;
+                  if (combo) rewardZh += `。另加組合獎金HK$${combo.amount}`;
                   const target = scheme.targetName || "";
-                  const descZh = scheme.category === "promo_achievement"
-                    ? `達成${target}推廣目標${thresholdZh}，${rewardZh}。`
-                    : `${target ? target + "，" : ""}${catZh[scheme.category] || scheme.category}達${thresholdZh}，${rewardZh}。`;
+                  let descZh = "";
+                  if (isTxn) {
+                    descZh = `${target ? target + "，" : ""}每筆交易金額超過HK$${effectiveThreshold.toLocaleString()}，${rewardZh}。`;
+                  } else if (scheme.category === "promo_achievement") {
+                    descZh = `達成${target}推廣目標${thresholdZh}，${rewardZh}。`;
+                  } else {
+                    descZh = `${target ? target + "，" : ""}${catZh[scheme.category] || scheme.category}達${thresholdZh}，${rewardZh}。`;
+                  }
 
-                  const progressText = isUnits
-                    ? `${Math.round(totalProgress)} / ${Math.round(scheme.threshold)}件`
-                    : `HK$${totalProgress.toLocaleString()} / HK$${scheme.threshold.toLocaleString()}`;
+                  const progressText = isTxn
+                    ? `${Math.round(totalProgress)} 筆`
+                    : isUnits
+                      ? `${Math.round(totalProgress)} / ${Math.round(effectiveThreshold)}件`
+                      : `HK$${totalProgress.toLocaleString()} / HK$${effectiveThreshold.toLocaleString()}`;
 
+                  // Calculate earned reward
                   let earned = 0;
-                  if (achieved || scheme.rewardBasis !== "fixed") {
-                    if (scheme.rewardBasis === "per_unit") earned = totalProgress * scheme.rewardAmount;
+                  if (isTxn) {
+                    // per_transaction: reward per qualifying transaction
+                    earned = totalProgress * scheme.rewardAmount;
+                  } else if (tiers.length > 0) {
+                    // Tiered reward calculation
+                    const countable = Math.max(0, totalProgress - offset);
+                    if (countable > 0 && totalProgress >= effectiveThreshold) {
+                      // Find the applicable tier for total qty
+                      let tierRate = 0;
+                      for (const t of tiers) {
+                        if (countable >= t.minQty && (!t.maxQty || countable <= t.maxQty)) {
+                          tierRate = t.rewardAmount;
+                        }
+                      }
+                      // If countable exceeds all defined tiers, use the last tier
+                      if (tierRate === 0 && tiers.length > 0) {
+                        const lastTier = tiers[tiers.length - 1];
+                        if (countable >= lastTier.minQty) tierRate = lastTier.rewardAmount;
+                      }
+                      earned = countable * tierRate;
+                    }
+                  } else if (achieved || scheme.rewardBasis !== "fixed") {
+                    const countable = Math.max(0, totalProgress - offset);
+                    if (scheme.rewardBasis === "per_unit") earned = countable * scheme.rewardAmount;
                     else if (scheme.rewardBasis === "per_amount") earned = (totalProgress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
                     else earned = scheme.rewardAmount;
                   }
                   if (scheme.rewardBasis === "fixed" && !achieved) earned = 0;
+                  // Add combo bonus if applicable
+                  if (combo && achieved) earned += combo.amount;
+
+                  // Determine current tier for display
+                  let currentTierLabel = "";
+                  if (tiers.length > 0 && totalProgress >= effectiveThreshold) {
+                    const countable = Math.max(0, totalProgress - offset);
+                    for (const t of tiers) {
+                      if (countable >= t.minQty && (!t.maxQty || countable <= t.maxQty)) {
+                        currentTierLabel = `當前: $${t.rewardAmount}/件`;
+                      }
+                    }
+                    // Next tier info
+                    const nextTier = tiers.find(t => countable < t.minQty);
+                    if (nextTier) {
+                      currentTierLabel += ` → 差${nextTier.minQty - countable}件升級$${nextTier.rewardAmount}/件`;
+                    }
+                  }
 
                   return (
                     <div key={scheme.id} className={`rounded-md p-2.5 space-y-2 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
@@ -559,6 +626,9 @@ export default function BAEntry() {
                         {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ 已達標</span>}
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">{descZh}</p>
+                      {storeThreshold && (
+                        <p className="text-[10px] text-blue-600 dark:text-blue-400">本店目標: {storeThreshold.threshold}{isUnits ? "件" : " HK$"}</p>
+                      )}
 
                       {/* 今日達成 — BA input */}
                       <div className="flex items-center gap-2 pt-1 border-t border-dashed">
@@ -582,14 +652,17 @@ export default function BAEntry() {
                           }}
                           placeholder="0"
                         />
-                        <span className="text-[10px] text-muted-foreground">{isUnits ? "件" : "HK$"}</span>
+                        <span className="text-[10px] text-muted-foreground">{isTxn ? "筆" : isUnits ? "件" : "HK$"}</span>
                       </div>
 
-                      <div className="w-full bg-muted rounded-full h-2">
-                        <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
+                      {!isTxn && (
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                         <span className="text-muted-foreground">累計達成: <span className="font-medium text-foreground">{progressText}</span></span>
+                        {currentTierLabel && <span className="text-blue-600 dark:text-blue-400 text-[10px]">{currentTierLabel}</span>}
                         {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
                       </div>
                     </div>
