@@ -688,28 +688,5 @@ export async function registerRoutes(
     }
   });
 
-  // ─── Temporary: cleanup test data before 2026-04-01 ───
-  app.post("/api/admin/cleanup-test-data", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const session = (req as any).session;
-      if (session?.role !== "admin" && session?.role !== "management") return res.status(403).json({ message: "Admin only" });
-      const cutoffDate = "2026-04-01";
-      const r1 = await (storage as any).query("DELETE FROM sales_entries WHERE date < $1", [cutoffDate]);
-      const r2 = await (storage as any).query("DELETE FROM promotion_results WHERE date < $1", [cutoffDate]);
-      const r3 = await (storage as any).query("DELETE FROM incentive_entries WHERE date < $1", [cutoffDate]);
-      return res.json({
-        ok: true,
-        deleted: {
-          sales_entries: r1.rowCount ?? 0,
-          promotion_results: r2.rowCount ?? 0,
-          incentive_entries: r3.rowCount ?? 0,
-        },
-        message: `Deleted all data before ${cutoffDate}`,
-      });
-    } catch (e: any) {
-      return res.status(500).json({ message: e.message });
-    }
-  });
-
   return httpServer;
 }
