@@ -692,7 +692,7 @@ export async function registerRoutes(
   app.post("/api/admin/cleanup-test-data", requireAuth, async (req: Request, res: Response) => {
     try {
       const session = (req as any).session;
-      if (session?.role !== "admin") return res.status(403).json({ message: "Admin only" });
+      if (session?.role !== "admin" && session?.role !== "management") return res.status(403).json({ message: "Admin only" });
       const cutoffDate = "2026-04-01";
       const r1 = await (storage as any).query("DELETE FROM sales_entries WHERE date < $1", [cutoffDate]);
       const r2 = await (storage as any).query("DELETE FROM promotion_results WHERE date < $1", [cutoffDate]);
