@@ -538,6 +538,24 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // === SIMULATOR PRODUCT LOOKUP (proxy to Promo Pricing Simulator) ===
+  app.get("/api/simulator-products", requireManagement, async (req, res) => {
+    try {
+      const brand = req.query.brand as string | undefined;
+      const simulatorUrl = process.env.SIMULATOR_URL || "https://promo-pricing-simulator-v2-production.up.railway.app";
+      const url = brand
+        ? `${simulatorUrl}/api/public/products?brand=${encodeURIComponent(brand)}`
+        : `${simulatorUrl}/api/public/products`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Simulator returned ${resp.status}`);
+      const products = await resp.json();
+      res.json(products);
+    } catch (err: any) {
+      console.error("[simulator-products] Error:", err.message);
+      res.status(502).json({ error: "Failed to fetch products from Simulator", detail: err.message });
+    }
+  });
+
   // === PROMOTION RESULTS ===
   app.get("/api/promotion-results", requireAuth, async (req, res) => {
     const filters: any = {};

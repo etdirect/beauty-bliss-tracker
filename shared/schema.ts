@@ -240,12 +240,14 @@ export const incentiveSchemes = pgTable("incentive_schemes", {
   storeThresholds: text("store_thresholds"),    // JSON: [{posId, posName, threshold}] per-store minimum targets (AD)
   incentiveOffset: real("incentive_offset"),     // start counting from Nth piece (PE: offset=2 means from 3rd piece)
   comboBonus: text("combo_bonus"),              // JSON: {description, amount, products?[]} combo/set bonus (TA device+serum $30)
+  targetProducts: text("target_products"),       // JSON: [{sgCode, nameEng, nameChi?, volume?}] qualifying products for this incentive
 });
 
 // Reward tier type for tiered incentive rates
 export type RewardTier = { minQty: number; maxQty?: number; rewardAmount: number };
 export type StoreThreshold = { posId: string; posName: string; threshold: number };
 export type ComboBonus = { description: string; amount: number; products?: string[] };
+export type TargetProduct = { sgCode: string; nameEng: string; nameChi?: string; volume?: string };
 
 export const insertIncentiveSchemeSchema = createInsertSchema(incentiveSchemes).omit({ id: true });
 export type InsertIncentiveScheme = z.infer<typeof insertIncentiveSchemeSchema>;

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/App";
-import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme, RewardTier, StoreThreshold, ComboBonus } from "@shared/schema";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme, RewardTier, StoreThreshold, ComboBonus, TargetProduct } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -525,6 +525,7 @@ export default function BAEntry() {
                   const storeThresholds: StoreThreshold[] = scheme.storeThresholds ? JSON.parse(scheme.storeThresholds) : [];
                   const offset = scheme.incentiveOffset ?? 0;
                   const combo: ComboBonus | null = scheme.comboBonus ? JSON.parse(scheme.comboBonus) : null;
+                  const targetProducts: TargetProduct[] = scheme.targetProducts ? JSON.parse(scheme.targetProducts) : [];
 
                   // Determine effective threshold (per-store or global)
                   const storeThreshold = storeThresholds.find(st => st.posId === selectedCounter);
@@ -626,6 +627,14 @@ export default function BAEntry() {
                         {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ 已達標</span>}
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">{descZh}</p>
+                      {targetProducts.length > 0 && (
+                        <div className="text-[10px] text-muted-foreground leading-relaxed">
+                          <span className="font-medium">適用產品:</span>
+                          {targetProducts.map((p, i) => (
+                            <span key={p.sgCode}>{i > 0 ? "、" : " "}{p.nameChi || p.nameEng}{p.volume ? ` ${p.volume}` : ""}</span>
+                          ))}
+                        </div>
+                      )}
                       {storeThreshold && (
                         <p className="text-[10px] text-blue-600 dark:text-blue-400">本店目標: {storeThreshold.threshold}{isUnits ? "件" : " HK$"}</p>
                       )}

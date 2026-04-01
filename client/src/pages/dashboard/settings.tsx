@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory, RewardTier, StoreThreshold, ComboBonus } from "@shared/schema";
+import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory, RewardTier, StoreThreshold, ComboBonus, TargetProduct } from "@shared/schema";
 import { incentiveCategories, incentiveRewardBases, INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X, Trash2, Layers, Trophy } from "lucide-react";
+import { Plus, Store, Tag, Grid3X3, Eye, EyeOff, Users, MapPin, KeyRound, Pencil, Check, X, Trash2, Layers, Trophy, Search } from "lucide-react";
 
 interface SafeUser {
   id: string;
@@ -92,11 +92,31 @@ export default function SettingsPage() {
   const [editingIncentiveId, setEditingIncentiveId] = useState<string | null>(null);
   const [incForm, setIncForm] = useState<Partial<InsertIncentiveScheme>>({});
   const [incProductName, setIncProductName] = useState("");
+  // Product picker state
+  const [incTargetProducts, setIncTargetProducts] = useState<TargetProduct[]>([]);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productSearchText, setProductSearchText] = useState("");
 
   const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000 });
   const { data: allIncentiveSchemes = [] } = useQuery<IncentiveScheme[]>({
     queryKey: ["/api/incentive-schemes"],
     staleTime: 30_000,
+  });
+
+  // Fetch products from Simulator when product picker is open and brand is selected
+  const selectedBrandName = useMemo(() => {
+    if (!incForm.targetId) return "";
+    return brands.find(b => b.id === incForm.targetId)?.name || "";
+  }, [incForm.targetId, brands]);
+  const { data: simulatorProducts = [], isFetching: loadingProducts } = useQuery<any[]>({
+    queryKey: ["/api/simulator-products", selectedBrandName],
+    queryFn: async () => {
+      if (!selectedBrandName) return [];
+      const res = await apiRequest("GET", `/api/simulator-products?brand=${encodeURIComponent(selectedBrandName)}`);
+      return res.json();
+    },
+    enabled: productPickerOpen && !!selectedBrandName,
+    staleTime: 60_000,
   });
 
   // Client-side filtered incentives
@@ -149,6 +169,7 @@ export default function SettingsPage() {
       setIncStoreThresholds(s.storeThresholds ? JSON.parse(s.storeThresholds) : []);
       setIncOffset(s.incentiveOffset ?? null);
       setIncCombo(s.comboBonus ? JSON.parse(s.comboBonus) : null);
+      setIncTargetProducts(s.targetProducts ? JSON.parse(s.targetProducts) : []);
       // Try to extract product name from stored name (format: "Brand ProductName, ...")
       const storedName = s.name || "";
       const target = s.targetName || "";
@@ -167,6 +188,7 @@ export default function SettingsPage() {
       setIncStoreThresholds([]);
       setIncOffset(null);
       setIncCombo(null);
+      setIncTargetProducts([]);
     }
     setIncentiveDialogOpen(true);
   };
@@ -180,6 +202,7 @@ export default function SettingsPage() {
         storeThresholds: incStoreThresholds.length > 0 ? JSON.stringify(incStoreThresholds) : null,
         incentiveOffset: incOffset,
         comboBonus: incCombo ? JSON.stringify(incCombo) : null,
+        targetProducts: incTargetProducts.length > 0 ? JSON.stringify(incTargetProducts) : null,
       };
       if (editingIncentiveId) {
         await apiRequest("PATCH", `/api/incentive-schemes/${editingIncentiveId}`, body);
@@ -1213,10 +1236,29 @@ export default function SettingsPage() {
                         </SelectContent>
                       </Select>
                     )}
-                    {(incForm.category === "product_units" || incForm.category === "product_amount") && incForm.targetId && (
-                      <div className="space-y-1 mt-2">
-                        <Label className="text-sm font-medium">Product Name</Label>
-                        <Input value={incProductName} onChange={e => setIncProductName(e.target.value)} placeholder="e.g. Trio Zinc Spray 100ml" className="text-sm" />
+                    {/* Products picker — available for any brand-targeted category */}
+                    {incForm.targetId && (
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Qualifying Products <span className="text-xs text-muted-foreground font-normal">(optional — leave empty for all brand products)</span></Label>
+                          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setProductPickerOpen(true); setProductSearchText(""); }}>
+                            <Search className="w-3 h-3" /> Look up
+                          </Button>
+                        </div>
+                        {incTargetProducts.length > 0 && (
+                          <div className="space-y-1 max-h-[120px] overflow-y-auto border rounded-md p-2">
+                            {incTargetProducts.map((p, i) => (
+                              <div key={p.sgCode} className="flex items-center gap-2 text-xs">
+                                <span className="font-mono text-muted-foreground w-20 shrink-0">{p.sgCode}</span>
+                                <span className="flex-1 truncate">{p.nameChi || p.nameEng}{p.volume ? ` ${p.volume}` : ""}</span>
+                                <Button size="icon" variant="ghost" className="h-5 w-5 shrink-0" onClick={() => setIncTargetProducts(prev => prev.filter((_, j) => j !== i))}><X className="w-3 h-3" /></Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {incTargetProducts.length === 0 && (
+                          <p className="text-xs text-muted-foreground italic">No specific products selected — applies to all {selectedBrandName || "brand"} products</p>
+                        )}
                       </div>
                     )}
                     {incForm.category === "promo_achievement" && (
@@ -1439,7 +1481,12 @@ export default function SettingsPage() {
                 {incForm.category && (() => {
                   const target = incForm.targetName || "";
                   const isProductCat = incForm.category === "product_units" || incForm.category === "product_amount";
-                  const prodName = isProductCat ? incProductName : "";
+                  // Use target products list for name generation
+                  const prodName = incTargetProducts.length > 0
+                    ? (incTargetProducts.length === 1
+                        ? (incTargetProducts[0].nameChi || incTargetProducts[0].nameEng) + (incTargetProducts[0].volume ? ` ${incTargetProducts[0].volume}` : "")
+                        : `${incTargetProducts.length}款產品`)
+                    : (isProductCat ? incProductName : "");
                   const isUnits = incForm.metric === "units" || incForm.metric === "gwp_given";
                   const isTxn = incForm.metric === "transaction_amount";
                   const thresholdText = isTxn ? `每筆>HK$${(incForm.threshold || 0).toLocaleString()}` : isUnits ? `${incForm.threshold || 0}件` : `HK$${(incForm.threshold || 0).toLocaleString()}`;
@@ -1489,6 +1536,9 @@ export default function SettingsPage() {
                   if (incStoreThresholds.length > 0) {
                     descZh += " 各店目標: " + incStoreThresholds.map(st => `${st.posName.split(" — ").pop() || st.posName}=${st.threshold}`).join(", ") + "。";
                   }
+                  if (incTargetProducts.length > 0) {
+                    descZh += " 適用產品: " + incTargetProducts.map(p => `${p.sgCode} ${p.nameChi || p.nameEng}${p.volume ? " " + p.volume : ""}`).join(", ") + "。";
+                  }
                   return (
                     <div className="space-y-2 p-3 rounded-md bg-muted/50 border">
                       <div className="space-y-1">
@@ -1508,6 +1558,78 @@ export default function SettingsPage() {
                 <Button onClick={() => saveIncentiveMutation.mutate()} disabled={!incForm.name || !incForm.month || !incForm.category}>
                   {editingIncentiveId ? "Save Changes" : "Create"}
                 </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Product Picker Dialog */}
+          <Dialog open={productPickerOpen} onOpenChange={setProductPickerOpen}>
+            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Select Products — {selectedBrandName}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <Input
+                  placeholder="Search by code, name, or volume..."
+                  value={productSearchText}
+                  onChange={e => setProductSearchText(e.target.value)}
+                  className="text-sm"
+                  autoFocus
+                />
+                {loadingProducts && <p className="text-sm text-muted-foreground text-center py-4">Loading products from Simulator...</p>}
+                {!loadingProducts && simulatorProducts.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No products found for {selectedBrandName}</p>
+                )}
+                {!loadingProducts && simulatorProducts.length > 0 && (
+                  <div className="space-y-1 max-h-[400px] overflow-y-auto">
+                    {simulatorProducts
+                      .filter(p => {
+                        if (!productSearchText) return true;
+                        const q = productSearchText.toLowerCase();
+                        return (p.sgCode || "").toLowerCase().includes(q)
+                          || (p.nameEng || "").toLowerCase().includes(q)
+                          || (p.nameChi || "").toLowerCase().includes(q)
+                          || (p.volume || "").toLowerCase().includes(q);
+                      })
+                      .map((p: any) => {
+                        const isSelected = incTargetProducts.some(tp => tp.sgCode === p.sgCode);
+                        return (
+                          <div
+                            key={p.id}
+                            className={`flex items-center gap-2 p-2 rounded-md cursor-pointer hover:bg-accent/50 transition-colors ${isSelected ? "bg-primary/10 border border-primary/30" : "border border-transparent"}`}
+                            onClick={() => {
+                              if (isSelected) {
+                                setIncTargetProducts(prev => prev.filter(tp => tp.sgCode !== p.sgCode));
+                              } else {
+                                setIncTargetProducts(prev => [...prev, {
+                                  sgCode: p.sgCode,
+                                  nameEng: p.nameEng,
+                                  nameChi: p.nameChi || undefined,
+                                  volume: p.volume || undefined,
+                                }]);
+                              }
+                            }}
+                          >
+                            <Checkbox checked={isSelected} className="pointer-events-none" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs text-muted-foreground">{p.sgCode}</span>
+                                {p.rrp > 0 && <span className="text-[10px] text-muted-foreground">RRP ${p.rrp}</span>}
+                              </div>
+                              <p className="text-sm truncate">{p.nameChi || p.nameEng}</p>
+                              {p.nameChi && p.nameEng && <p className="text-xs text-muted-foreground truncate">{p.nameEng}</p>}
+                              {p.volume && <span className="text-xs text-muted-foreground">{p.volume}</span>}
+                            </div>
+                            {isSelected && <Check className="w-4 h-4 text-primary shrink-0" />}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <span className="text-xs text-muted-foreground mr-auto">{incTargetProducts.length} selected</span>
+                <Button variant="outline" onClick={() => setProductPickerOpen(false)}>Done</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
