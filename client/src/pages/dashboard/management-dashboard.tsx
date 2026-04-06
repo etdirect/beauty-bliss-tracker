@@ -18,8 +18,8 @@ import {
   DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package,
-  Filter, ChevronDown, Download,
+  DollarSign, ShoppingCart, TrendingUp, TrendingDown, Package,
+  Filter, ChevronDown, Download, CalendarDays,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -122,6 +122,20 @@ export default function ManagementDashboard() {
     queryKey: ["/api/brands"],
   });
 
+  // PP sales query — only for daterange tab
+  const { data: ppSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${ppStart}&endDate=${ppEnd}`],
+    enabled: timeTab === "daterange" && !!ppStart,
+    staleTime: 30_000,
+  });
+
+  // Last month sales query — for projection vs last month comparison
+  const { data: lmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${lmStart}&endDate=${lmEnd}`],
+    enabled: timeTab === "daterange" && !!lmStart,
+    staleTime: 30_000,
+  });
+
   // ── Derive available years from sales data ────
   const availableYears = useMemo(() => {
     const set = new Set<string>();
@@ -198,6 +212,42 @@ export default function ManagementDashboard() {
   const totalUnits = useMemo(() => filteredSales.reduce((s, e) => s + e.units, 0), [filteredSales]);
   const atv = totalOrders > 0 ? totalSales / totalOrders : null;
   const upt = totalOrders > 0 ? totalUnits / totalOrders : null;
+
+  // ── Previous Period (PP) date range ───────────
+  // PP = same number of days, immediately before the selected start date.
+  // Only calculated for the daterange tab.
+  const { ppStart, ppEnd, ppLabel } = useMemo(() => {
+    if (timeTab !== "daterange") return { ppStart: "", ppEnd: "", ppLabel: "" };
+    const s = new Date(drStart + "T00:00:00");
+    const e = new Date(drEnd + "T00:00:00");
+    const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+    const ppE = new Date(s); ppE.setDate(ppE.getDate() - 1);
+    const ppS = new Date(ppE); ppS.setDate(ppS.getDate() - (days - 1));
+    const fmt = (d: Date) => `${d.getDate()} ${MONTH_LABELS[d.getMonth()]}`;
+    return {
+      ppStart: ppS.toISOString().split("T")[0],
+      ppEnd: ppE.toISOString().split("T")[0],
+      ppLabel: `${fmt(ppS)} – ${fmt(ppE)}`,
+    };
+  }, [timeTab, drStart, drEnd]);
+
+  // ── Last month date range (for projection comparison) ──
+  const { lmStart, lmEnd, lmLabel } = useMemo(() => {
+    if (timeTab !== "daterange") return { lmStart: "", lmEnd: "", lmLabel: "" };
+    const s = new Date(drStart + "T00:00:00");
+    const y = s.getFullYear();
+    const m = s.getMonth(); // 0-indexed
+    // Step one month back
+    const lmDate = new Date(y, m - 1, 1);
+    const ly = lmDate.getFullYear();
+    const lm = lmDate.getMonth() + 1; // 1-indexed
+    const lmDays = daysInMonth(ly, lm);
+    return {
+      lmStart: `${ly}-${String(lm).padStart(2, "0")}-01`,
+      lmEnd: `${ly}-${String(lm).padStart(2, "0")}-${String(lmDays).padStart(2, "0")}`,
+      lmLabel: `${MONTH_LABELS[lm - 1]} ${ly}`,
+    };
+  }, [timeTab, drStart]);
 
   // ── Active POS info for trend chart logic ─────
   const activePosList = useMemo(
@@ -355,6 +405,32 @@ export default function ManagementDashboard() {
       .sort((a, b) => b.value - a.value);
   }, [filteredSales, posChannelMap]);
 
+  // ── PP & last-month filtered sales (same POS filter) ──
+  const ppFilteredSales = useMemo(
+    () => ppSalesRaw.filter((s) => activeCounterIds.has(s.counterId)),
+    [ppSalesRaw, activeCounterIds],
+  );
+  const lmFilteredSales = useMemo(
+    () => lmSalesRaw.filter((s) => activeCounterIds.has(s.counterId)),
+    [lmSalesRaw, activeCounterIds],
+  );
+
+  // PP & last-month totals
+  const ppTotalSales = useMemo(() => ppFilteredSales.reduce((s, e) => s + e.amount, 0), [ppFilteredSales]);
+  const lmTotalSales = useMemo(() => lmFilteredSales.reduce((s, e) => s + e.amount, 0), [lmFilteredSales]);
+
+  // PP counter/brand lookup maps (id → sales)
+  const ppCounterSalesMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    ppFilteredSales.forEach((e) => { m[e.counterId] = (m[e.counterId] ?? 0) + e.amount; });
+    return m;
+  }, [ppFilteredSales]);
+  const ppBrandSalesMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    ppFilteredSales.forEach((e) => { m[e.brandId] = (m[e.brandId] ?? 0) + e.amount; });
+    return m;
+  }, [ppFilteredSales]);
+
   // ── Counter table data ────────────────────────
   const counterTableData = useMemo(() => {
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
@@ -366,6 +442,7 @@ export default function ManagementDashboard() {
     });
     return Object.entries(map)
       .map(([id, d]) => ({
+        id,
         name: posNameMap.get(id) ?? "Unknown",
         sales: d.sales,
         orders: d.orders,
@@ -387,6 +464,7 @@ export default function ManagementDashboard() {
     });
     return Object.entries(map)
       .map(([id, d]) => ({
+        id,
         name: brandMap.get(id) ?? "Unknown",
         sales: d.sales,
         orders: d.orders,
@@ -396,6 +474,24 @@ export default function ManagementDashboard() {
       }))
       .sort((a, b) => b.sales - a.sales);
   }, [filteredSales, brandMap]);
+
+  // ── Monthly projection (daterange tab only, same-month range) ──
+  const projection = useMemo(() => {
+    if (timeTab !== "daterange") return null;
+    const s = new Date(drStart + "T00:00:00");
+    const e = new Date(drEnd + "T00:00:00");
+    // Only project when the range is within a single month
+    if (s.getFullYear() !== e.getFullYear() || s.getMonth() !== e.getMonth()) return null;
+    const year = s.getFullYear();
+    const month = s.getMonth() + 1; // 1-indexed
+    const daysElapsed = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+    const monthDays = daysInMonth(year, month);
+    const dailyRate = daysElapsed > 0 ? totalSales / daysElapsed : 0;
+    const projected = Math.round(dailyRate * monthDays);
+    const vsLM = lmTotalSales > 0 ? projected - lmTotalSales : null;
+    const vsLMPct = lmTotalSales > 0 ? ((projected - lmTotalSales) / lmTotalSales) * 100 : null;
+    return { year, month, daysElapsed, monthDays, dailyRate, projected, vsLM, vsLMPct, lmTotalSales };
+  }, [timeTab, drStart, drEnd, totalSales, lmTotalSales]);
 
   // ── Channel toggle helpers ────────────────────
   function toggleChannel(ch: string) {
@@ -926,10 +1022,69 @@ export default function ManagementDashboard() {
         </CardContent>
       </Card>
 
+      {/* ── Monthly Projection Card ─────────────────────────────────── */}
+      {projection && (
+        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CalendarDays className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
+                Monthly Projection — {MONTH_LABELS[projection.month - 1]} {projection.year}
+              </span>
+              <span className="text-xs text-muted-foreground ml-1">
+                (based on {projection.daysElapsed} of {projection.monthDays} days)
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {/* Current period sales */}
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  {drStart.slice(8)} – {drEnd.slice(8)} {MONTH_LABELS[projection.month - 1]}
+                </p>
+                <p className="text-lg font-bold">{fmtCurrency(totalSales)}</p>
+              </div>
+              {/* Daily run rate */}
+              <div>
+                <p className="text-xs text-muted-foreground">Daily Run Rate</p>
+                <p className="text-lg font-bold">{fmtCurrency(Math.round(projection.dailyRate))}</p>
+              </div>
+              {/* Projected monthly */}
+              <div>
+                <p className="text-xs text-muted-foreground">Projected Full Month</p>
+                <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{fmtCurrency(projection.projected)}</p>
+              </div>
+              {/* vs last month */}
+              <div>
+                <p className="text-xs text-muted-foreground">vs {lmLabel} Actual</p>
+                {projection.vsLM !== null ? (
+                  <div className={projection.vsLM >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                    <p className="text-lg font-bold">
+                      {projection.vsLM >= 0 ? "▲" : "▼"} {fmtCurrency(Math.abs(projection.vsLM))}
+                    </p>
+                    <p className="text-xs font-medium">
+                      {projection.vsLMPct! >= 0 ? "+" : ""}{projection.vsLMPct!.toFixed(1)}% vs {fmtCurrency(projection.lmTotalSales)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No {lmLabel} data</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Sales by Counter (table) */}
       <Card>
-        <CardHeader>
-          <CardTitle>Sales by Counter</CardTitle>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between">
+            <span>Sales by Counter</span>
+            {timeTab === "daterange" && ppLabel && (
+              <span className="text-xs font-normal text-muted-foreground">
+                vs PP: {ppLabel}
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {counterTableData.length === 0 ? (
@@ -941,21 +1096,67 @@ export default function ManagementDashboard() {
                   <tr className="border-b text-left">
                     <th className="pb-2 font-medium">Counter</th>
                     <th className="pb-2 font-medium text-right">Sales</th>
+                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap">vs Prev Period</th>}
                     <th className="pb-2 font-medium text-right">Units</th>
                     <th className="pb-2 font-medium text-right">ATV</th>
                     <th className="pb-2 font-medium text-right">UPT</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {counterTableData.map((row) => (
-                    <tr key={row.name} className="border-b last:border-0">
-                      <td className="py-2">{row.name}</td>
-                      <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
-                      <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                      <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
-                      <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
-                    </tr>
-                  ))}
+                  {counterTableData.map((row) => {
+                    const ppSales = ppCounterSalesMap[row.id] ?? 0;
+                    const delta = row.sales - ppSales;
+                    const deltaPct = ppSales > 0 ? (delta / ppSales) * 100 : null;
+                    const isUp = delta >= 0;
+                    return (
+                      <tr key={row.name} className="border-b last:border-0">
+                        <td className="py-2">{row.name}</td>
+                        <td className="py-2 text-right font-medium">{fmtCurrency(row.sales)}</td>
+                        {timeTab === "daterange" && (
+                          <td className={`py-2 text-right text-xs ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                            {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
+                              <span className="text-muted-foreground">New</span>
+                            ) : (
+                              <>
+                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
+                                <div className="text-[11px]">{deltaPct !== null ? `${isUp ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}</div>
+                              </>
+                            )}
+                          </td>
+                        )}
+                        <td className="py-2 text-right">{row.units.toLocaleString()}</td>
+                        <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
+                        <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {/* Totals row */}
+                  {counterTableData.length > 1 && (() => {
+                    const totSales = counterTableData.reduce((s, r) => s + r.sales, 0);
+                    const totPP = Object.values(ppCounterSalesMap).reduce((s, v) => s + v, 0);
+                    const totDelta = totSales - totPP;
+                    const totPct = totPP > 0 ? (totDelta / totPP) * 100 : null;
+                    const isUp = totDelta >= 0;
+                    return (
+                      <tr className="border-t-2 font-semibold bg-muted/30">
+                        <td className="py-2">Total</td>
+                        <td className="py-2 text-right">{fmtCurrency(totSales)}</td>
+                        {timeTab === "daterange" && (
+                          <td className={`py-2 text-right text-xs ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                            {totPP > 0 ? (
+                              <>
+                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
+                                <div className="text-[11px]">{totPct !== null ? `${isUp ? "+" : ""}${totPct.toFixed(1)}%` : "—"}</div>
+                              </>
+                            ) : "—"}
+                          </td>
+                        )}
+                        <td className="py-2 text-right">{counterTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
+                        <td className="py-2 text-right">—</td>
+                        <td className="py-2 text-right">—</td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -965,8 +1166,15 @@ export default function ManagementDashboard() {
 
       {/* Sales by Brand (table) */}
       <Card>
-        <CardHeader>
-          <CardTitle>Sales by Brand</CardTitle>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between">
+            <span>Sales by Brand</span>
+            {timeTab === "daterange" && ppLabel && (
+              <span className="text-xs font-normal text-muted-foreground">
+                vs PP: {ppLabel}
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {brandTableData.length === 0 ? (
@@ -978,21 +1186,67 @@ export default function ManagementDashboard() {
                   <tr className="border-b text-left">
                     <th className="pb-2 font-medium">Brand</th>
                     <th className="pb-2 font-medium text-right">Sales</th>
+                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap">vs Prev Period</th>}
                     <th className="pb-2 font-medium text-right">Units</th>
                     <th className="pb-2 font-medium text-right">ATV</th>
                     <th className="pb-2 font-medium text-right">UPT</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {brandTableData.map((row) => (
-                    <tr key={row.name} className="border-b last:border-0">
-                      <td className="py-2">{row.name}</td>
-                      <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
-                      <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                      <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
-                      <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
-                    </tr>
-                  ))}
+                  {brandTableData.map((row) => {
+                    const ppSales = ppBrandSalesMap[row.id] ?? 0;
+                    const delta = row.sales - ppSales;
+                    const deltaPct = ppSales > 0 ? (delta / ppSales) * 100 : null;
+                    const isUp = delta >= 0;
+                    return (
+                      <tr key={row.name} className="border-b last:border-0">
+                        <td className="py-2">{row.name}</td>
+                        <td className="py-2 text-right font-medium">{fmtCurrency(row.sales)}</td>
+                        {timeTab === "daterange" && (
+                          <td className={`py-2 text-right text-xs ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                            {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
+                              <span className="text-muted-foreground">New</span>
+                            ) : (
+                              <>
+                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
+                                <div className="text-[11px]">{deltaPct !== null ? `${isUp ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}</div>
+                              </>
+                            )}
+                          </td>
+                        )}
+                        <td className="py-2 text-right">{row.units.toLocaleString()}</td>
+                        <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
+                        <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {/* Totals row */}
+                  {brandTableData.length > 1 && (() => {
+                    const totSales = brandTableData.reduce((s, r) => s + r.sales, 0);
+                    const totPP = Object.values(ppBrandSalesMap).reduce((s, v) => s + v, 0);
+                    const totDelta = totSales - totPP;
+                    const totPct = totPP > 0 ? (totDelta / totPP) * 100 : null;
+                    const isUp = totDelta >= 0;
+                    return (
+                      <tr className="border-t-2 font-semibold bg-muted/30">
+                        <td className="py-2">Total</td>
+                        <td className="py-2 text-right">{fmtCurrency(totSales)}</td>
+                        {timeTab === "daterange" && (
+                          <td className={`py-2 text-right text-xs ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                            {totPP > 0 ? (
+                              <>
+                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
+                                <div className="text-[11px]">{totPct !== null ? `${isUp ? "+" : ""}${totPct.toFixed(1)}%` : "—"}</div>
+                              </>
+                            ) : "—"}
+                          </td>
+                        )}
+                        <td className="py-2 text-right">{brandTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
+                        <td className="py-2 text-right">—</td>
+                        <td className="py-2 text-right">—</td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
