@@ -122,20 +122,6 @@ export default function ManagementDashboard() {
     queryKey: ["/api/brands"],
   });
 
-  // PP sales query — only for daterange tab
-  const { data: ppSalesRaw = [] } = useQuery<SalesEntry[]>({
-    queryKey: ["/api/sales", `?startDate=${ppStart}&endDate=${ppEnd}`],
-    enabled: timeTab === "daterange" && !!ppStart,
-    staleTime: 30_000,
-  });
-
-  // Last month sales query — for projection vs last month comparison
-  const { data: lmSalesRaw = [] } = useQuery<SalesEntry[]>({
-    queryKey: ["/api/sales", `?startDate=${lmStart}&endDate=${lmEnd}`],
-    enabled: timeTab === "daterange" && !!lmStart,
-    staleTime: 30_000,
-  });
-
   // ── Derive available years from sales data ────
   const availableYears = useMemo(() => {
     const set = new Set<string>();
@@ -248,6 +234,20 @@ export default function ManagementDashboard() {
       lmLabel: `${MONTH_LABELS[lm - 1]} ${ly}`,
     };
   }, [timeTab, drStart]);
+
+  // PP sales query — only for daterange tab (placed after PP/LM date calcs to avoid TDZ)
+  const { data: ppSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${ppStart}&endDate=${ppEnd}`],
+    enabled: timeTab === "daterange" && !!ppStart,
+    staleTime: 30_000,
+  });
+
+  // Last month sales query — for projection vs last month comparison
+  const { data: lmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${lmStart}&endDate=${lmEnd}`],
+    enabled: timeTab === "daterange" && !!lmStart,
+    staleTime: 30_000,
+  });
 
   // ── Active POS info for trend chart logic ─────
   const activePosList = useMemo(
