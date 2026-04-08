@@ -99,6 +99,7 @@ export interface IStorage {
   getIncentiveEntries(schemeId: string, userId: string, month: string): Promise<{ date: string; value: number }[]>;
   getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number>;
   upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number, posId?: string): Promise<void>;
+  getIncentiveProgressByStore(month: string, schemeId: string): Promise<Record<string, number>>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -1119,6 +1120,26 @@ export class PgStorage implements IStorage {
       [schemeId, userId, date, value, posId || null]
     );
   }
+
+  async getIncentiveProgressByStore(month: string, schemeId: string): Promise<Record<string, number>> {
+    const scheme = await this.getIncentiveScheme(schemeId);
+    if (!scheme) return {};
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-31`;
+    const metric = (scheme.category === "brand_units" || scheme.category === "product_units") ? "units" : "amount";
+    const { rows } = await this.q(
+      `SELECT counter_id, COALESCE(SUM(${metric}), 0) as total
+       FROM sales_entries
+       WHERE brand_id = $1 AND date >= $2 AND date <= $3
+       GROUP BY counter_id`,
+      [scheme.targetId, monthStart, monthEnd]
+    );
+    const result: Record<string, number> = {};
+    for (const r of rows) {
+      result[r.counter_id] = Number(r.total);
+    }
+    return result;
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -1529,6 +1550,10 @@ export class MemStorage implements IStorage {
   }
   async upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number): Promise<void> {
     this.incentiveEntriesMap.set(`${schemeId}:${userId}:${date}`, value);
+  }
+
+  async getIncentiveProgressByStore(_month: string, _schemeId: string): Promise<Record<string, number>> {
+    return {};
   }
 }
 

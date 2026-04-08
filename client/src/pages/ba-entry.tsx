@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy } from "lucide-react";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy, ChevronDown, ChevronUp, Search, Filter, X } from "lucide-react";
 import { Link } from "wouter";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
@@ -33,6 +34,18 @@ export default function BAEntry() {
   const [salesData, setSalesData] = useState<Record<string, { orders: number; units: number; amount: number; gwpCount: number }>>({});
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});
   const [submitted, setSubmitted] = useState(false);
+
+  // Promotion filter state
+  const [filterBrand, setFilterBrand] = useState<string>("__all__");
+  const [filterType, setFilterType] = useState<string>("__all__");
+  const [filterStartDate, setFilterStartDate] = useState<string>("");
+  const [filterEndDate, setFilterEndDate] = useState<string>("");
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Collapsible section state
+  const [promoL1Open, setPromoL1Open] = useState(true);
+  const [promoL2Open, setPromoL2Open] = useState(true);
+  const [incentivesOpen, setIncentivesOpen] = useState(true);
 
   // Fetch POS locations (all active)
   const { data: posLocations = [] } = useQuery<PosLocation[]>({
@@ -62,7 +75,7 @@ export default function BAEntry() {
   });
 
   // Filter promotions by selected counter's POS location
-  const filteredPromotions = useMemo(() => {
+  const posFilteredPromotions = useMemo(() => {
     if (!selectedCounter) return activePromotions;
     const pos = posLocations.find((p) => p.id === selectedCounter);
     if (!pos) return activePromotions;
@@ -74,6 +87,56 @@ export default function BAEntry() {
       return loc.includes(pos.storeName) || loc.includes(`${pos.salesChannel} / ${pos.storeName}`);
     });
   }, [activePromotions, selectedCounter, posLocations]);
+
+  // Apply user filters (brand, promo type, date range) on top of POS filter
+  const filteredPromotions = useMemo(() => {
+    return posFilteredPromotions.filter((promo) => {
+      // Brand filter
+      if (filterBrand !== "__all__") {
+        if (promo.brandId !== filterBrand) {
+          // Also check brand name in promo name as fallback
+          const brand = brands.find(b => b.id === filterBrand);
+          if (!brand || !(promo.name || "").toLowerCase().includes(brand.name.toLowerCase())) {
+            return false;
+          }
+        }
+      }
+      // Promo type filter
+      if (filterType !== "__all__" && promo.type !== filterType) return false;
+      // Date range filter (promo must overlap with filter range)
+      if (filterStartDate && promo.endDate && promo.endDate < filterStartDate) return false;
+      if (filterEndDate && promo.startDate && promo.startDate > filterEndDate) return false;
+      return true;
+    });
+  }, [posFilteredPromotions, filterBrand, filterType, filterStartDate, filterEndDate, brands]);
+
+  // Unique promo types for filter dropdown
+  const promoTypes = useMemo(() => {
+    const types = new Set<string>();
+    posFilteredPromotions.forEach(p => types.add(p.type));
+    return Array.from(types).sort();
+  }, [posFilteredPromotions]);
+
+  // Unique brands in promotions for filter
+  const promoBrands = useMemo(() => {
+    const bIds = new Set<string>();
+    posFilteredPromotions.forEach(p => {
+      if (p.brandId) bIds.add(p.brandId);
+    });
+    return brands.filter(b => bIds.has(b.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [posFilteredPromotions, brands]);
+
+  const hasActiveFilters = filterBrand !== "__all__" || filterType !== "__all__" || filterStartDate || filterEndDate;
+
+  const clearFilters = () => {
+    setFilterBrand("__all__");
+    setFilterType("__all__");
+    setFilterStartDate("");
+    setFilterEndDate("");
+  };
+
+  const collapseAll = () => { setPromoL1Open(false); setPromoL2Open(false); setIncentivesOpen(false); };
+  const expandAll = () => { setPromoL1Open(true); setPromoL2Open(true); setIncentivesOpen(true); };
 
   // Incentive schemes
   const currentMonth = selectedDate?.substring(0, 7) || new Date().toISOString().substring(0, 7);
@@ -379,15 +442,117 @@ export default function BAEntry() {
           </Card>
         )}
 
+        {/* Promotion Filter Bar + Collapse/Expand */}
+        {selectedCounter && posFilteredPromotions.length > 0 && (
+          <div className="space-y-2">
+            {/* Toggle row: filter button + collapse/expand */}
+            <div className="flex items-center justify-between">
+              <Button
+                variant={showFilters ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => setShowFilters(!showFilters)}
+              >
+                <Filter className="w-3 h-3" />
+                {showFilters ? "Hide Filters" : "Filters"}
+                {hasActiveFilters && (
+                  <span className="ml-1 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center">
+                    {(filterBrand !== "__all__" ? 1 : 0) + (filterType !== "__all__" ? 1 : 0) + (filterStartDate ? 1 : 0) + (filterEndDate ? 1 : 0)}
+                  </span>
+                )}
+              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={expandAll}>
+                  <ChevronDown className="w-3 h-3 mr-1" /> Expand All
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={collapseAll}>
+                  <ChevronUp className="w-3 h-3 mr-1" /> Collapse All
+                </Button>
+              </div>
+            </div>
+
+            {/* Filter panel */}
+            {showFilters && (
+              <Card className="border-dashed">
+                <CardContent className="pt-3 pb-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Brand</label>
+                      <Select value={filterBrand} onValueChange={setFilterBrand}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="All Brands" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All Brands</SelectItem>
+                          {promoBrands.map(b => (
+                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Promotion Type</label>
+                      <Select value={filterType} onValueChange={setFilterType}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="All Types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All Types</SelectItem>
+                          {promoTypes.map(t => (
+                            <SelectItem key={t} value={t}>{t}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Start Date</label>
+                      <Input
+                        type="date"
+                        className="h-8 text-xs"
+                        value={filterStartDate}
+                        onChange={(e) => setFilterStartDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">End Date</label>
+                      <Input
+                        type="date"
+                        className="h-8 text-xs"
+                        value={filterEndDate}
+                        onChange={(e) => setFilterEndDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  {hasActiveFilters && (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={clearFilters}>
+                      <X className="w-3 h-3 mr-1" /> Clear Filters
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
         {/* Active Promotions — Layer 1 (Brand) */}
         {selectedCounter && filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length > 0 && (
+          <Collapsible open={promoL1Open} onOpenChange={setPromoL1Open}>
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="pt-3 pb-3">
-              <div className="flex items-center gap-2 mb-3">
-                <Gift className="w-4 h-4 text-primary" />
-                <span className="text-sm font-semibold">Active Promotions</span>
-              </div>
-              <div className="space-y-3">
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center justify-between w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <Gift className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-semibold">Active Promotions</span>
+                    <span className="text-xs text-muted-foreground">({filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length})</span>
+                  </div>
+                  {promoL1Open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+              <div className="space-y-3 mt-3">
                 {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
@@ -460,19 +625,29 @@ export default function BAEntry() {
                   );
                 })}
               </div>
+              </CollapsibleContent>
             </CardContent>
           </Card>
+          </Collapsible>
         )}
 
         {/* Active Promotions — Layer 2 (Counter/Shop) in blue */}
         {selectedCounter && filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length > 0 && (
+          <Collapsible open={promoL2Open} onOpenChange={setPromoL2Open}>
           <Card className="border-blue-300/50 dark:border-blue-700/50 bg-blue-50/60 dark:bg-blue-950/30">
             <CardContent className="pt-3 pb-3">
-              <div className="flex items-center gap-2 mb-3">
-                <Gift className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span className="text-sm font-semibold text-blue-800 dark:text-blue-200">Counter / Shop Promotions</span>
-              </div>
-              <div className="space-y-3">
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center justify-between w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <Gift className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <span className="text-sm font-semibold text-blue-800 dark:text-blue-200">Counter / Shop Promotions</span>
+                    <span className="text-xs text-muted-foreground">({filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length})</span>
+                  </div>
+                  {promoL2Open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+              <div className="space-y-3 mt-3">
                 {filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
@@ -496,8 +671,10 @@ export default function BAEntry() {
                   );
                 })}
               </div>
+              </CollapsibleContent>
             </CardContent>
           </Card>
+          </Collapsible>
         )}
 
         {/* Monthly Incentives */}
@@ -511,13 +688,21 @@ export default function BAEntry() {
           });
           if (filteredIncentives.length === 0) return null;
           return (
+          <Collapsible open={incentivesOpen} onOpenChange={setIncentivesOpen}>
           <Card className="border-amber-300/50 dark:border-amber-700/50 bg-amber-50/50 dark:bg-amber-950/20">
             <CardContent className="pt-3 pb-3">
-              <div className="flex items-center gap-2 mb-3">
-                <Trophy className="w-4 h-4 text-amber-600" />
-                <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">Monthly Incentives — {currentMonth}</span>
-              </div>
-              <div className="space-y-3">
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center justify-between w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">Monthly Incentives — {currentMonth}</span>
+                    <span className="text-xs text-muted-foreground">({filteredIncentives.length})</span>
+                  </div>
+                  {incentivesOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+              <div className="space-y-3 mt-3">
                 {filteredIncentives.map(scheme => {
                   const totalProgress = incentiveTotalEntries[scheme.id] ?? 0;
                   // Parse new fields
@@ -678,8 +863,10 @@ export default function BAEntry() {
                   );
                 })}
               </div>
+              </CollapsibleContent>
             </CardContent>
           </Card>
+          </Collapsible>
           );
         })()}
 

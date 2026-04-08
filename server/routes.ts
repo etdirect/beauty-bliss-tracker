@@ -538,6 +538,17 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // Per-store incentive progress for a given scheme
+  app.get("/api/incentive-progress-by-store", requireAuth, async (req, res) => {
+    try {
+      const month = req.query.month as string;
+      const schemeId = req.query.schemeId as string;
+      if (!month || !schemeId) return res.status(400).json({ error: "month and schemeId required" });
+      const progress = await storage.getIncentiveProgressByStore(month, schemeId);
+      res.json(progress);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   // === SIMULATOR PRODUCT LOOKUP (proxy to Promo Pricing Simulator) ===
   app.get("/api/simulator-products", requireManagement, async (req, res) => {
     try {
