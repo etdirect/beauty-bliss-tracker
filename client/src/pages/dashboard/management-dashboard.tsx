@@ -49,7 +49,7 @@ function dateRange(start: string, end: string): string[] {
   const d = new Date(start + "T00:00:00");
   const last = new Date(end + "T00:00:00");
   while (d <= last) {
-    dates.push(d.toISOString().split("T")[0]);
+    dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     d.setDate(d.getDate() + 1);
   }
   return dates;
@@ -214,8 +214,8 @@ export default function ManagementDashboard() {
     const ppS = new Date(ppE); ppS.setDate(ppS.getDate() - (days - 1));
     const fmt = (d: Date) => `${d.getDate()} ${MONTH_LABELS[d.getMonth()]}`;
     return {
-      ppStart: ppS.toISOString().split("T")[0],
-      ppEnd: ppE.toISOString().split("T")[0],
+      ppStart: `${ppS.getFullYear()}-${String(ppS.getMonth() + 1).padStart(2, "0")}-${String(ppS.getDate()).padStart(2, "0")}`,
+      ppEnd: `${ppE.getFullYear()}-${String(ppE.getMonth() + 1).padStart(2, "0")}-${String(ppE.getDate()).padStart(2, "0")}`,
       ppLabel: `${fmt(ppS)} – ${fmt(ppE)}`,
     };
   }, [timeTab, drStart, drEnd]);
