@@ -28,7 +28,7 @@ export default function BAEntry() {
   const { user, logout } = useAuth();
   const [selectedCounter, setSelectedCounter] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
+    (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })()
   );
   const [salesData, setSalesData] = useState<Record<string, { orders: number; units: number; amount: number; gwpCount: number }>>({});
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});

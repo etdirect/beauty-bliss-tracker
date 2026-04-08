@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   DollarSign, Tag, Package, TrendingUp, TrendingDown, CalendarClock,
-  Filter, ChevronDown, Layers, Download,
+  CalendarDays, Filter, ChevronDown, Layers, Download,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -66,6 +66,8 @@ function monthRange(startYM: string, endYM: string): string[] {
 }
 
 function daysInMonth(y: number, m: number) { return new Date(y, m, 0).getDate(); }
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // ─── Component ──────────────────────────────────────
 
@@ -260,6 +262,51 @@ export default function BrandDashboard() {
     if (lyTotal === 0) return null;
     return ((totalSales - lyTotal) / lyTotal) * 100;
   }, [timePeriod, monthlyYear, monthlyMonth, totalSales, sales, activeBrandIds, activeCounterIds]);
+
+  // ── Monthly Projection (range mode, single-month range) ──
+  const { lmStart: brandLmStart, lmEnd: brandLmEnd, lmLabel: brandLmLabel } = useMemo(() => {
+    if (timePeriod !== "range") return { lmStart: "", lmEnd: "", lmLabel: "" };
+    const s = new Date(rangeStart + "T00:00:00");
+    const y = s.getFullYear();
+    const m = s.getMonth(); // 0-indexed
+    const lmDate = new Date(y, m - 1, 1);
+    const ly = lmDate.getFullYear();
+    const lm = lmDate.getMonth() + 1; // 1-indexed
+    const lmDays = daysInMonth(ly, lm);
+    return {
+      lmStart: `${ly}-${String(lm).padStart(2, "0")}-01`,
+      lmEnd: `${ly}-${String(lm).padStart(2, "0")}-${String(lmDays).padStart(2, "0")}`,
+      lmLabel: `${MONTH_LABELS[lm - 1]} ${ly}`,
+    };
+  }, [timePeriod, rangeStart]);
+
+  const { data: brandLmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${brandLmStart}&endDate=${brandLmEnd}`],
+    enabled: timePeriod === "range" && !!brandLmStart,
+    staleTime: 30_000,
+  });
+
+  const brandLmTotalSales = useMemo(() => {
+    return brandLmSalesRaw
+      .filter((s) => activeBrandIds.has(s.brandId) && activeCounterIds.has(s.counterId))
+      .reduce((s, e) => s + e.amount, 0);
+  }, [brandLmSalesRaw, activeBrandIds, activeCounterIds]);
+
+  const brandProjection = useMemo(() => {
+    if (timePeriod !== "range") return null;
+    const s = new Date(rangeStart + "T00:00:00");
+    const e = new Date(rangeEnd + "T00:00:00");
+    if (s.getFullYear() !== e.getFullYear() || s.getMonth() !== e.getMonth()) return null;
+    const year = s.getFullYear();
+    const month = s.getMonth() + 1;
+    const daysElapsed = Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000) + 1);
+    const monthDays = daysInMonth(year, month);
+    const dailyRate = daysElapsed > 0 ? totalSales / daysElapsed : 0;
+    const projected = Math.round(dailyRate * monthDays);
+    const vsLM = brandLmTotalSales > 0 ? projected - brandLmTotalSales : null;
+    const vsLMPct = brandLmTotalSales > 0 ? ((projected - brandLmTotalSales) / brandLmTotalSales) * 100 : null;
+    return { year, month, daysElapsed, monthDays, dailyRate, projected, vsLM, vsLMPct, lmTotalSales: brandLmTotalSales };
+  }, [timePeriod, rangeStart, rangeEnd, totalSales, brandLmTotalSales]);
 
   // ── Active brand list for multi-line chart ────
   const activeBrandList = useMemo(() => {
@@ -1045,6 +1092,54 @@ export default function BrandDashboard() {
           </>
         )}
       </div>
+
+      {/* ── Monthly Projection Card ─────────────────────────────────── */}
+      {brandProjection && (
+        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CalendarDays className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
+                Monthly Projection — {MONTH_LABELS[brandProjection.month - 1]} {brandProjection.year}
+              </span>
+              <span className="text-xs text-muted-foreground ml-1">
+                (based on {brandProjection.daysElapsed} of {brandProjection.monthDays} days)
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  {rangeStart.slice(8)} – {rangeEnd.slice(8)} {MONTH_LABELS[brandProjection.month - 1]}
+                </p>
+                <p className="text-lg font-bold">{fmtCurrency(totalSales)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Daily Run Rate</p>
+                <p className="text-lg font-bold">{fmtCurrency(Math.round(brandProjection.dailyRate))}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Projected Full Month</p>
+                <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{fmtCurrency(brandProjection.projected)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">vs {brandLmLabel} Actual</p>
+                {brandProjection.vsLM !== null ? (
+                  <div className={brandProjection.vsLM >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                    <p className="text-lg font-bold">
+                      {brandProjection.vsLM >= 0 ? "▲" : "▼"} {fmtCurrency(Math.abs(brandProjection.vsLM))}
+                    </p>
+                    <p className="text-xs font-medium">
+                      {brandProjection.vsLMPct! >= 0 ? "+" : ""}{brandProjection.vsLMPct!.toFixed(1)}% vs {fmtCurrency(brandProjection.lmTotalSales)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No {brandLmLabel} data</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Sales Trend by Brand (multi-line) */}
       <Card>

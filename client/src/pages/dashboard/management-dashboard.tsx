@@ -34,7 +34,10 @@ function fmtCurrency(v: number) {
   return `HK$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-function todayStr() { return new Date().toISOString().split("T")[0]; }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function monthStartStr() {
   const d = new Date();
@@ -1094,12 +1097,12 @@ export default function ManagementDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="pb-2 font-medium">Counter</th>
-                    <th className="pb-2 font-medium text-right">Sales</th>
-                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap">vs Prev Period</th>}
-                    <th className="pb-2 font-medium text-right">Units</th>
-                    <th className="pb-2 font-medium text-right">ATV</th>
-                    <th className="pb-2 font-medium text-right">UPT</th>
+                    <th className="pb-2 font-medium text-left">Counter</th>
+                    <th className="pb-2 font-medium text-right w-[120px]">Sales</th>
+                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>}
+                    <th className="pb-2 font-medium text-right w-[70px]">Units</th>
+                    <th className="pb-2 font-medium text-right w-[90px]">ATV</th>
+                    <th className="pb-2 font-medium text-right w-[60px]">UPT</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1110,10 +1113,10 @@ export default function ManagementDashboard() {
                     const isUp = delta >= 0;
                     return (
                       <tr key={row.name} className="border-b last:border-0">
-                        <td className="py-2">{row.name}</td>
-                        <td className="py-2 text-right font-medium">{fmtCurrency(row.sales)}</td>
+                        <td className="py-2 text-left">{row.name}</td>
+                        <td className="py-2 text-right font-medium w-[120px]">{fmtCurrency(row.sales)}</td>
                         {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          <td className={`py-2 text-right text-xs w-[130px] ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
                               <span className="text-muted-foreground">New</span>
                             ) : (
@@ -1124,9 +1127,9 @@ export default function ManagementDashboard() {
                             )}
                           </td>
                         )}
-                        <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                        <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
-                        <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
+                        <td className="py-2 text-right w-[70px]">{row.units.toLocaleString()}</td>
+                        <td className="py-2 text-right w-[90px]">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
+                        <td className="py-2 text-right w-[60px]">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
                       </tr>
                     );
                   })}
@@ -1139,10 +1142,10 @@ export default function ManagementDashboard() {
                     const isUp = totDelta >= 0;
                     return (
                       <tr className="border-t-2 font-semibold bg-muted/30">
-                        <td className="py-2">Total</td>
-                        <td className="py-2 text-right">{fmtCurrency(totSales)}</td>
+                        <td className="py-2 text-left">Total</td>
+                        <td className="py-2 text-right w-[120px]">{fmtCurrency(totSales)}</td>
                         {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          <td className={`py-2 text-right text-xs w-[130px] ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {totPP > 0 ? (
                               <>
                                 <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
@@ -1151,9 +1154,9 @@ export default function ManagementDashboard() {
                             ) : "—"}
                           </td>
                         )}
-                        <td className="py-2 text-right">{counterTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
-                        <td className="py-2 text-right">—</td>
-                        <td className="py-2 text-right">—</td>
+                        <td className="py-2 text-right w-[70px]">{counterTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
+                        <td className="py-2 text-right w-[90px]">—</td>
+                        <td className="py-2 text-right w-[60px]">—</td>
                       </tr>
                     );
                   })()}
@@ -1184,12 +1187,12 @@ export default function ManagementDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="pb-2 font-medium">Brand</th>
-                    <th className="pb-2 font-medium text-right">Sales</th>
-                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap">vs Prev Period</th>}
-                    <th className="pb-2 font-medium text-right">Units</th>
-                    <th className="pb-2 font-medium text-right">ATV</th>
-                    <th className="pb-2 font-medium text-right">UPT</th>
+                    <th className="pb-2 font-medium text-left">Brand</th>
+                    <th className="pb-2 font-medium text-right w-[120px]">Sales</th>
+                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>}
+                    <th className="pb-2 font-medium text-right w-[70px]">Units</th>
+                    <th className="pb-2 font-medium text-right w-[90px]">ATV</th>
+                    <th className="pb-2 font-medium text-right w-[60px]">UPT</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1200,10 +1203,10 @@ export default function ManagementDashboard() {
                     const isUp = delta >= 0;
                     return (
                       <tr key={row.name} className="border-b last:border-0">
-                        <td className="py-2">{row.name}</td>
-                        <td className="py-2 text-right font-medium">{fmtCurrency(row.sales)}</td>
+                        <td className="py-2 text-left">{row.name}</td>
+                        <td className="py-2 text-right font-medium w-[120px]">{fmtCurrency(row.sales)}</td>
                         {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          <td className={`py-2 text-right text-xs w-[130px] ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
                               <span className="text-muted-foreground">New</span>
                             ) : (
@@ -1214,9 +1217,9 @@ export default function ManagementDashboard() {
                             )}
                           </td>
                         )}
-                        <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                        <td className="py-2 text-right">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
-                        <td className="py-2 text-right">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
+                        <td className="py-2 text-right w-[70px]">{row.units.toLocaleString()}</td>
+                        <td className="py-2 text-right w-[90px]">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
+                        <td className="py-2 text-right w-[60px]">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
                       </tr>
                     );
                   })}
@@ -1229,10 +1232,10 @@ export default function ManagementDashboard() {
                     const isUp = totDelta >= 0;
                     return (
                       <tr className="border-t-2 font-semibold bg-muted/30">
-                        <td className="py-2">Total</td>
-                        <td className="py-2 text-right">{fmtCurrency(totSales)}</td>
+                        <td className="py-2 text-left">Total</td>
+                        <td className="py-2 text-right w-[120px]">{fmtCurrency(totSales)}</td>
                         {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          <td className={`py-2 text-right text-xs w-[130px] ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {totPP > 0 ? (
                               <>
                                 <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
@@ -1241,9 +1244,9 @@ export default function ManagementDashboard() {
                             ) : "—"}
                           </td>
                         )}
-                        <td className="py-2 text-right">{brandTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
-                        <td className="py-2 text-right">—</td>
-                        <td className="py-2 text-right">—</td>
+                        <td className="py-2 text-right w-[70px]">{brandTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
+                        <td className="py-2 text-right w-[90px]">—</td>
+                        <td className="py-2 text-right w-[60px]">—</td>
                       </tr>
                     );
                   })()}
