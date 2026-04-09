@@ -98,6 +98,19 @@ export const insertBrandPosAvailabilitySchema = createInsertSchema(brandPosAvail
 export type InsertBrandPosAvailability = z.infer<typeof insertBrandPosAvailabilitySchema>;
 export type BrandPosAvailability = typeof brandPosAvailability.$inferSelect;
 
+// === POS Daily Figures (POS system official sales vs BA-recorded) ===
+export const posDailyFigures = pgTable("pos_daily_figures", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  counterId: varchar("counter_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  posFigure: real("pos_figure").notNull().default(0), // 對數紙 figure from POS system
+  submittedBy: varchar("submitted_by"), // userId of who entered this (null = imported)
+});
+
+export const insertPosDailyFigureSchema = createInsertSchema(posDailyFigures).omit({ id: true });
+export type InsertPosDailyFigure = z.infer<typeof insertPosDailyFigureSchema>;
+export type PosDailyFigure = typeof posDailyFigures.$inferSelect;
+
 // Daily Sales Entries
 export const salesEntries = pgTable("sales_entries", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -199,6 +212,7 @@ export const batchSalesSubmissionSchema = z.object({
     gwpGiven: z.number().min(0),
     notes: z.string().optional(),
   })).optional(),
+  posFigure: z.number().min(0).optional(), // POS system daily figure (對數紙)
 });
 
 export type BatchSalesSubmission = z.infer<typeof batchSalesSubmissionSchema>;

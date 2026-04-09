@@ -4,7 +4,7 @@ import { useAuth } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
-  BarChart3, Tag, Settings, Gift, Trophy,
+  BarChart3, Tag, Settings, Gift, Trophy, FileSpreadsheet,
   LayoutDashboard, Moon, Sun, LogOut, Package, Menu,
 } from "lucide-react";
 
@@ -12,6 +12,7 @@ import ManagementDashboard from "./dashboard/management-dashboard";
 import BrandDashboard from "./dashboard/brand-dashboard";
 import Promotions from "./dashboard/promotions";
 import IncentiveTracking from "./dashboard/incentive-tracking";
+import PosReconciliation from "./dashboard/pos-reconciliation";
 import SettingsPage from "./dashboard/settings";
 
 export const CHART_COLORS = [
@@ -27,6 +28,7 @@ const navItems = [
   { path: "/dashboard/brands", label: "Brand Analytics", icon: Tag },
   { path: "/dashboard/promotions", label: "Promotions", icon: Gift },
   { path: "/dashboard/incentives", label: "Incentive Tracking", icon: Trophy },
+  { path: "/dashboard/reconciliation", label: "POS Reconciliation", icon: FileSpreadsheet },
   { path: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
@@ -38,6 +40,7 @@ export default function Dashboard() {
   const [isBrands] = useRoute("/dashboard/brands");
   const [isPromos] = useRoute("/dashboard/promotions");
   const [isIncentives] = useRoute("/dashboard/incentives");
+  const [isReconciliation] = useRoute("/dashboard/reconciliation");
   const [isSettings] = useRoute("/dashboard/settings");
 
   if (!user || user.role !== "management") {
@@ -68,6 +71,7 @@ export default function Dashboard() {
               (item.path === "/dashboard/brands" && isBrands) ||
               (item.path === "/dashboard/promotions" && isPromos) ||
               (item.path === "/dashboard/incentives" && isIncentives) ||
+              (item.path === "/dashboard/reconciliation" && isReconciliation) ||
               (item.path === "/dashboard/settings" && isSettings);
             return (
               <Link key={item.path} href={item.path}>
@@ -145,6 +149,7 @@ export default function Dashboard() {
           {isBrands && <BrandDashboard />}
           {isPromos && <Promotions />}
           {isIncentives && <IncentiveTracking />}
+          {isReconciliation && <PosReconciliation />}
           {isSettings && <SettingsPage />}
         </main>
       </div>

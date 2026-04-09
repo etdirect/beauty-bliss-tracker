@@ -12,6 +12,7 @@ import {
   type BrandPosAvailability,
   type Category, type InsertCategory,
   type IncentiveScheme, type InsertIncentiveScheme,
+  type PosDailyFigure, type InsertPosDailyFigure,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
@@ -100,6 +101,10 @@ export interface IStorage {
   getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number>;
   upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number, posId?: string): Promise<void>;
   getIncentiveProgressByStore(month: string, schemeId: string): Promise<Record<string, number>>;
+
+  // POS Daily Figures
+  getPosDailyFigures(filters: { counterId?: string; startDate?: string; endDate?: string; date?: string }): Promise<PosDailyFigure[]>;
+  upsertPosDailyFigure(counterId: string, date: string, posFigure: number, submittedBy?: string): Promise<PosDailyFigure>;
 }
 
 function makePromotion(id: string, data: InsertPromotion): Promotion {
@@ -343,6 +348,15 @@ export class PgStorage implements IStorage {
         date TEXT NOT NULL,
         value REAL NOT NULL DEFAULT 0,
         UNIQUE(scheme_id, user_id, date)
+      );
+
+      CREATE TABLE IF NOT EXISTS pos_daily_figures (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        counter_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        pos_figure REAL NOT NULL DEFAULT 0,
+        submitted_by TEXT,
+        UNIQUE(counter_id, date)
       );
     `);
     console.log("[pg] Tables ensured");
@@ -725,6 +739,10 @@ export class PgStorage implements IStorage {
           });
         }
       }
+    }
+    // POS system figure (optional)
+    if (submission.posFigure != null && submission.posFigure > 0) {
+      await this.upsertPosDailyFigure(submission.counterId, submission.date, submission.posFigure, submittedBy ?? undefined);
     }
   }
   async deleteSalesEntry(id: string): Promise<void> {
@@ -1140,6 +1158,38 @@ export class PgStorage implements IStorage {
     }
     return result;
   }
+
+  // POS Daily Figures
+  async getPosDailyFigures(filters: { counterId?: string; startDate?: string; endDate?: string; date?: string }): Promise<PosDailyFigure[]> {
+    let sql = `SELECT * FROM pos_daily_figures WHERE 1=1`;
+    const params: any[] = [];
+    let idx = 1;
+    if (filters.counterId) { sql += ` AND counter_id = $${idx++}`; params.push(filters.counterId); }
+    if (filters.date) { sql += ` AND date = $${idx++}`; params.push(filters.date); }
+    if (filters.startDate) { sql += ` AND date >= $${idx++}`; params.push(filters.startDate); }
+    if (filters.endDate) { sql += ` AND date <= $${idx++}`; params.push(filters.endDate); }
+    sql += ` ORDER BY date ASC`;
+    const { rows } = await this.q(sql, params);
+    return rows.map((r: any) => ({
+      id: r.id,
+      counterId: r.counter_id,
+      date: r.date,
+      posFigure: Number(r.pos_figure),
+      submittedBy: r.submitted_by,
+    }));
+  }
+
+  async upsertPosDailyFigure(counterId: string, date: string, posFigure: number, submittedBy?: string): Promise<PosDailyFigure> {
+    const { rows } = await this.q(
+      `INSERT INTO pos_daily_figures (id, counter_id, date, pos_figure, submitted_by)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4)
+       ON CONFLICT (counter_id, date) DO UPDATE SET pos_figure = $3, submitted_by = $4
+       RETURNING *`,
+      [counterId, date, posFigure, submittedBy || null]
+    );
+    const r = rows[0];
+    return { id: r.id, counterId: r.counter_id, date: r.date, posFigure: Number(r.pos_figure), submittedBy: r.submitted_by };
+  }
 }
 
 // ─── In-Memory Storage (fallback for local dev) ─────────────────
@@ -1554,6 +1604,14 @@ export class MemStorage implements IStorage {
 
   async getIncentiveProgressByStore(_month: string, _schemeId: string): Promise<Record<string, number>> {
     return {};
+  }
+
+  async getPosDailyFigures(_filters: { counterId?: string; startDate?: string; endDate?: string; date?: string }): Promise<PosDailyFigure[]> {
+    return [];
+  }
+
+  async upsertPosDailyFigure(counterId: string, date: string, posFigure: number, submittedBy?: string): Promise<PosDailyFigure> {
+    return { id: randomUUID(), counterId, date, posFigure, submittedBy: submittedBy || null };
   }
 }
 

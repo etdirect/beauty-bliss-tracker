@@ -34,6 +34,7 @@ export default function BAEntry() {
   const [salesData, setSalesData] = useState<Record<string, { orders: number; units: number; amount: number; gwpCount: number }>>({});
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [posFigure, setPosFigure] = useState<string>("");
 
   // Promotion filter state
   const [filterBrand, setFilterBrand] = useState<string>("__all__");
@@ -186,6 +187,26 @@ export default function BAEntry() {
     enabled: !!selectedCounter && !!selectedDate,
   });
 
+  // Fetch existing POS daily figure
+  const { data: existingPosFigures = [] } = useQuery<{ id: string; counterId: string; date: string; posFigure: number }[]>({
+    queryKey: ["/api/pos-daily-figures", selectedCounter, selectedDate],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/pos-daily-figures?counterId=${selectedCounter}&date=${selectedDate}`);
+      return res.json();
+    },
+    enabled: !!selectedCounter && !!selectedDate,
+    staleTime: 30_000,
+  });
+
+  // Load existing POS figure into input when data arrives
+  useEffect(() => {
+    if (existingPosFigures.length > 0) {
+      setPosFigure(String(existingPosFigures[0].posFigure));
+    } else {
+      setPosFigure("");
+    }
+  }, [existingPosFigures]);
+
   // Filter existing sales: for non-management, only show entries they submitted (or all if canViewHistory)
   const myExistingEntries = existingSales.filter(e => {
     if (isManagement) return true;
@@ -232,17 +253,20 @@ export default function BAEntry() {
           notes: promoData[p.id]?.notes || "",
         }));
 
+      const posVal = posFigure ? parseFloat(posFigure) : undefined;
       await apiRequest("POST", "/api/sales/batch", {
         counterId: selectedCounter,
         date: selectedDate,
         entries,
         promotionResults,
+        posFigure: posVal && posVal > 0 ? posVal : undefined,
       });
     },
     onSuccess: () => {
       setSubmitted(true);
       toast({ title: "Sales submitted", description: "Your daily sales have been recorded." });
       queryClient.invalidateQueries({ queryKey: ["/api/sales"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pos-daily-figures"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -410,6 +434,29 @@ export default function BAEntry() {
                 data-testid="input-date"
               />
             </div>
+            {selectedCounter && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium flex items-center gap-1.5 text-muted-foreground">
+                  <Store className="w-3.5 h-3.5" /> POS System Sales (optional)
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">HK$</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="Enter POS figure"
+                    value={posFigure}
+                    onChange={(e) => setPosFigure(e.target.value)}
+                    className="h-9"
+                    data-testid="input-pos-figure"
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  對數紙金額 — POS system sales figure from the sales channel
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 

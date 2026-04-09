@@ -3,6 +3,19 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
+import multer from "multer";
+import * as XLSX from "xlsx";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// Brand code mapping for daily report import
+const BRAND_CODE_MAP: Record<string, string> = {
+  A18: "Addmino18", AD: "Adopt", ASD: "ASDceuticals", BB: "Beauty Bliss",
+  EE: "elvis+elvin", EM: "Embryolisse", GE: "Geske", KL: "Klorane",
+  LA: "Lador", NE: "Neutraderm", NOVE: "Novexpert", PE: "Pestlo",
+  PH: "Phyto", SAM: "SAMPAR", TA: "Talika", XP: "Xposome",
+  RF: "Rene Furterer",
+};
 
 // Extend express-session types
 declare module "express-session" {
@@ -549,6 +562,15 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // === POS DAILY FIGURES ===
+  app.get("/api/pos-daily-figures", requireAuth, async (req, res) => {
+    try {
+      const { counterId, date, startDate, endDate } = req.query as Record<string, string>;
+      const figures = await storage.getPosDailyFigures({ counterId, date, startDate, endDate });
+      res.json(figures);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   // === SIMULATOR PRODUCT LOOKUP (proxy to Promo Pricing Simulator) ===
   app.get("/api/simulator-products", requireManagement, async (req, res) => {
     try {
@@ -713,6 +735,148 @@ export async function registerRoutes(
 
       res.json({ updated, skipped, newEntries: notFound.length, total: records.length });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === DAILY REPORT EXCEL IMPORT ===
+  app.post("/api/import/daily-report", requireManagement, upload.single("file"), async (req: any, res) => {
+    try {
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+      const month = req.body.month as string; // e.g. "2026-01"
+      if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: "Month required in YYYY-MM format" });
+      }
+
+      const wb = XLSX.read(file.buffer, { type: "buffer" });
+      const posLocations = await storage.getPosLocations();
+      const brands = await storage.getBrands();
+
+      const skipSheets = ["COUNTER TOTAL", "BRAND"];
+      const posSheets = wb.SheetNames.filter(s => !skipSheets.includes(s.toUpperCase()));
+
+      let imported = 0;
+      let posFiguresImported = 0;
+      let skippedRows = 0;
+      const missingBrands: string[] = [];
+      const missingPos: string[] = [];
+      const sheetResults: Record<string, { sales: number; posFigure: number }> = {};
+
+      for (const sheetName of posSheets) {
+        const ws = wb.Sheets[sheetName];
+        if (!ws) continue;
+
+        // Parse sheet name: StoreCode_POS_Channel
+        const parts = sheetName.split("_");
+        if (parts.length < 3) { skippedRows++; continue; }
+        const [_storeCode, posCode, channel] = parts;
+
+        // Find POS location
+        let pos = posLocations.find(p =>
+          p.storeCode.toUpperCase() === posCode.toUpperCase() &&
+          p.salesChannel.toUpperCase() === channel.toUpperCase()
+        );
+        if (!pos) {
+          const key = `${channel}/${posCode}`;
+          if (!missingPos.includes(key)) missingPos.push(key);
+          // Auto-create inactive POS
+          pos = await storage.createPosLocation({
+            salesChannel: channel, storeCode: posCode,
+            storeName: `${posCode} (auto-created)`, isActive: false,
+          });
+          posLocations.push(pos);
+        }
+
+        let sheetSales = 0;
+        let sheetPosFigure = 0;
+
+        // Helper to read cell value
+        const cell = (r: number, c: number): any => {
+          const addr = XLSX.utils.encode_cell({ r: r - 1, c: c - 1 }); // 1-based to 0-based
+          return ws[addr]?.v ?? null;
+        };
+
+        // Parse brand rows (rows 4-60, each brand = 3 rows: 單數/每日生意/累積生意)
+        let r = 4;
+        while (r <= 60) {
+          const brandCode = cell(r, 1);
+          const rowType = cell(r, 2);
+
+          if (brandCode && rowType === "單數") {
+            const code = String(brandCode).trim();
+            const brandName = BRAND_CODE_MAP[code];
+            if (!brandName) {
+              if (!missingBrands.includes(code)) missingBrands.push(code);
+              r += 3;
+              continue;
+            }
+
+            const brand = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
+            if (!brand) {
+              if (!missingBrands.includes(brandName)) missingBrands.push(brandName);
+              r += 3;
+              continue;
+            }
+
+            // Parse daily data: Col C (3) = Day 1 through Col AG (33) = Day 31
+            for (let day = 1; day <= 31; day++) {
+              const col = day + 2; // C=3 for day 1
+              const invoices = Number(cell(r, col)) || 0;
+              const dailySales = Number(cell(r + 1, col)) || 0;
+
+              if (invoices > 0 || dailySales > 0) {
+                const dateStr = `${month}-${String(day).padStart(2, "0")}`;
+                await storage.upsertSalesEntry({
+                  counterId: pos!.id,
+                  brandId: brand.id,
+                  date: dateStr,
+                  orders: invoices,
+                  units: 0,
+                  amount: dailySales,
+                  gwpCount: 0,
+                  submittedBy: null,
+                });
+                imported++;
+                sheetSales += dailySales;
+              }
+            }
+            r += 3;
+          } else {
+            r += 1;
+          }
+        }
+
+        // Parse POS system figure (row 62): 對數紙
+        const row62Label = String(cell(62, 1) || "");
+        if (row62Label.includes("對數紙")) {
+          for (let day = 1; day <= 31; day++) {
+            const col = day + 2;
+            const posFig = Number(cell(62, col)) || 0;
+            if (posFig > 0) {
+              const dateStr = `${month}-${String(day).padStart(2, "0")}`;
+              await storage.upsertPosDailyFigure(pos!.id, dateStr, posFig);
+              posFiguresImported++;
+              sheetPosFigure += posFig;
+            }
+          }
+        }
+
+        sheetResults[sheetName] = { sales: sheetSales, posFigure: sheetPosFigure };
+      }
+
+      res.json({
+        imported,
+        posFiguresImported,
+        skippedRows,
+        missingBrands,
+        missingPos,
+        sheetsProcessed: Object.keys(sheetResults).length,
+        sheetResults,
+      });
+    } catch (err: any) {
+      console.error("[import] Daily report error:", err);
       res.status(500).json({ error: err.message });
     }
   });
