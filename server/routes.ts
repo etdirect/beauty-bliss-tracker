@@ -391,11 +391,25 @@ export async function registerRoutes(
       const existing = await storage.getPromotions();
 
       // Check 1: exact match by sourceScenarioId (same push, re-pushed)
+      // Update ALL promos with this sourceScenarioId+layer (covers multi-location pushes)
       if (data.sourceScenarioId) {
-        const match = existing.find(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
-        if (match) {
-          const updated = await storage.updatePromotion(match.id, data);
-          return res.json({ action: "updated", promotion: updated });
+        const matches = existing.filter(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
+        if (matches.length > 0) {
+          const updateFields: any = {};
+          if (data.name) updateFields.name = data.name;
+          if (data.startDate) updateFields.startDate = data.startDate;
+          if (data.endDate) updateFields.endDate = data.endDate;
+          if (data.description) updateFields.description = data.description;
+          if (data.descriptionZh) updateFields.descriptionZh = data.descriptionZh;
+          if (data.mechanics) updateFields.mechanics = data.mechanics;
+          if (data.mechanicsZh) updateFields.mechanicsZh = data.mechanicsZh;
+          if (data.isActive !== undefined) updateFields.isActive = data.isActive;
+          if (data.brandId) updateFields.brandId = data.brandId;
+          let lastUpdated;
+          for (const match of matches) {
+            lastUpdated = await storage.updatePromotion(match.id, { ...match, ...updateFields });
+          }
+          return res.json({ action: "updated", updatedCount: matches.length, promotion: lastUpdated });
         }
       }
 
