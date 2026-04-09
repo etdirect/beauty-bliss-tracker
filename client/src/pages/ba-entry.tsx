@@ -612,14 +612,17 @@ export default function BAEntry() {
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {brandName && (
+                          <span className="text-xs font-bold text-foreground/80">{brandName}</span>
+                        )}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
                         {promo.startDate && promo.endDate && (
                           <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
-                        <span className="font-medium text-sm break-words">{brandName ? `[${brandName}]` : ""}{promo.descriptionZh || promo.name}</span>
                       </div>
+                      <div className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</div>
                       {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
                           {promo.mechanicsZh || promo.mechanics}
