@@ -823,7 +823,8 @@ export async function registerRoutes(
             // Parse daily data: Col C (3) = Day 1 through Col AG (33) = Day 31
             for (let day = 1; day <= 31; day++) {
               const col = day + 2; // C=3 for day 1
-              const invoices = Number(cell(r, col)) || 0;
+              const rawInvoices = Number(cell(r, col)) || 0;
+              const invoices = Math.round(rawInvoices); // ensure integer
               const dailySales = Number(cell(r + 1, col)) || 0;
 
               if (invoices > 0 || dailySales > 0) {
