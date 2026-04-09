@@ -363,7 +363,7 @@ export default function PosReconciliation() {
                       <tbody>
                         {r.dailyData.map(dd => (
                           <tr key={dd.date} className="border-b last:border-0">
-                            <td className="py-1">{dd.date}</td>
+                            <td className="py-1">{(() => { const [y,m,d] = dd.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
                             <td className="py-1 text-right font-mono">{fmtCurrency(dd.baSales)}</td>
                             <td className="py-1 text-right font-mono">{dd.posFigure > 0 ? fmtCurrency(dd.posFigure) : "—"}</td>
                             <td className={`py-1 text-right font-mono ${dd.variance > 0 ? "text-amber-600" : dd.variance < 0 ? "text-red-600" : ""}`}>

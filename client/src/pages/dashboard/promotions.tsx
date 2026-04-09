@@ -386,7 +386,7 @@ export default function Promotions() {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <span className="text-xs text-muted-foreground hidden sm:inline">
-                        {promo.startDate} — {promo.endDate}
+                        {(() => { const f = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}/${y}`; }; return `${f(promo.startDate)} — ${f(promo.endDate)}`; })()}
                       </span>
                       {isActive ? (
                         <Button
