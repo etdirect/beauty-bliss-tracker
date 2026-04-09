@@ -613,7 +613,7 @@ export default function BAEntry() {
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         {brandName && (
-                          <span className="text-xs font-bold text-foreground/80">{brandName}</span>
+                          <span className="text-sm font-bold text-foreground/80">{brandName}</span>
                         )}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
