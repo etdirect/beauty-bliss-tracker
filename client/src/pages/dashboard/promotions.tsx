@@ -200,7 +200,7 @@ export default function Promotions() {
   const activeCount = filtered.filter(p => getStatus(p) === "active").length;
   const brandCount = new Set(filtered.map(p => p.brandId).filter(Boolean)).size;
 
-  const renderCard = (p: Promotion) => {
+  const renderCard = (p: Promotion, channelFilter?: string) => {
     const brand = p.brandId ? brandMap.get(p.brandId) : null;
     const status = getStatus(p);
     const stats = getPromoStats(p);
@@ -208,7 +208,11 @@ export default function Promotions() {
     const layerLabel = layer === "brand" ? "L1" : layer === "counter" ? "L2" : "L3";
     const typeColor = PROMO_TYPE_COLORS[p.type] || PROMO_TYPE_COLORS["Other"];
     const layerColor = LAYER_COLORS[layer] || LAYER_COLORS.brand;
-    const locParts = p.shopLocation ? abbreviateLocation(p.shopLocation) : [];
+    let locParts = p.shopLocation ? abbreviateLocation(p.shopLocation) : [];
+    // When viewing By Channel, only show locations matching this channel group
+    if (channelFilter && locParts.length > 0) {
+      locParts = locParts.filter(lp => lp.channel === channelFilter.toUpperCase() || lp.text.toUpperCase().startsWith(channelFilter.substring(0, 3).toUpperCase()));
+    }
 
     return (
       <div key={p.id} className={`flex items-start gap-2 py-2.5 text-sm ${status === "ended" || status === "inactive" ? "opacity-50" : ""}`}>
@@ -387,7 +391,7 @@ export default function Promotions() {
               </CardHeader>
               <CardContent className="pt-0 pb-3">
                 <div className="divide-y">
-                  {group.items.map(renderCard)}
+                  {group.items.map(p => renderCard(p, groupBy === "channel" ? group.label : undefined))}
                 </div>
               </CardContent>
             </Card>
