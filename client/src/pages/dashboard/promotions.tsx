@@ -40,10 +40,10 @@ function fmtDate(d: string) {
 }
 
 const CHANNEL_COLORS: Record<string, string> = {
-  LOGON: "text-blue-600 dark:text-blue-400",
-  AEON: "text-emerald-600 dark:text-emerald-400",
-  SOGO: "text-purple-600 dark:text-purple-400",
-  FACESSS: "text-amber-600 dark:text-amber-400",
+  LOGON: "text-emerald-600 dark:text-emerald-400",
+  AEON: "text-red-600 dark:text-red-400",
+  SOGO: "text-blue-600 dark:text-blue-400",
+  FACESSS: "text-pink-600 dark:text-pink-400",
 };
 
 function abbreviateLocation(loc: string): { text: string; channel: string }[] {
