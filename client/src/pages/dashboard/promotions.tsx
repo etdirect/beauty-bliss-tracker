@@ -39,11 +39,18 @@ function fmtDate(d: string) {
   try { const [y, m, dd] = d.split("-"); return `${dd}/${m}/${y}`; } catch { return d; }
 }
 
-function abbreviateLocation(loc: string): string {
+const CHANNEL_COLORS: Record<string, string> = {
+  LOGON: "text-blue-600 dark:text-blue-400",
+  AEON: "text-emerald-600 dark:text-emerald-400",
+  SOGO: "text-purple-600 dark:text-purple-400",
+  FACESSS: "text-amber-600 dark:text-amber-400",
+};
+
+function abbreviateLocation(loc: string): { text: string; channel: string }[] {
   return loc.split(",").map(s => {
     const t = s.trim();
     const si = t.indexOf("/");
-    if (si === -1) return t;
+    if (si === -1) return { text: t, channel: t.toUpperCase() };
     const ch = t.substring(0, si).trim();
     const door = t.substring(si + 1).trim();
     const chShort = ch.substring(0, 3).toUpperCase();
@@ -51,8 +58,8 @@ function abbreviateLocation(loc: string): string {
     const doorShort = doorWords.length > 1
       ? doorWords.map(w => w[0]).join("").toUpperCase()
       : door.substring(0, 3).toUpperCase();
-    return `${chShort}/${doorShort}`;
-  }).join(", ");
+    return { text: `${chShort}/${doorShort}`, channel: ch.toUpperCase() };
+  });
 }
 
 export default function Promotions() {
@@ -201,7 +208,7 @@ export default function Promotions() {
     const layerLabel = layer === "brand" ? "L1" : layer === "counter" ? "L2" : "L3";
     const typeColor = PROMO_TYPE_COLORS[p.type] || PROMO_TYPE_COLORS["Other"];
     const layerColor = LAYER_COLORS[layer] || LAYER_COLORS.brand;
-    const locDisplay = p.shopLocation ? abbreviateLocation(p.shopLocation) : null;
+    const locParts = p.shopLocation ? abbreviateLocation(p.shopLocation) : [];
 
     return (
       <div key={p.id} className={`flex items-start gap-2 py-2.5 text-sm ${status === "ended" || status === "inactive" ? "opacity-50" : ""}`}>
@@ -211,9 +218,15 @@ export default function Promotions() {
           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${typeColor}`}>{p.type}</span>
         </div>
         {/* Location */}
-        <div className="shrink-0 w-[100px] pt-0.5">
-          {locDisplay ? (
-            <span className="text-xs text-foreground/80 leading-snug" title={p.shopLocation || ""}>{locDisplay}</span>
+        <div className="shrink-0 w-[200px] pt-0.5">
+          {locParts.length > 0 ? (
+            <div className="flex flex-wrap gap-x-1 gap-y-0 leading-snug" title={p.shopLocation || ""}>
+              {locParts.map((part, i) => (
+                <span key={i} className={`text-xs font-medium ${CHANNEL_COLORS[part.channel] || "text-foreground/80"}`}>
+                  {part.text}{i < locParts.length - 1 ? "," : ""}
+                </span>
+              ))}
+            </div>
           ) : (
             <span className="text-xs text-muted-foreground italic">All</span>
           )}
