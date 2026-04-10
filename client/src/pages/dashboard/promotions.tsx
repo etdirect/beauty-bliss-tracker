@@ -2,15 +2,20 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Brand, Promotion, PromotionResult, Counter } from "@shared/schema";
-import { Card, CardContent } from "@/components/ui/card";
+import type { Brand, Promotion, PromotionResult, PosLocation } from "@shared/schema";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, CheckCircle, XCircle, Search, Filter, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Search, Filter, Trash2, Pencil, CalendarDays, Gift, Tag, XCircle, CheckCircle,
+  ChevronDown, ChevronRight, X,
+} from "lucide-react";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
   "GWP": "bg-pink-100 text-pink-800 border-pink-200",
@@ -19,465 +24,449 @@ const PROMO_TYPE_COLORS: Record<string, string> = {
   "Fixed Amount Discount": "bg-cyan-100 text-cyan-800 border-cyan-200",
   "Bundle Deal": "bg-purple-100 text-purple-800 border-purple-200",
   "Multi-Buy": "bg-orange-100 text-orange-800 border-orange-200",
+  "Mix & Match": "bg-violet-100 text-violet-800 border-violet-200",
   "Spend & Get": "bg-amber-100 text-amber-800 border-amber-200",
   "Other": "bg-gray-100 text-gray-800 border-gray-200",
 };
 
-function PromoTypeBadge({ type }: { type: string }) {
-  const colorClass = PROMO_TYPE_COLORS[type] || PROMO_TYPE_COLORS["Other"];
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>{type}</span>;
+const LAYER_COLORS: Record<string, string> = {
+  brand: "bg-emerald-600 text-white",
+  counter: "bg-blue-600 text-white",
+  channel: "bg-purple-600 text-white",
+};
+
+function fmtDate(d: string) {
+  try { const [y, m, dd] = d.split("-"); return `${dd}/${m}/${y}`; } catch { return d; }
 }
 
-function PromoTypeDetails({ promo }: { promo: Promotion }) {
-  const details: string[] = [];
-  const t = promo.type;
-
-  if (t === "GWP" || promo.gwpItem) {
-    if (promo.gwpItem) details.push(`GWP: ${promo.gwpItem}`);
-    if (promo.gwpValue) details.push(`Value: HK$${promo.gwpValue}`);
-    if (promo.gwpQty) details.push(`Qty: ${promo.gwpQty}`);
-  }
-  if (t === "Percentage Discount" && promo.discountPercentage) {
-    details.push(`${promo.discountPercentage}% off`);
-  }
-  if (promo.discountFixedAmount) {
-    details.push(`HK$${promo.discountFixedAmount} off`);
-  }
-  if (t === "Bundle Deal") {
-    if (promo.bundlePromoPrice) details.push(`Bundle: HK$${promo.bundlePromoPrice}`);
-  }
-  if (t === "Multi-Buy") {
-    if (promo.multiBuyBuyQty) {
-      let txt = `Buy ${promo.multiBuyBuyQty}`;
-      if (promo.multiBuyGetQty) txt += ` Get ${promo.multiBuyGetQty}`;
-      if (promo.multiBuyGetType) txt += ` ${promo.multiBuyGetType}`;
-      details.push(txt);
-    }
-    if (promo.multiBuyFixedPrice) details.push(`for HK$${promo.multiBuyFixedPrice}`);
-  }
-  if (t === "PWP") {
-    if (promo.pwpItem) details.push(`PWP: ${promo.pwpItem}`);
-    if (promo.pwpPrice) details.push(`at HK$${promo.pwpPrice}`);
-    if (promo.pwpDiscountPercentage) details.push(`${promo.pwpDiscountPercentage}% off`);
-  }
-  if (t === "Spend & Get") {
-    if (promo.spendGetSpendAmount) details.push(`Spend HK$${promo.spendGetSpendAmount}`);
-    if (promo.spendGetDiscountAmount) details.push(`Get HK$${promo.spendGetDiscountAmount} off`);
-  }
-
-  if (details.length === 0) return null;
-  return <p className="text-xs text-foreground/80 font-medium">{details.join(" · ")}</p>;
-}
-
-function PromoConditions({ promo }: { promo: Promotion }) {
-  const conditions: string[] = [];
-  if (promo.conditionMinimumSpend) conditions.push(`Min spend: HK$${promo.conditionMinimumSpend}`);
-  if (promo.conditionMinimumQty) conditions.push(`Min qty: ${promo.conditionMinimumQty}`);
-  if (promo.conditionRequiredItems) conditions.push(`Required: ${promo.conditionRequiredItems}`);
-  if (promo.conditionOther) conditions.push(promo.conditionOther);
-  if (conditions.length === 0) return null;
-  return <p className="text-xs text-muted-foreground italic">{conditions.join(" · ")}</p>;
-}
-
-function RefPricing({ promo }: { promo: Promotion }) {
-  if (!promo.referenceOriginalPrice && !promo.referencePromoPrice) return null;
-  return (
-    <p className="text-xs text-muted-foreground">
-      {promo.referenceOriginalPrice && <span className="line-through mr-1">HK${promo.referenceOriginalPrice}</span>}
-      {promo.referencePromoPrice && <span className="font-medium text-foreground">HK${promo.referencePromoPrice}</span>}
-    </p>
-  );
+function abbreviateLocation(loc: string): string {
+  return loc.split(",").map(s => {
+    const t = s.trim();
+    const si = t.indexOf("/");
+    if (si === -1) return t;
+    const ch = t.substring(0, si).trim();
+    const door = t.substring(si + 1).trim();
+    const chShort = ch.substring(0, 3).toUpperCase();
+    const doorWords = door.split(" ");
+    const doorShort = doorWords.length > 1
+      ? doorWords.map(w => w[0]).join("").toUpperCase()
+      : door.substring(0, 3).toUpperCase();
+    return `${chShort}/${doorShort}`;
+  }).join(", ");
 }
 
 export default function Promotions() {
   const { toast } = useToast();
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [formName, setFormName] = useState("");
-  const [formBrandId, setFormBrandId] = useState<string>("cross-brand");
-  const [formType, setFormType] = useState("GWP");
-  const [formDescription, setFormDescription] = useState("");
-  const [formStartDate, setFormStartDate] = useState("");
-  const [formEndDate, setFormEndDate] = useState("");
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const monthAgo = new Date(today.getTime() - 30 * 86400000);
+  const monthAgoStr = `${monthAgo.getFullYear()}-${String(monthAgo.getMonth() + 1).padStart(2, "0")}-${String(monthAgo.getDate()).padStart(2, "0")}`;
+  const monthAhead = new Date(today.getTime() + 60 * 86400000);
+  const monthAheadStr = `${monthAhead.getFullYear()}-${String(monthAhead.getMonth() + 1).padStart(2, "0")}-${String(monthAhead.getDate()).padStart(2, "0")}`;
 
   // Filters
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterType, setFilterType] = useState<string>("all");
-  const [filterBrand, setFilterBrand] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("active");
+  const [search, setSearch] = useState("");
+  const [startDate, setStartDate] = useState(monthAgoStr);
+  const [endDate, setEndDate] = useState(monthAheadStr);
+  const [filterType, setFilterType] = useState("__all__");
+  const [filterBrand, setFilterBrand] = useState("__all__");
+  const [filterStatus, setFilterStatus] = useState("__all__");
+  const [filterLayer, setFilterLayer] = useState("__all__");
+  const [groupBy, setGroupBy] = useState("flat");
 
-  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"] });
-  const { data: counters = [] } = useQuery<Counter[]>({ queryKey: ["/api/counters"] });
-  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 60_000, refetchOnWindowFocus: true });
-  const { data: promotionResults = [] } = useQuery<PromotionResult[]>({ queryKey: ["/api/promotion-results"] });
+  // Edit dialog
+  const [editItem, setEditItem] = useState<Promotion | null>(null);
 
-  const activeBrands = brands.filter(b => b.isActive);
-  const today = new Date().toISOString().split("T")[0];
+  // Data
+  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"], staleTime: 30_000 });
+  const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000, refetchOnWindowFocus: true });
+  const { data: promotionResults = [] } = useQuery<PromotionResult[]>({ queryKey: ["/api/promotion-results"], staleTime: 30_000 });
+  const { data: posLocations = [] } = useQuery<PosLocation[]>({ queryKey: ["/api/pos-locations"], staleTime: 30_000 });
 
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/promotions", {
-        name: formName,
-        brandId: formBrandId === "cross-brand" ? null : formBrandId,
-        type: formType,
-        description: formDescription,
-        startDate: formStartDate,
-        endDate: formEndDate,
-        isActive: true,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
-      setShowCreateDialog(false);
-      resetForm();
-      toast({ title: "Promotion created" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
+  const brandMap = useMemo(() => { const m = new Map<string, Brand>(); brands.forEach(b => m.set(b.id, b)); return m; }, [brands]);
 
-  const toggleMutation = useMutation({
-    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
-      await apiRequest("PATCH", `/api/promotions/${id}`, { isActive });
+  // Mutations
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<Promotion> }) => {
+      await apiRequest("PATCH", `/api/promotions/${id}`, data);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/promotions"] }); },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/promotions/${id}`);
-    },
+    mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/promotions/${id}`); },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/promotions"], refetchType: "active" });
+      queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
       toast({ title: "Promotion deleted" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
     },
   });
 
-  const resetForm = () => {
-    setFormName("");
-    setFormBrandId("cross-brand");
-    setFormType("GWP");
-    setFormDescription("");
-    setFormStartDate("");
-    setFormEndDate("");
+  // Computed
+  const promoTypes = useMemo(() => Array.from(new Set(promotions.map(p => p.type))).sort(), [promotions]);
+  const promoBrands = useMemo(() => {
+    const ids = new Set(promotions.map(p => p.brandId).filter(Boolean) as string[]);
+    return brands.filter(b => ids.has(b.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [promotions, brands]);
+
+  const getStatus = (p: Promotion) => {
+    if (!p.isActive) return "inactive";
+    if (p.endDate < todayStr) return "ended";
+    if (p.startDate > todayStr) return "upcoming";
+    return "active";
   };
 
-  // Promotion type options from data
-  const promoTypes = useMemo(() => {
-    const types = new Set(promotions.map(p => p.type));
-    return Array.from(types).sort();
-  }, [promotions]);
-
-  // Brand options from promotions
-  const promoBrandIds = useMemo(() => {
-    const ids = new Set(promotions.map(p => p.brandId).filter(Boolean));
-    return Array.from(ids) as string[];
-  }, [promotions]);
-
-  // Filtered promotions
-  const filteredPromotions = useMemo(() => {
-    let filtered = [...promotions];
-
-    // Status filter
-    if (filterStatus === "active") {
-      filtered = filtered.filter(p => p.isActive && p.endDate >= today);
-    } else if (filterStatus === "past") {
-      filtered = filtered.filter(p => !p.isActive || p.endDate < today);
+  const filtered = useMemo(() => {
+    let list = [...promotions];
+    // Date range overlap
+    list = list.filter(p => p.startDate <= endDate && p.endDate >= startDate);
+    if (filterType !== "__all__") list = list.filter(p => p.type === filterType);
+    if (filterBrand !== "__all__") {
+      if (filterBrand === "cross-brand") list = list.filter(p => !p.brandId);
+      else list = list.filter(p => p.brandId === filterBrand);
     }
-
-    // Type filter
-    if (filterType !== "all") {
-      filtered = filtered.filter(p => p.type === filterType);
+    if (filterStatus !== "__all__") {
+      list = list.filter(p => getStatus(p) === filterStatus);
     }
-
-    // Brand filter
-    if (filterBrand !== "all") {
-      if (filterBrand === "cross-brand") {
-        filtered = filtered.filter(p => !p.brandId);
-      } else {
-        filtered = filtered.filter(p => p.brandId === filterBrand);
-      }
-    }
-
-    // Search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(p =>
-        p.name.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q) ||
-        (p.mechanics && p.mechanics.toLowerCase().includes(q)) ||
-        (p.shopLocation && p.shopLocation.toLowerCase().includes(q))
+    if (filterLayer !== "__all__") list = list.filter(p => p.promotionLayer === filterLayer);
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(p =>
+        p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q) ||
+        (p.mechanics || "").toLowerCase().includes(q) || (p.shopLocation || "").toLowerCase().includes(q) ||
+        (p.applicableProducts || "").toLowerCase().includes(q)
       );
     }
+    return list;
+  }, [promotions, startDate, endDate, filterType, filterBrand, filterStatus, filterLayer, search, todayStr]);
 
-    return filtered;
-  }, [promotions, filterStatus, filterType, filterBrand, searchQuery, today]);
+  // Grouping
+  const groups = useMemo(() => {
+    if (groupBy === "flat") return [{ label: `All Promotions (${filtered.length})`, items: filtered }];
+    if (groupBy === "brand") {
+      const map = new Map<string, Promotion[]>();
+      for (const p of filtered) {
+        const key = p.brandId ? (brandMap.get(p.brandId)?.name || "Unknown") : "Cross-brand";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(p);
+      }
+      return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([label, items]) => ({ label, items }));
+    }
+    if (groupBy === "channel") {
+      const map = new Map<string, Promotion[]>();
+      for (const p of filtered) {
+        const loc = p.shopLocation || "All Channels";
+        const channels = new Set(loc.split(",").map(s => { const t = s.trim(); const si = t.indexOf("/"); return si === -1 ? t : t.substring(0, si).trim(); }));
+        channels.forEach(ch => {
+          if (!map.has(ch)) map.set(ch, []);
+          map.get(ch)!.push(p);
+        });
+      }
+      return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([label, items]) => ({ label, items }));
+    }
+    if (groupBy === "type") {
+      const map = new Map<string, Promotion[]>();
+      for (const p of filtered) { if (!map.has(p.type)) map.set(p.type, []); map.get(p.type)!.push(p); }
+      return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([label, items]) => ({ label, items }));
+    }
+    if (groupBy === "layer") {
+      const map = new Map<string, Promotion[]>();
+      for (const p of filtered) { const l = p.promotionLayer || "brand"; if (!map.has(l)) map.set(l, []); map.get(l)!.push(p); }
+      return Array.from(map.entries()).sort().map(([label, items]) => ({ label: label === "brand" ? "L1 — Brand" : label === "counter" ? "L2 — Counter" : "L3 — Channel", items }));
+    }
+    return [{ label: "All", items: filtered }];
+  }, [filtered, groupBy, brandMap]);
 
+  // GWP stats
   const getPromoStats = (promo: Promotion) => {
     const results = promotionResults.filter(r => r.promotionId === promo.id);
-    const totalGwp = results.reduce((s, r) => s + r.gwpGiven, 0);
+    const total = results.reduce((s, r) => s + r.gwpGiven, 0);
     const byCounter: Record<string, number> = {};
     for (const r of results) {
-      const counter = counters.find(c => c.id === r.counterId);
-      const name = counter?.name || "Unknown";
+      const pos = posLocations.find(p => p.id === r.counterId);
+      const name = pos?.storeName || "Unknown";
       byCounter[name] = (byCounter[name] || 0) + r.gwpGiven;
     }
-    return { totalGwp, byCounter };
+    return { total, byCounter };
+  };
+
+  // Summary
+  const activeCount = filtered.filter(p => getStatus(p) === "active").length;
+  const brandCount = new Set(filtered.map(p => p.brandId).filter(Boolean)).size;
+
+  const renderCard = (p: Promotion) => {
+    const brand = p.brandId ? brandMap.get(p.brandId) : null;
+    const status = getStatus(p);
+    const stats = getPromoStats(p);
+    const layer = p.promotionLayer || "brand";
+    const layerLabel = layer === "brand" ? "L1" : layer === "counter" ? "L2" : "L3";
+    const typeColor = PROMO_TYPE_COLORS[p.type] || PROMO_TYPE_COLORS["Other"];
+    const layerColor = LAYER_COLORS[layer] || LAYER_COLORS.brand;
+    const locDisplay = p.shopLocation ? abbreviateLocation(p.shopLocation) : null;
+
+    return (
+      <div key={p.id} className={`flex items-start gap-2 py-2.5 text-sm ${status === "ended" || status === "inactive" ? "opacity-50" : ""}`}>
+        {/* Layer + Type */}
+        <div className="flex items-center gap-1 shrink-0 pt-0.5 w-[160px]">
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${layerColor}`}>{layerLabel}</span>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${typeColor}`}>{p.type}</span>
+        </div>
+        {/* Location */}
+        <div className="shrink-0 w-[100px] pt-0.5">
+          {locDisplay ? (
+            <span className="text-xs text-foreground/80 leading-snug" title={p.shopLocation || ""}>{locDisplay}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">All</span>
+          )}
+        </div>
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div className="font-medium">{p.name}</div>
+          {p.mechanics && <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{p.mechanics}</div>}
+          {!p.mechanics && p.description && <div className="text-xs text-muted-foreground mt-0.5">{p.description}</div>}
+          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+            {p.trackable && <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-700">Trackable</Badge>}
+            {p.sourceApp === "simulator" && <Badge variant="outline" className="text-[9px] border-indigo-300 text-indigo-700">From Simulator</Badge>}
+            {brand && <span className="flex items-center gap-1"><Tag className="w-3 h-3" />{brand.name}</span>}
+            {p.applicableProducts && <span title={p.applicableProducts}>Products: {p.applicableProducts.substring(0, 40)}{p.applicableProducts.length > 40 ? "..." : ""}</span>}
+            {status !== "active" && (
+              <Badge variant="outline" className={`text-[9px] px-1 py-0 h-4 ${
+                status === "upcoming" ? "border-amber-400 text-amber-700" :
+                status === "ended" ? "border-slate-400 text-slate-500" :
+                "border-red-400 text-red-600"
+              }`}>{status}</Badge>
+            )}
+          </div>
+          {/* GWP/PWP stats */}
+          {stats.total > 0 && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <Gift className="w-3 h-3 text-pink-500" />
+              <span className="text-[11px] font-medium">{stats.total} given</span>
+              {Object.entries(stats.byCounter).slice(0, 5).map(([name, count]) => (
+                <Badge key={name} variant="secondary" className="text-[10px] tabular-nums">{name}: {count}</Badge>
+              ))}
+            </div>
+          )}
+        </div>
+        {/* Right side: dates + actions */}
+        <div className="shrink-0 flex flex-col items-end gap-1 pt-0.5">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(p.startDate)} – {fmtDate(p.endDate)}</span>
+          <div className="flex items-center gap-0.5">
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" title="Edit" onClick={() => setEditItem({ ...p })}><Pencil className="w-3 h-3" /></Button>
+            {status === "active" ? (
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" title="Deactivate" onClick={() => updateMutation.mutate({ id: p.id, data: { isActive: false } })}><XCircle className="w-3 h-3 text-muted-foreground" /></Button>
+            ) : (
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" title="Activate" onClick={() => updateMutation.mutate({ id: p.id, data: { isActive: true } })}><CheckCircle className="w-3 h-3" /></Button>
+            )}
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" title="Delete" onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteMutation.mutate(p.id); }}><Trash2 className="w-3 h-3" /></Button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="p-4 md:p-6 space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h2 className="text-xl font-semibold">Promotions</h2>
-        </div>
-        <div className="flex gap-2">
-          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-            <DialogTrigger asChild>
-              <Button size="sm" data-testid="button-create-promotion">
-                <Plus className="w-4 h-4 mr-1" /> New Promotion
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Promotion</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 pt-2">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Name</label>
-                  <Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="e.g. Embryolisse April GWP" data-testid="input-promo-name" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Brand</label>
-                  <Select value={formBrandId} onValueChange={setFormBrandId}>
-                    <SelectTrigger data-testid="select-promo-brand"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cross-brand">Cross-brand</SelectItem>
-                      {activeBrands.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Type</label>
-                  <Select value={formType} onValueChange={setFormType}>
-                    <SelectTrigger data-testid="select-promo-type"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="GWP">GWP (Gift with Purchase)</SelectItem>
-                      <SelectItem value="PWP">PWP (Purchase with Purchase)</SelectItem>
-                      <SelectItem value="Percentage Discount">Percentage Discount</SelectItem>
-                      <SelectItem value="Fixed Amount Discount">Fixed Amount Discount</SelectItem>
-                      <SelectItem value="Bundle Deal">Bundle Deal</SelectItem>
-                      <SelectItem value="Multi-Buy">Multi-Buy</SelectItem>
-                      <SelectItem value="Spend & Get">Spend & Get</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">Description</label>
-                  <Textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} placeholder="e.g. Free gift with purchase of HK$300+" data-testid="input-promo-desc" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">Start Date</label>
-                    <Input type="date" value={formStartDate} onChange={e => setFormStartDate(e.target.value)} data-testid="input-promo-start" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-sm font-medium">End Date</label>
-                    <Input type="date" value={formEndDate} onChange={e => setFormEndDate(e.target.value)} data-testid="input-promo-end" />
-                  </div>
-                </div>
-                <Button
-                  className="w-full"
-                  onClick={() => createMutation.mutate()}
-                  disabled={!formName || !formStartDate || !formEndDate || createMutation.isPending}
-                  data-testid="button-save-promotion"
-                >
-                  {createMutation.isPending ? "Creating..." : "Create Promotion"}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+      <div className="flex items-center gap-2">
+        <Gift className="w-5 h-5" />
+        <h2 className="text-lg font-bold">Promotions</h2>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Search promotions..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="pl-8 h-8 text-sm"
-          />
+      {/* Filter bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search promotions..." className="w-[180px] h-9 text-sm pl-8" />
         </div>
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="h-8 w-[120px] text-xs">
-            <Filter className="w-3 h-3 mr-1" />
-            <SelectValue />
-          </SelectTrigger>
+        <div className="flex items-center gap-1.5 border rounded-md px-2 h-9 text-sm bg-background hover:bg-muted/50 cursor-pointer" onClick={() => (document.getElementById("promo-start") as HTMLInputElement)?.showPicker?.()}>
+          <CalendarDays className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="whitespace-nowrap">{fmtDate(startDate)}</span>
+          <input id="promo-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="sr-only" />
+        </div>
+        <span className="text-xs text-muted-foreground">to</span>
+        <div className="flex items-center gap-1.5 border rounded-md px-2 h-9 text-sm bg-background hover:bg-muted/50 cursor-pointer" onClick={() => (document.getElementById("promo-end") as HTMLInputElement)?.showPicker?.()}>
+          <CalendarDays className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="whitespace-nowrap">{fmtDate(endDate)}</span>
+          <input id="promo-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="sr-only" />
+        </div>
+
+        <Select value={groupBy} onValueChange={setGroupBy}>
+          <SelectTrigger className="w-auto h-9 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="past">Past/Inactive</SelectItem>
-            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="flat">Flat List</SelectItem>
+            <SelectItem value="brand">By Brand</SelectItem>
+            <SelectItem value="channel">By Channel</SelectItem>
+            <SelectItem value="type">By Type</SelectItem>
+            <SelectItem value="layer">By Layer</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue placeholder="All Types" /></SelectTrigger>
+
+        <Select value={filterBrand} onValueChange={setFilterBrand}>
+          <SelectTrigger className="w-auto h-9 text-sm gap-1"><Filter className="w-3.5 h-3.5" /><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="__all__">All Brands</SelectItem>
+            <SelectItem value="cross-brand">Cross-brand</SelectItem>
+            {promoBrands.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-auto h-9 text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Types</SelectItem>
             {promoTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterBrand} onValueChange={setFilterBrand}>
-          <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue placeholder="All Brands" /></SelectTrigger>
+
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="w-auto h-9 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Brands</SelectItem>
-            <SelectItem value="cross-brand">Cross-brand</SelectItem>
-            {promoBrandIds.map(id => {
-              const brand = brands.find(b => b.id === id);
-              return brand ? <SelectItem key={id} value={id}>{brand.name}</SelectItem> : null;
-            })}
+            <SelectItem value="__all__">All Status</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="upcoming">Upcoming</SelectItem>
+            <SelectItem value="ended">Ended</SelectItem>
+            <SelectItem value="inactive">Inactive</SelectItem>
           </SelectContent>
         </Select>
+
+        <Select value={filterLayer} onValueChange={setFilterLayer}>
+          <SelectTrigger className="w-auto h-9 text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Layers</SelectItem>
+            <SelectItem value="brand">L1 — Brand</SelectItem>
+            <SelectItem value="counter">L2 — Counter</SelectItem>
+            <SelectItem value="channel">L3 — Channel</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Button variant="ghost" size="sm" className="h-9 text-xs" onClick={() => { setSearch(""); setFilterType("__all__"); setFilterBrand("__all__"); setFilterStatus("__all__"); setFilterLayer("__all__"); }}>
+          <X className="w-3.5 h-3.5 mr-1" /> Clear
+        </Button>
       </div>
 
-      {/* Results count */}
-      <p className="text-xs text-muted-foreground">{filteredPromotions.length} promotion{filteredPromotions.length !== 1 ? "s" : ""}</p>
+      {/* Summary */}
+      <div className="flex items-center gap-6 text-xs text-muted-foreground">
+        <span>{filtered.length} promotions</span>
+        <span>{activeCount} active</span>
+        <span>{brandCount} brands</span>
+      </div>
 
-      {/* Promotions Table/List */}
-      {filteredPromotions.length === 0 ? (
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Active</p><p className="text-lg font-bold">{activeCount}</p></CardContent></Card>
+        <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Brands</p><p className="text-lg font-bold">{brandCount}</p></CardContent></Card>
+        <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Trackable</p><p className="text-lg font-bold">{filtered.filter(p => p.trackable).length}</p></CardContent></Card>
+        <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">From Simulator</p><p className="text-lg font-bold">{filtered.filter(p => p.sourceApp === "simulator").length}</p></CardContent></Card>
+      </div>
+
+      {/* Grouped cards */}
+      {filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">No promotions match your filters</p>
       ) : (
-        <div className="space-y-2">
-          {filteredPromotions.map(promo => {
-            const brand = brands.find(b => b.id === promo.brandId);
-            const stats = getPromoStats(promo);
-            const isActive = promo.isActive && promo.endDate >= today;
-            return (
-              <Card key={promo.id} className={!isActive ? "opacity-60" : ""}>
-                <CardContent className="pt-3 pb-3 space-y-1.5">
-                  {/* Row 1: Type badge, name, brand, location, toggle */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <PromoTypeBadge type={promo.type} />
-                        {promo.trackable && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">Trackable</span>
-                        )}
-                        {promo.sourceApp === "simulator" && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">From Simulator</span>
-                        )}
-                        <span className="font-medium text-sm truncate">{promo.name}</span>
-                        {brand && <Badge variant="outline" className="text-xs shrink-0">{brand.name}</Badge>}
-                      </div>
-                      {promo.shopLocation && (
-                        <p className="text-xs text-muted-foreground">
-                          {promo.shopLocation}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className="text-xs text-muted-foreground hidden sm:inline">
-                        {(() => { const f = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}/${y}`; }; return `${f(promo.startDate)} — ${f(promo.endDate)}`; })()}
-                      </span>
-                      {isActive ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleMutation.mutate({ id: promo.id, isActive: false })}
-                          className="text-xs text-muted-foreground h-7 px-2"
-                          data-testid={`button-deactivate-${promo.id}`}
-                          title="Deactivate"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleMutation.mutate({ id: promo.id, isActive: true })}
-                          className="text-xs h-7 px-2"
-                          title="Activate"
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => { if (confirm(`Delete "${promo.name}"?`)) deleteMutation.mutate(promo.id); }}
-                        className="text-xs text-destructive h-7 px-2"
-                        title="Delete promotion"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Row 2: Mechanics (key info for BAs) */}
-                  {promo.mechanics && (
-                    <p className="text-xs text-foreground/90 leading-relaxed">{promo.mechanics}</p>
-                  )}
-                  {!promo.mechanics && promo.description && (
-                    <p className="text-xs text-muted-foreground">{promo.description}</p>
-                  )}
-
-                  {/* Row 3: Type-specific details */}
-                  <PromoTypeDetails promo={promo} />
-
-                  {/* Row 4: Applicable products & exclusions */}
-                  {(promo.applicableProducts || promo.exclusions || promo.promoAppliesTo) && (
-                    <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-                      {promo.promoAppliesTo && (
-                        <span className="text-xs text-muted-foreground">Applies to: {promo.promoAppliesTo}</span>
-                      )}
-                      {promo.applicableProducts && (
-                        <span className="text-xs text-muted-foreground">Products: {promo.applicableProducts}</span>
-                      )}
-                      {promo.exclusions && (
-                        <span className="text-xs text-muted-foreground text-red-600">Excl: {promo.exclusions}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Row 5: Conditions & pricing */}
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 items-center">
-                    <PromoConditions promo={promo} />
-                    <RefPricing promo={promo} />
-                  </div>
-
-                  {/* Row 6: Remarks */}
-                  {promo.remarks && (
-                    <p className="text-xs text-muted-foreground italic">Note: {promo.remarks}</p>
-                  )}
-
-                  {/* Row 7: Performance stats (GWP tracking) */}
-                  {stats.totalGwp > 0 && (
-                    <div className="border-t pt-1.5 mt-1">
-                      <p className="text-xs font-medium mb-0.5">{stats.totalGwp} GWPs given</p>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(stats.byCounter).map(([name, count]) => (
-                          <Badge key={name} variant="secondary" className="text-xs tabular-nums">
-                            {name}: {count}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="space-y-3">
+          {groups.map(group => (
+            <Card key={group.label}>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-sm font-bold flex items-center justify-between">
+                  <span>{group.label}</span>
+                  <Badge variant="secondary" className="text-xs font-normal">{group.items.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 pb-3">
+                <div className="divide-y">
+                  {group.items.map(renderCard)}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
+
+      {/* Edit Dialog */}
+      <Dialog open={!!editItem} onOpenChange={(open) => { if (!open) setEditItem(null); }}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Edit Promotion</DialogTitle></DialogHeader>
+          {editItem && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Name</Label>
+                <Input value={editItem.name} onChange={e => setEditItem(prev => prev ? { ...prev, name: e.target.value } : prev)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Description</Label>
+                <Textarea value={editItem.description || ""} onChange={e => setEditItem(prev => prev ? { ...prev, description: e.target.value } : prev)} rows={2} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Mechanics</Label>
+                <Textarea value={editItem.mechanics || ""} onChange={e => setEditItem(prev => prev ? { ...prev, mechanics: e.target.value } : prev)} rows={2} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">Start Date</Label>
+                  <div className="flex items-center gap-1.5 border rounded-md px-2 h-9 text-sm bg-background hover:bg-muted/50 cursor-pointer" onClick={() => (document.getElementById("edit-promo-start") as HTMLInputElement)?.showPicker?.()}>
+                    <CalendarDays className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span>{fmtDate(editItem.startDate)}</span>
+                    <input id="edit-promo-start" type="date" value={editItem.startDate} onChange={e => setEditItem(prev => prev ? { ...prev, startDate: e.target.value } : prev)} className="sr-only" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">End Date</Label>
+                  <div className="flex items-center gap-1.5 border rounded-md px-2 h-9 text-sm bg-background hover:bg-muted/50 cursor-pointer" onClick={() => (document.getElementById("edit-promo-end") as HTMLInputElement)?.showPicker?.()}>
+                    <CalendarDays className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span>{fmtDate(editItem.endDate)}</span>
+                    <input id="edit-promo-end" type="date" value={editItem.endDate} onChange={e => setEditItem(prev => prev ? { ...prev, endDate: e.target.value } : prev)} className="sr-only" />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Status</Label>
+                <Select value={editItem.isActive ? "active" : "inactive"} onValueChange={v => setEditItem(prev => prev ? { ...prev, isActive: v === "active" } : prev)}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-start gap-2 py-1">
+                <Checkbox
+                  id="edit-promo-trackable"
+                  checked={editItem.trackable}
+                  onCheckedChange={v => setEditItem(prev => prev ? { ...prev, trackable: !!v } : prev)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <Label htmlFor="edit-promo-trackable" className="text-sm cursor-pointer font-medium">BA Tracking</Label>
+                  <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">BAs will see an input field to record daily GWP/PWP quantities</p>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Remarks</Label>
+                <Textarea value={editItem.remarks || ""} onChange={e => setEditItem(prev => prev ? { ...prev, remarks: e.target.value } : prev)} rows={2} />
+              </div>
+              <Button className="w-full" onClick={async () => {
+                try {
+                  await apiRequest("PATCH", `/api/promotions/${editItem.id}`, {
+                    name: editItem.name,
+                    description: editItem.description,
+                    mechanics: editItem.mechanics,
+                    startDate: editItem.startDate,
+                    endDate: editItem.endDate,
+                    isActive: editItem.isActive,
+                    trackable: editItem.trackable,
+                    remarks: editItem.remarks,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
+                  setEditItem(null);
+                  toast({ title: "Promotion updated" });
+                } catch (e: any) {
+                  toast({ title: "Update failed", description: e.message, variant: "destructive" });
+                }
+              }}>Save</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
