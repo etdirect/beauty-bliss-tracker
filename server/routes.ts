@@ -67,6 +67,35 @@ export async function registerRoutes(
     }
   });
 
+    // Internal: list all active users (server-to-server, protected by shared secret)
+    app.get("/api/internal/users", async (req, res) => {
+          const secret = req.headers["x-internal-key"];
+          if (!secret || secret !== process.env.INTERNAL_API_KEY) {
+                  return res.status(401).json({ error: "Unauthorized" });
+          }
+          try {
+                  const users = await storage.getUsers();
+                  const safe = users.map((u: any) => ({
+                            id: u.id, username: u.username, name: u.name,
+                            role: u.role, isActive: u.isActive, canViewHistory: u.canViewHistory
+                  }));
+                  res.json(safe);
+          } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Internal: list all active brands (server-to-server)
+    app.get("/api/internal/brands", async (req, res) => {
+          const secret = req.headers["x-internal-key"];
+          if (!secret || secret !== process.env.INTERNAL_API_KEY) {
+                  return res.status(401).json({ error: "Unauthorized" });
+          }
+          try {
+                  const brands = await storage.getBrands();
+                  res.json(brands.filter((b: any) => b.isActive));
+          } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+  
   // === AUTH ROUTES ===
   app.post("/api/auth/login", async (req, res) => {
     try {
