@@ -385,7 +385,22 @@ export async function registerRoutes(
   // DELETE promotion (management or server-to-server)
   app.delete("/api/promotions/:id", requireManagement, async (req, res) => {
     try {
+      // Fetch promo before deleting to get sourceScenarioId for Simulator notification
+      const promo = await storage.getPromotion(req.params.id as string);
       await storage.deletePromotion(req.params.id as string);
+
+      // Notify Simulator if this promo came from there
+      if (promo?.sourceApp === "simulator" && promo?.sourceScenarioId) {
+        const simulatorUrl = process.env.SIMULATOR_URL || "https://promo-pricing-simulator-v2-production.up.railway.app";
+        try {
+          await fetch(`${simulatorUrl}/api/promotion-history/notify-deleted`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sourceScenarioId: promo.sourceScenarioId }),
+          });
+        } catch { /* best-effort, don't fail the delete if Simulator is unreachable */ }
+      }
+
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
