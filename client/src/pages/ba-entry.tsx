@@ -329,8 +329,15 @@ export default function BAEntry() {
     });
     setPromoData(pData);
 
-    // 3. Load incentive entries — force refetch to ensure latest data
-    refetchDailyEntries();
+    // 3. Load incentive entries — force refetch and set inputs directly
+    const incentiveRefetch = await refetchDailyEntries();
+    const freshIncentives = incentiveRefetch.data || {};
+    const iInputs: Record<string, string> = {};
+    for (const [id, val] of Object.entries(freshIncentives)) {
+      iInputs[id] = (val as number) > 0 ? String(val) : "";
+    }
+    setIncentiveInputs(iInputs);
+    prevDailyRef.current = JSON.stringify(freshIncentives);
 
     // 4. Load POS figure (already synced via useEffect from existingPosFigures)
 
