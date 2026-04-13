@@ -199,7 +199,7 @@ export default function BAEntry() {
   });
 
   // Fetch existing promotion results for the selected counter + date
-  const { data: existingPromoResults = [] } = useQuery<{ id: string; promotionId: string; counterId: string; date: string; gwpGiven: number; notes: string }[]>({
+  const { data: existingPromoResults = [], refetch: refetchPromoResults } = useQuery<{ id: string; promotionId: string; counterId: string; date: string; gwpGiven: number; notes: string }[]>({
     queryKey: ["/api/promotion-results", `?counterId=${selectedCounter}&date=${selectedDate}`],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/promotion-results?counterId=${selectedCounter}&date=${selectedDate}`);
@@ -304,7 +304,7 @@ export default function BAEntry() {
     setSubmitted(false);
   };
 
-  const loadExistingData = () => {
+  const loadExistingData = async () => {
     // 1. Load sales data
     const data: Record<string, { orders: number; units: number; amount: number; gwpCount: number }> = {};
     myExistingEntries.forEach(e => {
@@ -317,9 +317,11 @@ export default function BAEntry() {
     });
     setSalesData(data);
 
-    // 2. Load promotion results (GWP/PWP given counts)
+    // 2. Load promotion results (GWP/PWP given counts) — force refetch to ensure fresh data
+    const promoRefetch = await refetchPromoResults();
+    const freshPromoResults = promoRefetch.data || [];
     const pData: Record<string, { gwpGiven: number; notes: string }> = {};
-    existingPromoResults.forEach(r => {
+    freshPromoResults.forEach(r => {
       pData[r.promotionId] = {
         gwpGiven: r.gwpGiven ?? 0,
         notes: r.notes ?? "",
@@ -327,8 +329,7 @@ export default function BAEntry() {
     });
     setPromoData(pData);
 
-    // 3. Load incentive entries (already synced via useEffect from incentiveDailyEntries)
-    // Force refetch to ensure latest data
+    // 3. Load incentive entries — force refetch to ensure latest data
     refetchDailyEntries();
 
     // 4. Load POS figure (already synced via useEffect from existingPosFigures)
