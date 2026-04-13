@@ -292,10 +292,12 @@ export class PgStorage implements IStorage {
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         sales_channel TEXT NOT NULL,
         store_code TEXT NOT NULL,
+        site_code TEXT NOT NULL DEFAULT '',
         store_name TEXT NOT NULL,
         is_active BOOLEAN NOT NULL DEFAULT true,
         UNIQUE(sales_channel, store_code)
       );
+      ALTER TABLE pos_locations ADD COLUMN IF NOT EXISTS site_code TEXT NOT NULL DEFAULT '';
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
         username TEXT NOT NULL UNIQUE,
@@ -545,7 +547,7 @@ export class PgStorage implements IStorage {
     return { id: r.id, promotionId: r.promotion_id, counterId: r.counter_id, date: r.date, gwpGiven: Number(r.gwp_given), notes: r.notes };
   }
   private mapPosLocation(r: any): PosLocation {
-    return { id: r.id, salesChannel: r.sales_channel, storeCode: r.store_code, storeName: r.store_name, isActive: r.is_active };
+    return { id: r.id, salesChannel: r.sales_channel, storeCode: r.store_code, siteCode: r.site_code ?? "", storeName: r.store_name, isActive: r.is_active };
   }
   private mapUser(r: any): User {
     return { id: r.id, username: r.username, pin: r.pin, name: r.name, role: r.role, isActive: r.is_active, canViewHistory: r.can_view_history ?? false };
@@ -889,13 +891,14 @@ export class PgStorage implements IStorage {
   }
   async createPosLocation(data: InsertPosLocation): Promise<PosLocation> {
     const id = randomUUID();
-    await this.q("INSERT INTO pos_locations (id, sales_channel, store_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5)", [id, data.salesChannel, data.storeCode, data.storeName, data.isActive ?? true]);
-    return { id, salesChannel: data.salesChannel, storeCode: data.storeCode, storeName: data.storeName, isActive: data.isActive ?? true };
+    await this.q("INSERT INTO pos_locations (id, sales_channel, store_code, site_code, store_name, is_active) VALUES ($1,$2,$3,$4,$5,$6)", [id, data.salesChannel, data.storeCode, data.siteCode ?? "", data.storeName, data.isActive ?? true]);
+    return { id, salesChannel: data.salesChannel, storeCode: data.storeCode, siteCode: data.siteCode ?? "", storeName: data.storeName, isActive: data.isActive ?? true };
   }
   async updatePosLocation(id: string, data: Partial<InsertPosLocation>): Promise<PosLocation | undefined> {
     const sets: string[] = []; const vals: any[] = []; let i = 1;
     if (data.salesChannel !== undefined) { sets.push(`sales_channel=$${i++}`); vals.push(data.salesChannel); }
     if (data.storeCode !== undefined) { sets.push(`store_code=$${i++}`); vals.push(data.storeCode); }
+    if (data.siteCode !== undefined) { sets.push(`site_code=$${i++}`); vals.push(data.siteCode); }
     if (data.storeName !== undefined) { sets.push(`store_name=$${i++}`); vals.push(data.storeName); }
     if (data.isActive !== undefined) { sets.push(`is_active=$${i++}`); vals.push(data.isActive); }
     if (sets.length === 0) return this.getPosLocation(id);

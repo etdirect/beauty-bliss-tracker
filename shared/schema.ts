@@ -52,7 +52,8 @@ export type CounterBrand = typeof counterBrands.$inferSelect;
 export const posLocations = pgTable("pos_locations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   salesChannel: text("sales_channel").notNull(),
-  storeCode: text("store_code").notNull(),
+  storeCode: text("store_code").notNull(),      // Initials (e.g. KB, KH, TS)
+  siteCode: text("site_code").notNull().default(""), // Site/store code
   storeName: text("store_name").notNull(),
   isActive: boolean("is_active").notNull().default(true),
 });

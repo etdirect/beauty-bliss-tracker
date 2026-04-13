@@ -37,12 +37,14 @@ export default function SettingsPage() {
   // POS Location form
   const [newPosSalesChannel, setNewPosSalesChannel] = useState("");
   const [newPosStoreCode, setNewPosStoreCode] = useState("");
+  const [newPosSiteCode, setNewPosSiteCode] = useState("");
   const [newPosStoreName, setNewPosStoreName] = useState("");
 
   // POS edit state
   const [editingPosId, setEditingPosId] = useState<string | null>(null);
   const [editPosSalesChannel, setEditPosSalesChannel] = useState("");
   const [editPosStoreCode, setEditPosStoreCode] = useState("");
+  const [editPosSiteCode, setEditPosSiteCode] = useState("");
   const [editPosStoreName, setEditPosStoreName] = useState("");
 
   // User form
@@ -240,6 +242,7 @@ export default function SettingsPage() {
       await apiRequest("POST", "/api/pos-locations", {
         salesChannel: newPosSalesChannel,
         storeCode: newPosStoreCode,
+        siteCode: newPosSiteCode,
         storeName: newPosStoreName,
         isActive: true,
       });
@@ -249,6 +252,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/counters"] });
       setNewPosSalesChannel("");
       setNewPosStoreCode("");
+      setNewPosSiteCode("");
       setNewPosStoreName("");
       toast({ title: "POS Location added" });
     },
@@ -505,9 +509,16 @@ export default function SettingsPage() {
                 <Input
                   value={newPosStoreCode}
                   onChange={e => setNewPosStoreCode(e.target.value)}
-                  placeholder="Code (e.g. TS)"
+                  placeholder="Initials (e.g. TS)"
                   className="w-28"
                   data-testid="input-pos-code"
+                />
+                <Input
+                  value={(newPosSiteCode as any) || ""}
+                  onChange={e => setNewPosSiteCode(e.target.value)}
+                  placeholder="Site/Store Code"
+                  className="w-32"
+                  data-testid="input-pos-site-code"
                 />
                 <Input
                   value={newPosStoreName}
@@ -557,13 +568,14 @@ export default function SettingsPage() {
                             <>
                               <div className="grid grid-cols-[100px_60px_1fr] gap-2 flex-1">
                                 <Input className="h-8 text-sm" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Channel" />
-                                <Input className="h-8 text-sm" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Code" />
+                                <Input className="h-8 text-sm w-20" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Initials" />
+                                <Input className="h-8 text-sm w-28" value={editPosSiteCode} onChange={(e) => setEditPosSiteCode(e.target.value)} placeholder="Site Code" />
                                 <Input className="h-8 text-sm" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Store Name" />
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
                                   if (editPosSalesChannel && editPosStoreCode && editPosStoreName) {
-                                    editPosMutation.mutate({ id: pos.id, salesChannel: editPosSalesChannel, storeCode: editPosStoreCode, storeName: editPosStoreName });
+                                    editPosMutation.mutate({ id: pos.id, salesChannel: editPosSalesChannel, storeCode: editPosStoreCode, siteCode: editPosSiteCode, storeName: editPosStoreName });
                                   }
                                 }}><Check className="w-4 h-4 text-green-600" /></Button>
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingPosId(null)}><X className="w-4 h-4 text-muted-foreground" /></Button>
@@ -571,8 +583,13 @@ export default function SettingsPage() {
                             </>
                           ) : (
                             <>
-                              <div className="grid grid-cols-[60px_1fr] gap-3 flex-1 items-center">
-                                <Badge variant="outline" className="text-xs justify-center">{pos.storeCode}</Badge>
+                              <div className="flex items-center gap-3 flex-1">
+                                <Badge variant="outline" className="text-xs justify-center w-[50px] shrink-0" title="Initials">{pos.storeCode}</Badge>
+                                {(pos as any).siteCode ? (
+                                  <span className="text-xs text-muted-foreground font-mono w-[80px] shrink-0" title="Site/Store Code">{(pos as any).siteCode}</span>
+                                ) : (
+                                  <span className="w-[80px] shrink-0" />
+                                )}
                                 <span className={`text-sm ${pos.isActive ? "" : "text-muted-foreground line-through"}`}>
                                   {pos.storeName}
                                   {!pos.isActive && <Badge variant="secondary" className="text-[10px] ml-2">Inactive</Badge>}
@@ -583,6 +600,7 @@ export default function SettingsPage() {
                                   setEditingPosId(pos.id);
                                   setEditPosSalesChannel(pos.salesChannel);
                                   setEditPosStoreCode(pos.storeCode);
+                                  setEditPosSiteCode((pos as any).siteCode || "");
                                   setEditPosStoreName(pos.storeName);
                                 }}><Pencil className="w-3.5 h-3.5" /></Button>
                                 <Button
