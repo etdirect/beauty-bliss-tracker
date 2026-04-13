@@ -65,6 +65,7 @@ export interface IStorage {
   getPromotionResults(filters?: { promotionId?: string; counterId?: string; date?: string }): Promise<PromotionResult[]>;
   createPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
   upsertPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
+  deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void>;
 
   // POS Locations
   getPosLocations(): Promise<PosLocation[]>;
@@ -715,6 +716,9 @@ export class PgStorage implements IStorage {
     return imported;
   }
   async submitBatchSales(submission: BatchSalesSubmission, submittedBy?: string): Promise<void> {
+    // Collect submitted brandIds to identify which existing entries to delete
+    const submittedBrandIds = new Set(submission.entries.filter(e => e.orders > 0 || e.units > 0 || e.amount > 0).map(e => e.brandId));
+
     for (const entry of submission.entries) {
       if (entry.orders > 0 || entry.units > 0 || entry.amount > 0) {
         await this.upsertSalesEntry({
@@ -729,6 +733,15 @@ export class PgStorage implements IStorage {
         });
       }
     }
+
+    // Delete existing sales entries for this counter+date that are no longer submitted (zeroed out)
+    const existingEntries = await this.getSalesEntries({ startDate: submission.date, endDate: submission.date, counterId: submission.counterId });
+    for (const existing of existingEntries) {
+      if (!submittedBrandIds.has(existing.brandId)) {
+        await this.deleteSalesEntry(existing.id);
+      }
+    }
+
     if (submission.promotionResults) {
       for (const pr of submission.promotionResults) {
         if (pr.gwpGiven > 0) {
@@ -739,6 +752,9 @@ export class PgStorage implements IStorage {
             gwpGiven: pr.gwpGiven,
             notes: pr.notes ?? null,
           });
+        } else {
+          // Delete promo result if gwpGiven is 0 (user cleared it)
+          await this.deletePromotionResult(pr.promotionId, submission.counterId, submission.date);
         }
       }
     }
@@ -878,6 +894,9 @@ export class PgStorage implements IStorage {
       return { id: existingId, promotionId: data.promotionId, counterId: data.counterId, date: data.date, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null };
     }
     return this.createPromotionResult(data);
+  }
+  async deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void> {
+    await this.q("DELETE FROM promotion_results WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [promotionId, counterId, date]);
   }
 
   // ── POS Locations ──
@@ -1372,15 +1391,23 @@ export class MemStorage implements IStorage {
     return this.createSalesEntry(data);
   }
   async submitBatchSales(submission: BatchSalesSubmission, submittedBy?: string): Promise<void> {
+    const submittedBrandIds = new Set(submission.entries.filter(e => e.orders > 0 || e.units > 0 || e.amount > 0).map(e => e.brandId));
     for (const entry of submission.entries) {
       if (entry.units > 0 || entry.amount > 0) {
         await this.upsertSalesEntry({ counterId: submission.counterId, brandId: entry.brandId, date: submission.date, orders: entry.orders, units: entry.units, amount: entry.amount, gwpCount: entry.gwpCount, submittedBy: submittedBy ?? null });
       }
     }
+    // Delete zeroed-out entries
+    const existingEntries = await this.getSalesEntries({ startDate: submission.date, endDate: submission.date, counterId: submission.counterId });
+    for (const existing of existingEntries) {
+      if (!submittedBrandIds.has(existing.brandId)) await this.deleteSalesEntry(existing.id);
+    }
     if (submission.promotionResults) {
       for (const pr of submission.promotionResults) {
         if (pr.gwpGiven > 0) {
           await this.upsertPromotionResult({ promotionId: pr.promotionId, counterId: submission.counterId, date: submission.date, gwpGiven: pr.gwpGiven, notes: pr.notes ?? null });
+        } else {
+          await this.deletePromotionResult(pr.promotionId, submission.counterId, submission.date);
         }
       }
     }
@@ -1427,6 +1454,11 @@ export class MemStorage implements IStorage {
     const existing = Array.from(this.promotionResults.values()).find(r => r.promotionId === data.promotionId && r.counterId === data.counterId && r.date === data.date);
     if (existing) { const u: PromotionResult = { ...existing, gwpGiven: data.gwpGiven ?? 0, notes: data.notes ?? null }; this.promotionResults.set(existing.id, u); return u; }
     return this.createPromotionResult(data);
+  }
+  async deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void> {
+    for (const [id, r] of this.promotionResults) {
+      if (r.promotionId === promotionId && r.counterId === counterId && r.date === date) { this.promotionResults.delete(id); break; }
+    }
   }
 
   // ── POS Locations ──

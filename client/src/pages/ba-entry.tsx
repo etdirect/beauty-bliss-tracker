@@ -246,6 +246,7 @@ export default function BAEntry() {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
+      // Include all brands that have data OR had previous entries (so zeros can clear them)
       const entries = availableBrands
         .map(b => ({
           brandId: b.id,
@@ -256,8 +257,9 @@ export default function BAEntry() {
         }))
         .filter(e => e.orders > 0 || e.units > 0 || e.amount > 0);
 
+      // Include all promo results (including zero) so backend can clear previous entries
       const promotionResults = activePromotions
-        .filter(p => promoData[p.id]?.gwpGiven > 0)
+        .filter(p => p.trackable || promoData[p.id]?.gwpGiven > 0)
         .map(p => ({
           promotionId: p.id,
           gwpGiven: promoData[p.id]?.gwpGiven || 0,
@@ -1043,7 +1045,7 @@ export default function BAEntry() {
             <Button
               className="w-full h-12 text-base font-semibold"
               onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending || (totalOrders === 0 && totalUnits === 0 && totalAmount === 0)}
+              disabled={submitMutation.isPending || (totalOrders === 0 && totalUnits === 0 && totalAmount === 0 && myExistingEntries.length === 0)}
               data-testid="button-submit"
             >
               {submitMutation.isPending ? "Submitting..." : "Submit Sales"}
