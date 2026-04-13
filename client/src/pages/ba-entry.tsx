@@ -198,6 +198,17 @@ export default function BAEntry() {
     staleTime: 30_000,
   });
 
+  // Fetch existing promotion results for the selected counter + date
+  const { data: existingPromoResults = [] } = useQuery<{ id: string; promotionId: string; counterId: string; date: string; gwpGiven: number; notes: string }[]>({
+    queryKey: ["/api/promotion-results", `?counterId=${selectedCounter}&date=${selectedDate}`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/promotion-results?counterId=${selectedCounter}&date=${selectedDate}`);
+      return res.json();
+    },
+    enabled: !!selectedCounter && !!selectedDate,
+    staleTime: 30_000,
+  });
+
   // Load existing POS figure into input when data arrives
   useEffect(() => {
     if (existingPosFigures.length > 0) {
@@ -294,6 +305,7 @@ export default function BAEntry() {
   };
 
   const loadExistingData = () => {
+    // 1. Load sales data
     const data: Record<string, { orders: number; units: number; amount: number; gwpCount: number }> = {};
     myExistingEntries.forEach(e => {
       data[e.brandId] = {
@@ -304,7 +316,27 @@ export default function BAEntry() {
       };
     });
     setSalesData(data);
-    toast({ title: "Data loaded", description: "Previous entries loaded. Edit and re-submit to update." });
+
+    // 2. Load promotion results (GWP/PWP given counts)
+    const pData: Record<string, { gwpGiven: number; notes: string }> = {};
+    existingPromoResults.forEach(r => {
+      pData[r.promotionId] = {
+        gwpGiven: r.gwpGiven ?? 0,
+        notes: r.notes ?? "",
+      };
+    });
+    setPromoData(pData);
+
+    // 3. Load incentive entries (already synced via useEffect from incentiveDailyEntries)
+    // Force refetch to ensure latest data
+    refetchDailyEntries();
+
+    // 4. Load POS figure (already synced via useEffect from existingPosFigures)
+
+    // 5. Reset submitted state to allow re-editing
+    setSubmitted(false);
+
+    toast({ title: "All data loaded", description: "Sales, promotions, and incentive data loaded. Edit and re-submit to update." });
   };
 
   const totalOrders = Object.values(salesData).reduce((sum, d) => sum + (d.orders || 0), 0);
