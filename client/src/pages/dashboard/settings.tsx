@@ -270,8 +270,8 @@ export default function SettingsPage() {
   });
 
   const editPosMutation = useMutation({
-    mutationFn: async ({ id, salesChannel, storeCode, storeName }: { id: string; salesChannel: string; storeCode: string; storeName: string }) => {
-      await apiRequest("PATCH", `/api/pos-locations/${id}`, { salesChannel, storeCode, storeName });
+    mutationFn: async ({ id, salesChannel, storeCode, siteCode, storeName }: { id: string; salesChannel: string; storeCode: string; siteCode?: string; storeName: string }) => {
+      await apiRequest("PATCH", `/api/pos-locations/${id}`, { salesChannel, storeCode, siteCode, storeName });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pos-locations"] });
@@ -561,16 +561,22 @@ export default function SettingsPage() {
                       <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{channel}</span>
                       <span className="text-xs text-muted-foreground ml-2">({items.length})</span>
                     </div>
+                    {/* Column headers */}
+                    <div className="flex items-center px-4 py-1.5 gap-3 border-b bg-muted/20">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase w-[50px] shrink-0">Initials</span>
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase w-[80px] shrink-0">Site Code</span>
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase flex-1">Full Name</span>
+                    </div>
                     <div className="divide-y">
                       {items.map(pos => (
                         <div key={pos.id} className="flex items-center px-4 py-2.5 gap-2">
                           {editingPosId === pos.id ? (
                             <>
-                              <div className="grid grid-cols-[100px_60px_1fr] gap-2 flex-1">
-                                <Input className="h-8 text-sm" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Channel" />
-                                <Input className="h-8 text-sm w-20" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Initials" />
-                                <Input className="h-8 text-sm w-28" value={editPosSiteCode} onChange={(e) => setEditPosSiteCode(e.target.value)} placeholder="Site Code" />
-                                <Input className="h-8 text-sm" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Store Name" />
+                              <div className="flex items-center gap-2 flex-1">
+                                <Input className="h-8 text-sm w-[80px] shrink-0" value={editPosSalesChannel} onChange={(e) => setEditPosSalesChannel(e.target.value)} placeholder="Channel" />
+                                <Input className="h-8 text-sm w-[60px] shrink-0" value={editPosStoreCode} onChange={(e) => setEditPosStoreCode(e.target.value)} placeholder="Initials" />
+                                <Input className="h-8 text-sm w-[90px] shrink-0" value={editPosSiteCode} onChange={(e) => setEditPosSiteCode(e.target.value)} placeholder="Site Code" />
+                                <Input className="h-8 text-sm flex-1" value={editPosStoreName} onChange={(e) => setEditPosStoreName(e.target.value)} placeholder="Full Name" />
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
@@ -584,12 +590,8 @@ export default function SettingsPage() {
                           ) : (
                             <>
                               <div className="flex items-center gap-3 flex-1">
-                                <Badge variant="outline" className="text-xs justify-center w-[50px] shrink-0" title="Initials">{pos.storeCode}</Badge>
-                                {(pos as any).siteCode ? (
-                                  <span className="text-xs text-muted-foreground font-mono w-[80px] shrink-0" title="Site/Store Code">{(pos as any).siteCode}</span>
-                                ) : (
-                                  <span className="w-[80px] shrink-0" />
-                                )}
+                                <Badge variant="outline" className="text-xs justify-center w-[50px] shrink-0">{pos.storeCode}</Badge>
+                                <span className="text-xs text-muted-foreground font-mono w-[80px] shrink-0">{(pos as any).siteCode || "—"}</span>
                                 <span className={`text-sm ${pos.isActive ? "" : "text-muted-foreground line-through"}`}>
                                   {pos.storeName}
                                   {!pos.isActive && <Badge variant="secondary" className="text-[10px] ml-2">Inactive</Badge>}
