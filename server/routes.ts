@@ -142,6 +142,24 @@ export async function registerRoutes(
     });
   });
 
+  // Change own PIN (any authenticated user)
+  app.post("/api/auth/change-pin", requireAuth, async (req, res) => {
+    try {
+      const { currentPin, newPin } = req.body;
+      if (!currentPin || !newPin) return res.status(400).json({ error: "Current PIN and new PIN required" });
+      if (newPin.length < 4) return res.status(400).json({ error: "New PIN must be at least 4 digits" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const valid = await bcrypt.compare(currentPin, user.pin);
+      if (!valid) return res.status(400).json({ error: "Current PIN is incorrect" });
+      const hashed = await bcrypt.hash(newPin, 10);
+      await storage.updateUser(user.id, { pin: hashed });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/auth/me", async (req, res) => {
     if (!req.session || !req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });

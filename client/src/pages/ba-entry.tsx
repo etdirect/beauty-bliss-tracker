@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy, ChevronDown, ChevronUp, Search, Filter, X } from "lucide-react";
+import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy, ChevronDown, ChevronUp, Search, Filter, X, KeyRound } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Link } from "wouter";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
@@ -47,6 +48,33 @@ export default function BAEntry() {
   const [promoL1Open, setPromoL1Open] = useState(true);
   const [promoL2Open, setPromoL2Open] = useState(true);
   const [incentivesOpen, setIncentivesOpen] = useState(true);
+
+  // Change PIN state
+  const [pinDialogOpen, setPinDialogOpen] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const changePinMutation = useMutation({
+    mutationFn: async () => {
+      if (newPin !== confirmPin) throw new Error("New PINs do not match");
+      if (newPin.length < 4) throw new Error("PIN must be at least 4 digits");
+      try {
+        await apiRequest("POST", "/api/auth/change-pin", { currentPin, newPin });
+      } catch (e: any) {
+        // Parse server error message from "400: {"error":"..."}"
+        const msg = e.message || "";
+        try { const parsed = JSON.parse(msg.replace(/^\d+:\s*/, "")); throw new Error(parsed.error || "Failed"); } catch (inner) { if (inner instanceof Error && inner.message !== "Failed") throw inner; throw e; }
+      }
+    },
+    onSuccess: () => {
+      toast({ title: "PIN changed", description: "Your PIN has been updated successfully." });
+      setPinDialogOpen(false);
+      setCurrentPin(""); setNewPin(""); setConfirmPin("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   // Fetch POS locations (all active)
   const { data: posLocations = [] } = useQuery<PosLocation[]>({
@@ -434,13 +462,64 @@ export default function BAEntry() {
                 </span>
               </Link>
             )}
+            <Dialog open={pinDialogOpen} onOpenChange={(open) => { setPinDialogOpen(open); if (!open) { setCurrentPin(""); setNewPin(""); setConfirmPin(""); } }}>
+              <DialogTrigger asChild>
+                <button
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-2 rounded-md hover:bg-accent"
+                  data-testid="button-change-pin"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                </button>
+              </DialogTrigger>
+              <DialogContent className="max-w-xs">
+                <DialogHeader>
+                  <DialogTitle className="text-base">Change PIN</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 pt-1">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">Current PIN</label>
+                    <Input
+                      type="password" inputMode="numeric" maxLength={8}
+                      value={currentPin} onChange={e => setCurrentPin(e.target.value)}
+                      placeholder="Enter current PIN"
+                      data-testid="input-current-pin"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">New PIN</label>
+                    <Input
+                      type="password" inputMode="numeric" maxLength={8}
+                      value={newPin} onChange={e => setNewPin(e.target.value)}
+                      placeholder="At least 4 digits"
+                      data-testid="input-new-pin"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">Confirm New PIN</label>
+                    <Input
+                      type="password" inputMode="numeric" maxLength={8}
+                      value={confirmPin} onChange={e => setConfirmPin(e.target.value)}
+                      placeholder="Re-enter new PIN"
+                      data-testid="input-confirm-pin"
+                    />
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={() => changePinMutation.mutate()}
+                    disabled={changePinMutation.isPending || !currentPin || !newPin || !confirmPin}
+                    data-testid="button-save-pin"
+                  >
+                    {changePinMutation.isPending ? "Saving..." : "Save New PIN"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <button
               onClick={logout}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors px-3 py-2 rounded-md hover:bg-accent"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors px-2 py-2 rounded-md hover:bg-accent"
               data-testid="button-logout"
             >
               <LogOut className="w-3.5 h-3.5" />
-              Sign Out
             </button>
           </div>
         </div>
