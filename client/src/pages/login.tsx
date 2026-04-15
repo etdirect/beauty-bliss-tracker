@@ -38,8 +38,8 @@ export default function LoginPage({ onLogin }: LoginProps) {
             <ShoppingBag className="w-7 h-7 text-primary-foreground" />
           </div>
           <div>
-            <CardTitle className="text-xl">Beauty Bliss</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">Sales Tracker</p>
+            <CardTitle className="text-xl">Counter Sales Tracker</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">Beauty Bliss — HK & Macau</p>
           </div>
         </CardHeader>
         <CardContent>

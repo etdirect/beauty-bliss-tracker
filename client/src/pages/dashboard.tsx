@@ -60,7 +60,7 @@ export default function Dashboard() {
             <LayoutDashboard className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-bold leading-tight">Beauty Bliss</h1>
+            <h1 className="text-sm font-bold leading-tight">Counter Sales Tracker</h1>
             <p className="text-[10px] text-muted-foreground">Management — {user.name}</p>
           </div>
         </div>

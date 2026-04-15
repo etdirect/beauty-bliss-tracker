@@ -441,7 +441,7 @@ export default function BAEntry() {
               <ShoppingBag className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-tight">Beauty Bliss</h1>
+              <h1 className="text-base font-semibold leading-tight">Counter Sales Tracker</h1>
               <p className="text-xs text-muted-foreground">Daily Sales Entry — {user?.name}</p>
             </div>
           </div>
