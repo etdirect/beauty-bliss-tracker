@@ -60,8 +60,8 @@ export async function registerRoutes(
   app.get("/api/public/pos-locations", async (_req, res) => {
     try {
       const locations = await storage.getPosLocations();
-      const active = locations.filter((l: any) => l.isActive);
-      res.json(active.map((l: any) => ({ id: l.id, salesChannel: l.salesChannel, storeCode: l.storeCode, siteCode: l.siteCode, storeName: l.storeName })));
+      // Return ALL locations including inactive — consuming apps can filter/collapse as needed
+      res.json(locations.map((l: any) => ({ id: l.id, salesChannel: l.salesChannel, storeCode: l.storeCode, siteCode: l.siteCode, storeName: l.storeName, isActive: l.isActive })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
