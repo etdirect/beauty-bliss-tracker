@@ -61,7 +61,7 @@ export async function registerRoutes(
     try {
       const locations = await storage.getPosLocations();
       const active = locations.filter((l: any) => l.isActive);
-      res.json(active.map((l: any) => ({ id: l.id, salesChannel: l.salesChannel, storeCode: l.storeCode, storeName: l.storeName })));
+      res.json(active.map((l: any) => ({ id: l.id, salesChannel: l.salesChannel, storeCode: l.storeCode, siteCode: l.siteCode, storeName: l.storeName })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
