@@ -479,7 +479,7 @@ export default function BAEntry() {
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">Current PIN</label>
                     <Input
-                      type="password" inputMode="numeric" maxLength={8}
+                      type="password"
                       value={currentPin} onChange={e => setCurrentPin(e.target.value)}
                       placeholder="Enter current PIN"
                       data-testid="input-current-pin"
@@ -488,16 +488,16 @@ export default function BAEntry() {
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">New PIN</label>
                     <Input
-                      type="password" inputMode="numeric" maxLength={8}
+                      type="password"
                       value={newPin} onChange={e => setNewPin(e.target.value)}
-                      placeholder="At least 4 digits"
+                      placeholder="At least 4 characters"
                       data-testid="input-new-pin"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">Confirm New PIN</label>
                     <Input
-                      type="password" inputMode="numeric" maxLength={8}
+                      type="password"
                       value={confirmPin} onChange={e => setConfirmPin(e.target.value)}
                       placeholder="Re-enter new PIN"
                       data-testid="input-confirm-pin"

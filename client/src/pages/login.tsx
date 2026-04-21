@@ -58,7 +58,6 @@ export default function LoginPage({ onLogin }: LoginProps) {
               <label className="text-sm font-medium">PIN</label>
               <Input
                 type="password"
-                inputMode="numeric"
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 placeholder="Enter PIN"

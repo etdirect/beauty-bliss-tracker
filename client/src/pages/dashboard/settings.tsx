@@ -650,7 +650,6 @@ export default function SettingsPage() {
                 />
                 <Input
                   type="password"
-                  inputMode="numeric"
                   value={newUserPin}
                   onChange={e => setNewUserPin(e.target.value)}
                   placeholder="PIN"
@@ -783,7 +782,6 @@ export default function SettingsPage() {
                       <div className="flex gap-2 items-center ml-6">
                         <Input
                           type="password"
-                          inputMode="numeric"
                           value={resetPinValue}
                           onChange={e => setResetPinValue(e.target.value)}
                           placeholder="New PIN"

@@ -147,7 +147,7 @@ export async function registerRoutes(
     try {
       const { currentPin, newPin } = req.body;
       if (!currentPin || !newPin) return res.status(400).json({ error: "Current PIN and new PIN required" });
-      if (newPin.length < 4) return res.status(400).json({ error: "New PIN must be at least 4 digits" });
+      if (newPin.length < 4) return res.status(400).json({ error: "New PIN must be at least 4 characters" });
       const user = await storage.getUser(req.session.userId);
       if (!user) return res.status(404).json({ error: "User not found" });
       const valid = await bcrypt.compare(currentPin, user.pin);
