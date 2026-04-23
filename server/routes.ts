@@ -443,10 +443,12 @@ export async function registerRoutes(
         return res.status(400).json({ error: "name, type, startDate, endDate are required" });
       }
 
-      // Resolve brandName to brandId early (needed for both create and update)
-      if (!data.brandId && data.brandName) {
+      // Resolve brand name to brandId early (needed for both create and update)
+      // Simulator sends "brand" field; older clients used "brandName". Accept both.
+      const incomingBrandName: string | undefined = data.brandName || data.brand;
+      if (!data.brandId && incomingBrandName) {
         const allBrands = await storage.getBrands();
-        const brandMatch = allBrands.find((b: any) => b.name.toLowerCase() === data.brandName.toLowerCase());
+        const brandMatch = allBrands.find((b: any) => b.name.toLowerCase() === incomingBrandName.toLowerCase());
         if (brandMatch) data.brandId = brandMatch.id;
       }
 
