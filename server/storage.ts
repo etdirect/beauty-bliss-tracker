@@ -837,6 +837,7 @@ export class PgStorage implements IStorage {
       sourceApp: "source_app", sourceScenarioId: "source_scenario_id",
       promotionLayer: "promotion_layer", trackable: "trackable",
       descriptionZh: "description_zh", mechanicsZh: "mechanics_zh",
+      simulatorPromoNumber: "simulator_promo_number",
     };
     const sets: string[] = []; const vals: any[] = []; let i = 1;
     for (const [key, col] of Object.entries(fieldMap)) {

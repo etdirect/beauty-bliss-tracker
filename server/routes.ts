@@ -506,21 +506,26 @@ export async function registerRoutes(
   });
 
   // POST /api/promotions/link-simulator-number — Simulator calls this after creating its history row
-  // so tracker can display the matching #N. Keyed by sourceScenarioId.
+  // so tracker can display the matching #N. Keyed by sourceScenarioId. Optionally also sets brand.
   app.post("/api/promotions/link-simulator-number", async (req, res) => {
     try {
-      const { sourceScenarioId, simulatorPromoNumber } = req.body;
-      if (!sourceScenarioId || typeof simulatorPromoNumber !== "number") {
-        return res.status(400).json({ error: "sourceScenarioId and simulatorPromoNumber (number) required" });
-      }
+      const { sourceScenarioId, simulatorPromoNumber, brand } = req.body;
+      if (!sourceScenarioId) return res.status(400).json({ error: "sourceScenarioId required" });
       const all = await storage.getPromotions();
       const matches = (all as any[]).filter(p => p.sourceScenarioId === sourceScenarioId);
+      const brands = brand ? await storage.getBrands() : [];
+      const resolvedBrand = brand ? brands.find((b: any) => b.name.toLowerCase() === (brand as string).toLowerCase()) : null;
       let updated = 0;
       for (const m of matches) {
-        await storage.updatePromotion(m.id, { simulatorPromoNumber } as any);
-        updated++;
+        const patch: any = {};
+        if (typeof simulatorPromoNumber === "number") patch.simulatorPromoNumber = simulatorPromoNumber;
+        if (resolvedBrand && !m.brandId) patch.brandId = resolvedBrand.id;
+        if (Object.keys(patch).length > 0) {
+          await storage.updatePromotion(m.id, patch);
+          updated++;
+        }
       }
-      return res.json({ ok: true, updated });
+      return res.json({ ok: true, updated, brandResolved: resolvedBrand?.name || null });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
