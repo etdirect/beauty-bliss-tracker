@@ -199,6 +199,28 @@ export const insertPromotionResultSchema = createInsertSchema(promotionResults).
 export type InsertPromotionResult = z.infer<typeof insertPromotionResultSchema>;
 export type PromotionResult = typeof promotionResults.$inferSelect;
 
+// === Promotion Deductions (monetary redemptions, e.g. Spend $500 get $50) ===
+// One row per counter + date + promotion. redemption_count is how many times
+// the promo fired that day; reward_per_redemption is the HK$ amount deducted
+// per redemption (snapshot at entry time, in case the promo's reward amount
+// is edited later). total_deduction is stored for speed but must equal
+// count × reward_per_redemption.
+export const promotionDeductions = pgTable("promotion_deductions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull(),
+  counterId: varchar("counter_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  redemptionCount: integer("redemption_count").notNull().default(0),
+  rewardPerRedemption: real("reward_per_redemption").notNull().default(0),
+  totalDeduction: real("total_deduction").notNull().default(0),
+  notes: text("notes"),
+  submittedBy: varchar("submitted_by"),
+});
+
+export const insertPromotionDeductionSchema = createInsertSchema(promotionDeductions).omit({ id: true });
+export type InsertPromotionDeduction = z.infer<typeof insertPromotionDeductionSchema>;
+export type PromotionDeduction = typeof promotionDeductions.$inferSelect;
+
 // Batch submission schema for BA entry
 export const batchSalesSubmissionSchema = z.object({
   counterId: z.string(),
@@ -213,6 +235,16 @@ export const batchSalesSubmissionSchema = z.object({
   promotionResults: z.array(z.object({
     promotionId: z.string(),
     gwpGiven: z.number().min(0),
+    notes: z.string().optional(),
+  })).optional(),
+  // Monetary deductions for trackable Spend & Get (or similar) promos.
+  // Sent from the BA entry screen alongside sales. Stored as separate rows
+  // so reports can subtract them from gross sales without mutating the raw
+  // sales_entries table.
+  promotionDeductions: z.array(z.object({
+    promotionId: z.string(),
+    redemptionCount: z.number().int().min(0),
+    rewardPerRedemption: z.number().min(0),
     notes: z.string().optional(),
   })).optional(),
   posFigure: z.number().min(0).optional(), // POS system daily figure (對數紙)

@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Brand, Promotion, PromotionResult, PosLocation } from "@shared/schema";
+import type { Brand, Promotion, PromotionResult, PosLocation, PromotionDeduction } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -88,6 +88,7 @@ export default function Promotions() {
   const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ["/api/brands"], staleTime: 30_000 });
   const { data: promotions = [] } = useQuery<Promotion[]>({ queryKey: ["/api/promotions"], staleTime: 30_000, refetchOnWindowFocus: true });
   const { data: promotionResults = [] } = useQuery<PromotionResult[]>({ queryKey: ["/api/promotion-results"], staleTime: 30_000 });
+  const { data: promotionDeductions = [] } = useQuery<PromotionDeduction[]>({ queryKey: ["/api/promotion-deductions"], staleTime: 30_000 });
   const { data: posLocations = [] } = useQuery<PosLocation[]>({ queryKey: ["/api/pos-locations"], staleTime: 30_000 });
 
   const brandMap = useMemo(() => { const m = new Map<string, Brand>(); brands.forEach(b => m.set(b.id, b)); return m; }, [brands]);
@@ -196,6 +197,22 @@ export default function Promotions() {
     return { total, byCounter };
   };
 
+  // Deduction stats (how many "Get Y" redemptions were recorded and the total HK$ deducted)
+  const getDeductionStats = (promo: Promotion) => {
+    const rows = promotionDeductions.filter(r => r.promotionId === promo.id);
+    const totalCount = rows.reduce((s, r) => s + (r.redemptionCount ?? 0), 0);
+    const totalAmount = rows.reduce((s, r) => s + (r.totalDeduction ?? 0), 0);
+    const byCounter: Record<string, { count: number; amount: number }> = {};
+    for (const r of rows) {
+      const pos = posLocations.find(p => p.id === r.counterId);
+      const name = pos?.storeName || "Unknown";
+      if (!byCounter[name]) byCounter[name] = { count: 0, amount: 0 };
+      byCounter[name].count += r.redemptionCount ?? 0;
+      byCounter[name].amount += r.totalDeduction ?? 0;
+    }
+    return { totalCount, totalAmount, byCounter };
+  };
+
   // Summary
   const activeCount = filtered.filter(p => getStatus(p) === "active").length;
   const brandCount = new Set(filtered.map(p => p.brandId).filter(Boolean)).size;
@@ -204,6 +221,7 @@ export default function Promotions() {
     const brand = p.brandId ? brandMap.get(p.brandId) : null;
     const status = getStatus(p);
     const stats = getPromoStats(p);
+    const dedStats = getDeductionStats(p);
     const layer = p.promotionLayer || "brand";
     const layerLabel = layer === "brand" ? "L1" : layer === "counter" ? "L2" : "L3";
     const typeColor = PROMO_TYPE_COLORS[p.type] || PROMO_TYPE_COLORS["Other"];
@@ -265,6 +283,16 @@ export default function Promotions() {
               <span className="text-[11px] font-medium">{stats.total} given</span>
               {Object.entries(stats.byCounter).slice(0, 5).map(([name, count]) => (
                 <Badge key={name} variant="secondary" className="text-[10px] tabular-nums">{name}: {count}</Badge>
+              ))}
+            </div>
+          )}
+          {/* Deduction stats (Spend & Get / Fixed Amount) */}
+          {dedStats.totalCount > 0 && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700">Get Y</Badge>
+              <span className="text-[11px] font-medium">{dedStats.totalCount} redemptions · HK${dedStats.totalAmount.toLocaleString()} deducted</span>
+              {Object.entries(dedStats.byCounter).slice(0, 5).map(([name, v]) => (
+                <Badge key={name} variant="secondary" className="text-[10px] tabular-nums">{name}: {v.count} · HK${v.amount.toLocaleString()}</Badge>
               ))}
             </div>
           )}

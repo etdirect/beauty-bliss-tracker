@@ -5,6 +5,7 @@ import {
   type SalesEntry, type InsertSalesEntry,
   type Promotion, type InsertPromotion,
   type PromotionResult, type InsertPromotionResult,
+  type PromotionDeduction, type InsertPromotionDeduction,
   type BatchSalesSubmission,
   type PosLocation, type InsertPosLocation,
   type User, type InsertUser,
@@ -66,6 +67,11 @@ export interface IStorage {
   createPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
   upsertPromotionResult(result: InsertPromotionResult): Promise<PromotionResult>;
   deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void>;
+
+  // Promotion deductions (monetary redemptions, e.g. Spend $500 get $50)
+  getPromotionDeductions(filters?: { promotionId?: string; counterId?: string; date?: string; startDate?: string; endDate?: string }): Promise<PromotionDeduction[]>;
+  upsertPromotionDeduction(data: InsertPromotionDeduction): Promise<PromotionDeduction>;
+  deletePromotionDeduction(promotionId: string, counterId: string, date: string): Promise<void>;
 
   // POS Locations
   getPosLocations(): Promise<PosLocation[]>;
@@ -278,6 +284,19 @@ export class PgStorage implements IStorage {
         gwp_given INTEGER NOT NULL DEFAULT 0,
         notes TEXT
       );
+      CREATE TABLE IF NOT EXISTS promotion_deductions (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        promotion_id TEXT NOT NULL,
+        counter_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        redemption_count INTEGER NOT NULL DEFAULT 0,
+        reward_per_redemption REAL NOT NULL DEFAULT 0,
+        total_deduction REAL NOT NULL DEFAULT 0,
+        notes TEXT,
+        submitted_by TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS promotion_deductions_unique
+        ON promotion_deductions (promotion_id, counter_id, date);
     `);
     // Migration: add new columns if table already existed
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS source_app TEXT`);
@@ -764,6 +783,28 @@ export class PgStorage implements IStorage {
         }
       }
     }
+    // Monetary redemption deductions (e.g. Spend $500 get $50). Stored
+    // separately from promotion_results so reports can subtract them from
+    // gross sales without mutating the raw sales_entries table.
+    if (submission.promotionDeductions) {
+      for (const pd of submission.promotionDeductions) {
+        if ((pd.redemptionCount ?? 0) > 0) {
+          await this.upsertPromotionDeduction({
+            promotionId: pd.promotionId,
+            counterId: submission.counterId,
+            date: submission.date,
+            redemptionCount: pd.redemptionCount,
+            rewardPerRedemption: pd.rewardPerRedemption,
+            totalDeduction: +(pd.redemptionCount * pd.rewardPerRedemption).toFixed(2),
+            notes: pd.notes ?? null,
+            submittedBy: submittedBy ?? null,
+          });
+        } else {
+          // Zeroed out — remove the row so reports don't show a stale deduction
+          await this.deletePromotionDeduction(pd.promotionId, submission.counterId, submission.date);
+        }
+      }
+    }
     // POS system figure (optional)
     if (submission.posFigure != null && submission.posFigure > 0) {
       await this.upsertPosDailyFigure(submission.counterId, submission.date, submission.posFigure, submittedBy ?? undefined);
@@ -904,6 +945,54 @@ export class PgStorage implements IStorage {
   }
   async deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void> {
     await this.q("DELETE FROM promotion_results WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [promotionId, counterId, date]);
+  }
+
+  // ── Promotion deductions ──
+  private mapPromotionDeduction(r: any): PromotionDeduction {
+    return {
+      id: r.id,
+      promotionId: r.promotion_id,
+      counterId: r.counter_id,
+      date: r.date,
+      redemptionCount: Number(r.redemption_count ?? 0),
+      rewardPerRedemption: Number(r.reward_per_redemption ?? 0),
+      totalDeduction: Number(r.total_deduction ?? 0),
+      notes: r.notes ?? null,
+      submittedBy: r.submitted_by ?? null,
+    };
+  }
+  async getPromotionDeductions(filters?: { promotionId?: string; counterId?: string; date?: string; startDate?: string; endDate?: string }): Promise<PromotionDeduction[]> {
+    let where = "WHERE 1=1"; const vals: any[] = []; let i = 1;
+    if (filters?.promotionId) { where += ` AND promotion_id=$${i++}`; vals.push(filters.promotionId); }
+    if (filters?.counterId) { where += ` AND counter_id=$${i++}`; vals.push(filters.counterId); }
+    if (filters?.date) { where += ` AND date=$${i++}`; vals.push(filters.date); }
+    if (filters?.startDate) { where += ` AND date>=$${i++}`; vals.push(filters.startDate); }
+    if (filters?.endDate) { where += ` AND date<=$${i++}`; vals.push(filters.endDate); }
+    const { rows } = await this.q(`SELECT * FROM promotion_deductions ${where} ORDER BY date DESC`, vals);
+    return rows.map((r: any) => this.mapPromotionDeduction(r));
+  }
+  async upsertPromotionDeduction(data: InsertPromotionDeduction): Promise<PromotionDeduction> {
+    const count = Math.max(0, Math.round(data.redemptionCount ?? 0));
+    const reward = Math.max(0, data.rewardPerRedemption ?? 0);
+    const total = +(count * reward).toFixed(2);
+    const { rows } = await this.q("SELECT id FROM promotion_deductions WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [data.promotionId, data.counterId, data.date]);
+    if (rows.length > 0) {
+      const existingId = rows[0].id;
+      await this.q(
+        "UPDATE promotion_deductions SET redemption_count=$1, reward_per_redemption=$2, total_deduction=$3, notes=$4, submitted_by=$5 WHERE id=$6",
+        [count, reward, total, data.notes ?? null, data.submittedBy ?? null, existingId],
+      );
+      return { id: existingId, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+    }
+    const id = randomUUID();
+    await this.q(
+      "INSERT INTO promotion_deductions (id, promotion_id, counter_id, date, redemption_count, reward_per_redemption, total_deduction, notes, submitted_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [id, data.promotionId, data.counterId, data.date, count, reward, total, data.notes ?? null, data.submittedBy ?? null],
+    );
+    return { id, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+  }
+  async deletePromotionDeduction(promotionId: string, counterId: string, date: string): Promise<void> {
+    await this.q("DELETE FROM promotion_deductions WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [promotionId, counterId, date]);
   }
 
   // ── POS Locations ──
@@ -1418,6 +1507,24 @@ export class MemStorage implements IStorage {
         }
       }
     }
+    if (submission.promotionDeductions) {
+      for (const pd of submission.promotionDeductions) {
+        if ((pd.redemptionCount ?? 0) > 0) {
+          await this.upsertPromotionDeduction({
+            promotionId: pd.promotionId,
+            counterId: submission.counterId,
+            date: submission.date,
+            redemptionCount: pd.redemptionCount,
+            rewardPerRedemption: pd.rewardPerRedemption,
+            totalDeduction: +(pd.redemptionCount * pd.rewardPerRedemption).toFixed(2),
+            notes: pd.notes ?? null,
+            submittedBy: submittedBy ?? null,
+          });
+        } else {
+          await this.deletePromotionDeduction(pd.promotionId, submission.counterId, submission.date);
+        }
+      }
+    }
   }
   async deleteSalesEntry(id: string): Promise<void> { this.salesEntries.delete(id); }
   async bulkUpsertSalesEntries(entries: InsertSalesEntry[]): Promise<number> {
@@ -1465,6 +1572,37 @@ export class MemStorage implements IStorage {
   async deletePromotionResult(promotionId: string, counterId: string, date: string): Promise<void> {
     for (const [id, r] of this.promotionResults) {
       if (r.promotionId === promotionId && r.counterId === counterId && r.date === date) { this.promotionResults.delete(id); break; }
+    }
+  }
+
+  private promotionDeductions: Map<string, PromotionDeduction> = new Map();
+  async getPromotionDeductions(filters?: { promotionId?: string; counterId?: string; date?: string; startDate?: string; endDate?: string }): Promise<PromotionDeduction[]> {
+    let rows = Array.from(this.promotionDeductions.values());
+    if (filters?.promotionId) rows = rows.filter(r => r.promotionId === filters.promotionId);
+    if (filters?.counterId) rows = rows.filter(r => r.counterId === filters.counterId);
+    if (filters?.date) rows = rows.filter(r => r.date === filters.date);
+    if (filters?.startDate) rows = rows.filter(r => r.date >= filters.startDate!);
+    if (filters?.endDate) rows = rows.filter(r => r.date <= filters.endDate!);
+    return rows;
+  }
+  async upsertPromotionDeduction(data: InsertPromotionDeduction): Promise<PromotionDeduction> {
+    const count = Math.max(0, Math.round(data.redemptionCount ?? 0));
+    const reward = Math.max(0, data.rewardPerRedemption ?? 0);
+    const total = +(count * reward).toFixed(2);
+    const existing = Array.from(this.promotionDeductions.values()).find(r => r.promotionId === data.promotionId && r.counterId === data.counterId && r.date === data.date);
+    if (existing) {
+      const u: PromotionDeduction = { ...existing, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+      this.promotionDeductions.set(existing.id, u);
+      return u;
+    }
+    const id = randomUUID();
+    const rec: PromotionDeduction = { id, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+    this.promotionDeductions.set(id, rec);
+    return rec;
+  }
+  async deletePromotionDeduction(promotionId: string, counterId: string, date: string): Promise<void> {
+    for (const [id, r] of this.promotionDeductions) {
+      if (r.promotionId === promotionId && r.counterId === counterId && r.date === date) { this.promotionDeductions.delete(id); break; }
     }
   }
 

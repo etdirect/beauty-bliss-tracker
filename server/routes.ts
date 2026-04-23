@@ -500,6 +500,14 @@ export async function registerRoutes(
           if (data.mechanicsZh) updateFields.mechanicsZh = data.mechanicsZh;
           if (data.isActive !== undefined) updateFields.isActive = data.isActive;
           if (data.brandId) updateFields.brandId = data.brandId;
+          // Keep trackable + monetary reward fields in sync on re-push so the
+          // BA entry screen can pick up the deduction counter without an
+          // admin manually toggling fields.
+          if (data.trackable !== undefined) updateFields.trackable = data.trackable;
+          if (data.spendGetSpendAmount !== undefined) updateFields.spendGetSpendAmount = data.spendGetSpendAmount;
+          if (data.spendGetDiscountAmount !== undefined) updateFields.spendGetDiscountAmount = data.spendGetDiscountAmount;
+          if (data.discountFixedAmount !== undefined) updateFields.discountFixedAmount = data.discountFixedAmount;
+          if (data.discountPercentage !== undefined) updateFields.discountPercentage = data.discountPercentage;
           let lastUpdated;
           for (const match of matches) {
             lastUpdated = await storage.updatePromotion(match.id, { ...match, ...updateFields });
@@ -705,6 +713,20 @@ export async function registerRoutes(
     if (req.query.counterId) filters.counterId = req.query.counterId as string;
     if (req.query.date) filters.date = req.query.date as string;
     const results = await storage.getPromotionResults(filters);
+    res.json(results);
+  });
+
+  // === PROMOTION DEDUCTIONS ===
+  // One row per (promotion, counter, date) recording how many 'Get Y' rewards
+  // the BA handed out that day and the resulting HK$ deduction.
+  app.get("/api/promotion-deductions", requireAuth, async (req, res) => {
+    const filters: any = {};
+    if (req.query.promotionId) filters.promotionId = req.query.promotionId as string;
+    if (req.query.counterId) filters.counterId = req.query.counterId as string;
+    if (req.query.date) filters.date = req.query.date as string;
+    if (req.query.startDate) filters.startDate = req.query.startDate as string;
+    if (req.query.endDate) filters.endDate = req.query.endDate as string;
+    const results = await storage.getPromotionDeductions(filters);
     res.json(results);
   });
 

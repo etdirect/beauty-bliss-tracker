@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/App";
-import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme, RewardTier, StoreThreshold, ComboBonus, TargetProduct } from "@shared/schema";
+import type { Brand, Promotion, BrandPosAvailability, PosLocation, SalesEntry, IncentiveScheme, RewardTier, StoreThreshold, ComboBonus, TargetProduct, PromotionDeduction } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,11 @@ export default function BAEntry() {
   );
   const [salesData, setSalesData] = useState<Record<string, { orders: number; units: number; amount: number; gwpCount: number }>>({});
   const [promoData, setPromoData] = useState<Record<string, { gwpGiven: number; notes: string }>>({});
+  // Deduction inputs for trackable monetary promos (e.g. Spend $500 get $50).
+  // Keyed by promotion id. redemptionCount is how many times the BA says
+  // the promo fired today. reward is snapshotted from the promotion's
+  // spendGetDiscountAmount / discountFixedAmount at entry time.
+  const [deductionData, setDeductionData] = useState<Record<string, { redemptionCount: number; notes: string }>>({});
   const [submitted, setSubmitted] = useState(false);
   const [posFigure, setPosFigure] = useState<string>("");
 
@@ -237,6 +242,18 @@ export default function BAEntry() {
     staleTime: 30_000,
   });
 
+  // Fetch existing promotion deductions (monetary Spend & Get redemptions) for
+  // the selected counter + date so BA revisits pre-populate correctly.
+  const { data: existingDeductions = [], refetch: refetchDeductions } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?counterId=${selectedCounter}&date=${selectedDate}`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/promotion-deductions?counterId=${selectedCounter}&date=${selectedDate}`);
+      return res.json();
+    },
+    enabled: !!selectedCounter && !!selectedDate,
+    staleTime: 30_000,
+  });
+
   // Load existing POS figure into input when data arrives
   useEffect(() => {
     if (existingPosFigures.length > 0) {
@@ -245,6 +262,36 @@ export default function BAEntry() {
       setPosFigure("");
     }
   }, [existingPosFigures]);
+
+  // Hydrate deductionData whenever existing deductions load (e.g. user switches
+  // to a new date or POS). Doing this here keeps the inputs in sync even when
+  // the big "Load previous entries" button hasn't been clicked.
+  useEffect(() => {
+    const next: Record<string, { redemptionCount: number; notes: string }> = {};
+    for (const d of existingDeductions) {
+      next[d.promotionId] = { redemptionCount: d.redemptionCount ?? 0, notes: d.notes ?? "" };
+    }
+    setDeductionData(next);
+  }, [existingDeductions]);
+
+  // ─── Deductible promotion helpers ───
+  // A promotion qualifies for BA deduction entry when (a) it is explicitly
+  // flagged trackable (BA input requested from Simulator), AND (b) it has a
+  // monetary reward the BA can plausibly count and deduct per redemption.
+  // For now we support Spend & Get (with a spendGetDiscountAmount) and Fixed
+  // Amount Discount (with a discountFixedAmount). GWP/PWP stay on the
+  // existing promotion-results counter because their "reward" isn't a HK$
+  // amount, it's a product.
+  function rewardPerRedemption(p: Promotion): number {
+    if (p.spendGetDiscountAmount != null && p.spendGetDiscountAmount > 0) return Number(p.spendGetDiscountAmount);
+    if (p.discountFixedAmount != null && p.discountFixedAmount > 0) return Number(p.discountFixedAmount);
+    return 0;
+  }
+  function isDeductiblePromo(p: Promotion): boolean {
+    if (!p.trackable) return false;
+    if (p.type !== "Spend & Get" && p.type !== "Fixed Amount Discount") return false;
+    return rewardPerRedemption(p) > 0;
+  }
 
   // Filter existing sales: for non-management, only show entries they submitted (or all if canViewHistory)
   const myExistingEntries = existingSales.filter(e => {
@@ -294,12 +341,24 @@ export default function BAEntry() {
           notes: promoData[p.id]?.notes || "",
         }));
 
+      // Include every deductible promo — zero counts are sent so a BA can
+      // clear a previous day's deduction by re-submitting with 0.
+      const promotionDeductions = activePromotions
+        .filter(p => isDeductiblePromo(p))
+        .map(p => ({
+          promotionId: p.id,
+          redemptionCount: deductionData[p.id]?.redemptionCount ?? 0,
+          rewardPerRedemption: rewardPerRedemption(p),
+          notes: deductionData[p.id]?.notes || "",
+        }));
+
       const posVal = posFigure ? parseFloat(posFigure) : undefined;
       await apiRequest("POST", "/api/sales/batch", {
         counterId: selectedCounter,
         date: selectedDate,
         entries,
         promotionResults,
+        promotionDeductions,
         posFigure: posVal && posVal > 0 ? posVal : undefined,
       });
     },
@@ -307,6 +366,7 @@ export default function BAEntry() {
       setSubmitted(true);
       toast({ title: "Sales submitted", description: "Your daily sales have been recorded." });
       queryClient.invalidateQueries({ queryKey: ["/api/sales"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/promotion-deductions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pos-daily-figures"] });
     },
     onError: (error: Error) => {
@@ -331,6 +391,7 @@ export default function BAEntry() {
   const handleReset = () => {
     setSalesData({});
     setPromoData({});
+    setDeductionData({});
     setSubmitted(false);
   };
 
@@ -358,6 +419,18 @@ export default function BAEntry() {
       };
     });
     setPromoData(pData);
+
+    // Load existing deductions so BAs can revise a prior day
+    const dedRefetch = await refetchDeductions();
+    const freshDed = (dedRefetch.data ?? []) as PromotionDeduction[];
+    const dData: Record<string, { redemptionCount: number; notes: string }> = {};
+    for (const d of freshDed) {
+      dData[d.promotionId] = {
+        redemptionCount: d.redemptionCount ?? 0,
+        notes: d.notes ?? "",
+      };
+    }
+    setDeductionData(dData);
 
     // 3. Load incentive entries — force refetch and set inputs directly
     const incentiveRefetch = await refetchDailyEntries();
@@ -533,7 +606,7 @@ export default function BAEntry() {
               <label className="text-sm font-medium flex items-center gap-1.5">
                 <Store className="w-3.5 h-3.5" /> POS Location
               </label>
-              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); }}>
+              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); }}>
                 <SelectTrigger data-testid="select-counter">
                   <SelectValue placeholder="Select your POS location" />
                 </SelectTrigger>
@@ -838,6 +911,49 @@ export default function BAEntry() {
                           {promo.mechanicsZh || promo.mechanics}
                         </p>
                       )}
+                      {isDeductiblePromo(promo) && (() => {
+                        const reward = rewardPerRedemption(promo);
+                        const count = deductionData[promo.id]?.redemptionCount ?? 0;
+                        const subtotal = count * reward;
+                        // Sum of all deductible promo subtotals today — used
+                        // for the over-redemption warning.
+                        const dayGross = Object.values(salesData).reduce((s, v) => s + (v?.amount ?? 0), 0);
+                        const overRedeemed = dayGross > 0 && subtotal > dayGross;
+                        return (
+                          <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-white/80 dark:bg-blue-950/40 px-2.5 py-2 space-y-1.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label className="text-xs font-medium text-blue-900 dark:text-blue-200" htmlFor={`ded-${promo.id}`}>
+                                今日兌換次數（Get Y）
+                              </label>
+                              <Input
+                                id={`ded-${promo.id}`}
+                                data-testid={`input-deduction-${promo.id}`}
+                                type="number"
+                                min={0}
+                                step={1}
+                                inputMode="numeric"
+                                className="h-7 w-20 text-sm tabular-nums"
+                                value={count > 0 ? String(count) : ""}
+                                onChange={(e) => {
+                                  const n = e.target.value === "" ? 0 : Math.max(0, Math.floor(Number(e.target.value)));
+                                  setDeductionData((prev) => ({
+                                    ...prev,
+                                    [promo.id]: { redemptionCount: n, notes: prev[promo.id]?.notes ?? "" },
+                                  }));
+                                }}
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                × HK${reward.toLocaleString()} = <span className="font-semibold text-blue-900 dark:text-blue-100">HK${subtotal.toLocaleString()}</span> 扣除
+                              </span>
+                            </div>
+                            {overRedeemed && (
+                              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                                ⚠ 扣除總額（HK${subtotal.toLocaleString()}）大於今日銷售額（HK${dayGross.toLocaleString()}），請核對數據。
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
