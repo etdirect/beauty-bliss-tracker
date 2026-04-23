@@ -441,27 +441,88 @@ export async function registerRoutes(
       const promos = await storage.getPromotions();
       const brands = await storage.getBrands();
       let fixed = 0;
-      let skipped = 0;
-      const details: { id: string; name: string; resolvedBrand: string }[] = [];
+      const skippedReasons: { promoNumber?: number; name: string; reason: string; brandNameTried?: string }[] = [];
+      const details: { promoNumber?: number; name: string; resolvedBrand: string }[] = [];
+
       for (const p of promos as any[]) {
         if (p.brandId) continue; // already has brand
+        const promoNumber = p.promoNumber;
         let brandName: string | undefined;
+
+        // Try pushPayload first
         if (p.pushPayload) {
           try {
             const pp = typeof p.pushPayload === "string" ? JSON.parse(p.pushPayload) : p.pushPayload;
             brandName = pp.brand || pp.brandName;
           } catch { /* skip unparseable */ }
         }
-        if (!brandName) { skipped++; continue; }
+
+        // Fallback: parse from applicableProducts (first item) or product master
+        if (!brandName && p.applicableProducts) {
+          // e.g. "Saferecipe Capsule Sun 50ml, Saferecipe Sunessence Plus 50ml..."
+          // Try to match any brand name that appears as a prefix in the product list
+          const productListLower = (p.applicableProducts as string).toLowerCase();
+          for (const b of brands as any[]) {
+            if (productListLower.startsWith(b.name.toLowerCase()) || productListLower.includes(` ${b.name.toLowerCase()} `)) {
+              brandName = b.name;
+              break;
+            }
+          }
+        }
+
+        // Fallback: parse brand from the description text (e.g. "10% off Saferecipe..." → match 'Saferecipe')
+        if (!brandName && p.description) {
+          const descLower = (p.description as string).toLowerCase();
+          for (const b of brands as any[]) {
+            if (descLower.includes(b.name.toLowerCase())) {
+              brandName = b.name;
+              break;
+            }
+          }
+        }
+
+        // Fallback: parse brand from the promotion name itself
+        if (!brandName && p.name) {
+          const nameLower = (p.name as string).toLowerCase();
+          for (const b of brands as any[]) {
+            if (nameLower.includes(b.name.toLowerCase())) {
+              brandName = b.name;
+              break;
+            }
+          }
+        }
+
+        if (!brandName) { skippedReasons.push({ promoNumber, name: p.name, reason: "could not resolve brand from pushPayload, applicableProducts, description, or name" }); continue; }
         const match = brands.find((b: any) => b.name.toLowerCase() === brandName!.toLowerCase());
-        if (!match) { skipped++; continue; }
+        if (!match) { skippedReasons.push({ promoNumber, name: p.name, reason: `brand '${brandName}' not found in tracker brands`, brandNameTried: brandName }); continue; }
         await storage.updatePromotion(p.id, { brandId: match.id } as any);
-        details.push({ id: p.id, name: p.name, resolvedBrand: match.name });
+        details.push({ promoNumber, name: p.name, resolvedBrand: match.name });
         fixed++;
       }
-      return res.json({ ok: true, fixed, skipped, details });
+      return res.json({ ok: true, fixed, skipped: skippedReasons.length, skippedReasons, details });
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/promotions/link-simulator-number — Simulator calls this after creating its history row
+  // so tracker can display the matching #N. Keyed by sourceScenarioId.
+  app.post("/api/promotions/link-simulator-number", async (req, res) => {
+    try {
+      const { sourceScenarioId, simulatorPromoNumber } = req.body;
+      if (!sourceScenarioId || typeof simulatorPromoNumber !== "number") {
+        return res.status(400).json({ error: "sourceScenarioId and simulatorPromoNumber (number) required" });
+      }
+      const all = await storage.getPromotions();
+      const matches = (all as any[]).filter(p => p.sourceScenarioId === sourceScenarioId);
+      let updated = 0;
+      for (const m of matches) {
+        await storage.updatePromotion(m.id, { simulatorPromoNumber } as any);
+        updated++;
+      }
+      return res.json({ ok: true, updated });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 

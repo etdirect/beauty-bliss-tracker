@@ -132,7 +132,8 @@ export type SalesEntry = typeof salesEntries.$inferSelect;
 // Promotions (expanded with Microsoft List fields)
 export const promotions = pgTable("promotions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  promoNumber: serial("promo_number").notNull(), // human-friendly sequential # for BA comms
+  promoNumber: serial("promo_number").notNull(), // tracker-local sequential # (fallback)
+  simulatorPromoNumber: integer("simulator_promo_number"), // mirrors Simulator's history #N when pushed from Simulator
   name: text("name").notNull(),
   brandId: varchar("brand_id"), // nullable for cross-brand
   type: text("type").notNull(), // "GWP" | "PWP" | "Percentage Discount" | "Fixed Amount Discount" | "Bundle Deal" | "Multi-Buy" | "Spend & Get" | "Other"

@@ -216,10 +216,15 @@ export default function Promotions() {
 
     return (
       <div key={p.id} className={`flex items-start gap-2 py-2.5 text-sm ${status === "ended" || status === "inactive" ? "opacity-50" : ""}`}>
-        {/* Layer + Type */}
-        <div className="flex items-center gap-1 shrink-0 pt-0.5 w-[160px]">
-          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${layerColor}`}>{layerLabel}</span>
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${typeColor}`}>{p.type}</span>
+        {/* Layer + Type + Promo # */}
+        <div className="flex flex-col items-start gap-1 shrink-0 pt-0.5 w-[160px]">
+          <div className="flex items-center gap-1">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${layerColor}`}>{layerLabel}</span>
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${typeColor}`}>{p.type}</span>
+          </div>
+          {((p as any).simulatorPromoNumber ?? (p as any).promoNumber) != null && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-muted text-muted-foreground border">#{(p as any).simulatorPromoNumber ?? (p as any).promoNumber}</span>
+          )}
         </div>
         {/* Location */}
         <div className="shrink-0 w-[200px] pt-0.5">
@@ -237,12 +242,7 @@ export default function Promotions() {
         </div>
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="font-medium flex items-start gap-2">
-            {(p as any).promoNumber != null && (
-              <span className="font-mono text-[11px] text-muted-foreground shrink-0 pt-[3px]">#{(p as any).promoNumber}</span>
-            )}
-            <span className="flex-1">{p.name}</span>
-          </div>
+          <div className="font-medium">{p.name}</div>
           {p.mechanics && <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{p.mechanics}</div>}
           {!p.mechanics && p.description && <div className="text-xs text-muted-foreground mt-0.5">{p.description}</div>}
           <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
