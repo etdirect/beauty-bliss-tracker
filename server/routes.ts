@@ -435,6 +435,36 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/promotions/backfill-brands — one-click bulk-fix for promos with missing brandId
+  app.post("/api/promotions/backfill-brands", requireManagement, async (_req, res) => {
+    try {
+      const promos = await storage.getPromotions();
+      const brands = await storage.getBrands();
+      let fixed = 0;
+      let skipped = 0;
+      const details: { id: string; name: string; resolvedBrand: string }[] = [];
+      for (const p of promos as any[]) {
+        if (p.brandId) continue; // already has brand
+        let brandName: string | undefined;
+        if (p.pushPayload) {
+          try {
+            const pp = typeof p.pushPayload === "string" ? JSON.parse(p.pushPayload) : p.pushPayload;
+            brandName = pp.brand || pp.brandName;
+          } catch { /* skip unparseable */ }
+        }
+        if (!brandName) { skipped++; continue; }
+        const match = brands.find((b: any) => b.name.toLowerCase() === brandName!.toLowerCase());
+        if (!match) { skipped++; continue; }
+        await storage.updatePromotion(p.id, { brandId: match.id } as any);
+        details.push({ id: p.id, name: p.name, resolvedBrand: match.name });
+        fixed++;
+      }
+      return res.json({ ok: true, fixed, skipped, details });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   // POST /api/promotions/push — receive promotion from Simulator (no auth — server-to-server)
   app.post("/api/promotions/push", async (req, res) => {
     try {

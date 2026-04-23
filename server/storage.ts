@@ -286,6 +286,8 @@ export class PgStorage implements IStorage {
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS trackable BOOLEAN NOT NULL DEFAULT false`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS description_zh TEXT`);
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS mechanics_zh TEXT`);
+    // Sequential promo number for BA comms (e.g. "#347")
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS promo_number SERIAL`);
 
     // NEW tables for auth + POS restructure
     await this.q(`
@@ -542,7 +544,8 @@ export class PgStorage implements IStorage {
       sourceApp: r.source_app, sourceScenarioId: r.source_scenario_id,
       promotionLayer: r.promotion_layer, trackable: r.trackable ?? false,
       descriptionZh: r.description_zh, mechanicsZh: r.mechanics_zh,
-    };
+      promoNumber: r.promo_number != null ? Number(r.promo_number) : null,
+    } as Promotion;
   }
   private mapPromotionResult(r: any): PromotionResult {
     return { id: r.id, promotionId: r.promotion_id, counterId: r.counter_id, date: r.date, gwpGiven: Number(r.gwp_given), notes: r.notes };

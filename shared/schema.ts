@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, integer, boolean, real } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, real, serial } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -132,6 +132,7 @@ export type SalesEntry = typeof salesEntries.$inferSelect;
 // Promotions (expanded with Microsoft List fields)
 export const promotions = pgTable("promotions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promoNumber: serial("promo_number").notNull(), // human-friendly sequential # for BA comms
   name: text("name").notNull(),
   brandId: varchar("brand_id"), // nullable for cross-brand
   type: text("type").notNull(), // "GWP" | "PWP" | "Percentage Discount" | "Fixed Amount Discount" | "Bundle Deal" | "Multi-Buy" | "Spend & Get" | "Other"

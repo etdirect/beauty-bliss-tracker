@@ -465,9 +465,47 @@ export default function SettingsPage() {
   const activePos = posLocations.filter(p => p.isActive);
   const activeBrands = brands.filter(b => b.isActive);
 
+  const backfillBrandsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/promotions/backfill-brands");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Backfill complete", description: `Fixed ${data.fixed} promotion${data.fixed === 1 ? "" : "s"}, skipped ${data.skipped}.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/promotions"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       <h2 className="text-xl font-semibold">Settings</h2>
+
+      {/* Maintenance actions */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Maintenance</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-sm font-medium">Backfill Missing Brands</p>
+              <p className="text-xs text-muted-foreground">Resolves brand name for promotions pushed from Simulator that show as “Unknown”.</p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => backfillBrandsMutation.mutate()}
+              disabled={backfillBrandsMutation.isPending}
+              data-testid="button-backfill-brands"
+            >
+              {backfillBrandsMutation.isPending ? "Running..." : "Run Backfill"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="pos-locations">
         <TabsList className="flex-wrap">

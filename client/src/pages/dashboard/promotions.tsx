@@ -237,7 +237,12 @@ export default function Promotions() {
         </div>
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="font-medium">{p.name}</div>
+          <div className="font-medium flex items-start gap-2">
+            {(p as any).promoNumber != null && (
+              <span className="font-mono text-[11px] text-muted-foreground shrink-0 pt-[3px]">#{(p as any).promoNumber}</span>
+            )}
+            <span className="flex-1">{p.name}</span>
+          </div>
           {p.mechanics && <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{p.mechanics}</div>}
           {!p.mechanics && p.description && <div className="text-xs text-muted-foreground mt-0.5">{p.description}</div>}
           <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
