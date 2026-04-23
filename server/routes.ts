@@ -493,7 +493,9 @@ export async function registerRoutes(
         }
 
         if (!brandName) { skippedReasons.push({ promoNumber, name: p.name, reason: "could not resolve brand from pushPayload, applicableProducts, description, or name" }); continue; }
-        const match = brands.find((b: any) => b.name.toLowerCase() === brandName!.toLowerCase());
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const needle = normalize(brandName);
+        const match = brands.find((b: any) => normalize(b.name) === needle);
         if (!match) { skippedReasons.push({ promoNumber, name: p.name, reason: `brand '${brandName}' not found in tracker brands`, brandNameTried: brandName }); continue; }
         await storage.updatePromotion(p.id, { brandId: match.id } as any);
         details.push({ promoNumber, name: p.name, resolvedBrand: match.name });
@@ -514,7 +516,9 @@ export async function registerRoutes(
       const all = await storage.getPromotions();
       const matches = (all as any[]).filter(p => p.sourceScenarioId === sourceScenarioId);
       const brands = brand ? await storage.getBrands() : [];
-      const resolvedBrand = brand ? brands.find((b: any) => b.name.toLowerCase() === (brand as string).toLowerCase()) : null;
+      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const needle = brand ? normalize(brand as string) : "";
+      const resolvedBrand = brand ? brands.find((b: any) => normalize(b.name) === needle) : null;
       let updated = 0;
       for (const m of matches) {
         const patch: any = {};
@@ -541,10 +545,13 @@ export async function registerRoutes(
 
       // Resolve brand name to brandId early (needed for both create and update)
       // Simulator sends "brand" field; older clients used "brandName". Accept both.
+      // Match tolerates hyphens/spaces/punctuation (e.g. "Addmino-18" == "Addmino18").
       const incomingBrandName: string | undefined = data.brandName || data.brand;
       if (!data.brandId && incomingBrandName) {
         const allBrands = await storage.getBrands();
-        const brandMatch = allBrands.find((b: any) => b.name.toLowerCase() === incomingBrandName.toLowerCase());
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const needle = normalize(incomingBrandName);
+        const brandMatch = allBrands.find((b: any) => normalize(b.name) === needle);
         if (brandMatch) data.brandId = brandMatch.id;
       }
 
