@@ -1040,7 +1040,12 @@ export default function BAEntry() {
                   const effectiveThreshold = storeThreshold ? storeThreshold.threshold : scheme.threshold;
 
                   const pct = effectiveThreshold > 0 ? Math.min(100, (totalProgress / effectiveThreshold) * 100) : 0;
-                  const achieved = totalProgress >= effectiveThreshold;
+                  // 'Achieved' requires BOTH (a) total progress ≥ threshold AND
+                  // (b) at least some progress recorded. Without (b), a scheme
+                  // configured with threshold=0 (fixed-reward mechanic) would
+                  // auto-flip to '已達標' the moment the month starts, before
+                  // any BA has entered anything — very misleading.
+                  const achieved = totalProgress >= effectiveThreshold && totalProgress > 0;
                   const isUnits = scheme.metric === "units" || scheme.metric === "gwp_given";
                   const isTxn = scheme.metric === "transaction_amount";
 
