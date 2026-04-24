@@ -275,17 +275,40 @@ export default function BAEntry() {
   }, [existingDeductions]);
 
   // ─── Deductible promotion helpers ───
-  // A promotion qualifies for BA deduction entry when (a) it is explicitly
-  // flagged trackable (BA input requested from Simulator), AND (b) it has a
-  // monetary reward the BA can plausibly count and deduct per redemption.
-  // For now we support Spend & Get (with a spendGetDiscountAmount) and Fixed
-  // Amount Discount (with a discountFixedAmount). GWP/PWP stay on the
-  // existing promotion-results counter because their "reward" isn't a HK$
-  // amount, it's a product.
-  function rewardPerRedemption(p: Promotion): number {
-    if (p.spendGetDiscountAmount != null && p.spendGetDiscountAmount > 0) return Number(p.spendGetDiscountAmount);
-    if (p.discountFixedAmount != null && p.discountFixedAmount > 0) return Number(p.discountFixedAmount);
+  // A promotion qualifies for BA deduction entry when it is flagged trackable
+  // and has a monetary reward the BA can plausibly count per redemption.
+  //
+  // Reward-amount resolution cascade (in priority order):
+  //   1. spendGetDiscountAmount   — canonical Spend & Get reward field
+  //   2. discountFixedAmount      — Fixed Amount Discount OR older Spend & Get
+  //                                 records pushed before the simulator
+  //                                 started sending spendGetDiscountAmount
+  //   3. Parse the discount from description/mechanicsZh (e.g.
+  //      "減 HK$50") — last-resort rescue for legacy rows still missing
+  //      both structured fields.
+  //
+  // Without the cascade, every L2 Spend & Get promo pushed before the
+  // simulator commit 0c72dbb would silently skip the BA counter.
+  function parseRewardFromText(p: Promotion): number {
+    const sources = [p.mechanicsZh, p.descriptionZh, p.mechanics, p.description];
+    for (const s of sources) {
+      if (!s) continue;
+      // Prefer the Chinese '減 HK$N' pattern — unambiguous when present.
+      const zh = /減\s*(?:HK)?\$?\s*([0-9][0-9,]*)/i.exec(s);
+      if (zh && zh[1]) return Number(zh[1].replace(/,/g, ""));
+      // English: 'get HK$N off', 'HK$N off', 'save HK$N', 'discount HK$N'.
+      // Match whichever HK$N is followed by 'off' or preceded by a cue word.
+      const en1 = /(?:get|save|minus|discount|receive)\s*(?:HK)?\$?\s*([0-9][0-9,]*)/i.exec(s);
+      if (en1 && en1[1]) return Number(en1[1].replace(/,/g, ""));
+      const en2 = /(?:HK)?\$?\s*([0-9][0-9,]*)\s*(?:off|discount|rebate)/i.exec(s);
+      if (en2 && en2[1]) return Number(en2[1].replace(/,/g, ""));
+    }
     return 0;
+  }
+  function rewardPerRedemption(p: Promotion): number {
+    if (p.spendGetDiscountAmount != null && Number(p.spendGetDiscountAmount) > 0) return Number(p.spendGetDiscountAmount);
+    if (p.discountFixedAmount != null && Number(p.discountFixedAmount) > 0) return Number(p.discountFixedAmount);
+    return parseRewardFromText(p);
   }
   function isDeductiblePromo(p: Promotion): boolean {
     if (!p.trackable) return false;
