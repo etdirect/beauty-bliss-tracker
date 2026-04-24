@@ -301,10 +301,22 @@ export default function ManagementDashboard() {
     enabled: timeTab === "daterange" && !!ppStart,
     staleTime: 30_000,
   });
+  // Deductions for the PP window so Net comparisons are apples-to-apples
+  // with the current period. Enabled only when the date range is daterange.
+  const { data: ppDeductionsRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${ppStart}&endDate=${ppEnd}`],
+    enabled: timeTab === "daterange" && !!ppStart,
+    staleTime: 30_000,
+  });
 
   // Last month sales query — for projection vs last month comparison
   const { data: lmSalesRaw = [] } = useQuery<SalesEntry[]>({
     queryKey: ["/api/sales", `?startDate=${lmStart}&endDate=${lmEnd}`],
+    enabled: timeTab === "daterange" && !!lmStart,
+    staleTime: 30_000,
+  });
+  const { data: lmDeductionsRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${lmStart}&endDate=${lmEnd}`],
     enabled: timeTab === "daterange" && !!lmStart,
     staleTime: 30_000,
   });
