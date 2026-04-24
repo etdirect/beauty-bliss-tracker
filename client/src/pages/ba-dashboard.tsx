@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { SalesEntry, Brand, Promotion, PromotionResult, PosLocation, PromotionDeduction } from "@shared/schema";
+import { allocateDeductions, type SalesViewMode } from "@shared/deductionAllocation";
 import { useAuth } from "@/App";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,16 @@ export default function BADashboard() {
 
   // ── BA counter filter ────────────────────────────
   const [selectedCounters, setSelectedCounters] = useState<Set<string> | null>(null);
+
+  // Gross / Net toggle — defaults to 'net' per the business rule. Hidden
+  // entirely when there are no deductions in the filtered window so BAs
+  // never see a toggle with nothing to toggle.
+  const [salesView, setSalesView] = useState<SalesViewMode>("net");
+
+  // Deduction card secondary view — 'daily' shows per-day breakdown by promo
+  // (the original), 'brand' shows the brand-level allocation of the total
+  // deduction (useful when BAs want to see which brand absorbed which share).
+  const [deductionView, setDeductionView] = useState<"daily" | "brand">("daily");
 
   // ── Compute query dates ──────────────────────────
   const { queryStart, queryEnd } = useMemo(() => {
@@ -188,6 +199,49 @@ export default function BADashboard() {
     return base;
   }, [sales, activeCounterIds, isRestricted, user?.id, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears]);
 
+  // Deductions over the same POS + time window as filteredSales. Used by the
+  // allocator to produce net figures and by the Promotion Deductions card.
+  const filteredDeductions = useMemo(() => {
+    return allDeductions.filter((d) => {
+      if (!activeCounterIds.has(d.counterId)) return false;
+      if (isRestricted) {
+        return d.date.startsWith(selectedMonth);
+      }
+      if (timeTab === "daterange") return d.date >= drStart && d.date <= drEnd;
+      if (timeTab === "monthly") {
+        if (monthlyMonth !== "all") return d.date.startsWith(`${monthlyYear}-${monthlyMonth}`);
+        return d.date.startsWith(monthlyYear);
+      }
+      return selectedYears.has(d.date.slice(0, 4));
+    });
+  }, [allDeductions, activeCounterIds, isRestricted, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears]);
+
+  // Allocation + effective (view-aware) sales. Raw filteredSales stays
+  // untouched on gross. When view is 'net' we swap each entry's amount for
+  // the post-deduction net so every downstream aggregator honors the toggle.
+  const allocation = useMemo(
+    () => allocateDeductions(filteredSales, filteredDeductions),
+    [filteredSales, filteredDeductions],
+  );
+  const effectiveSales = useMemo(() => {
+    if (salesView === "gross") return filteredSales;
+    return allocation.entries.map((e) => ({
+      ...(e as unknown as SalesEntry),
+      amount: e.netAmount,
+    }));
+  }, [salesView, filteredSales, allocation]);
+  const totalDeduction = useMemo(
+    () => filteredDeductions.reduce((s, d) => s + (d.totalDeduction ?? 0), 0),
+    [filteredDeductions],
+  );
+  const unallocatedDeduction = useMemo(
+    () => Array.from(allocation.unallocatedByCounterDate.values()).reduce((s, n) => s + n, 0),
+    [allocation],
+  );
+  // Hide the Gross/Net toggle entirely when there are no deductions — net
+  // and gross would be identical and the toggle is just noise.
+  const hasAnyDeduction = totalDeduction > 0;
+
   // ── Part-Time: month options derived from data ───
   const monthOptions = useMemo(() => {
     if (!isRestricted) return [];
@@ -212,16 +266,16 @@ export default function BADashboard() {
   }, [allBrands]);
 
   // ── KPIs ────────────────────────────────────────
-  const totalSales = useMemo(() => filteredSales.reduce((s, e) => s + e.amount, 0), [filteredSales]);
-  const totalOrders = useMemo(() => filteredSales.reduce((s, e) => s + (e.orders ?? 0), 0), [filteredSales]);
-  const totalUnits = useMemo(() => filteredSales.reduce((s, e) => s + (e.units ?? 0), 0), [filteredSales]);
+  const totalSales = useMemo(() => effectiveSales.reduce((s, e) => s + e.amount, 0), [effectiveSales]);
+  const totalOrders = useMemo(() => effectiveSales.reduce((s, e) => s + (e.orders ?? 0), 0), [effectiveSales]);
+  const totalUnits = useMemo(() => effectiveSales.reduce((s, e) => s + (e.units ?? 0), 0), [effectiveSales]);
 
   // ── Attribution (BA only) ──────────────────────
   const attribution = useMemo(() => {
     if (isRestricted) return null;
-    const mine = filteredSales.filter((e) => e.submittedBy === user?.id);
-    const others = filteredSales.filter((e) => e.submittedBy && e.submittedBy !== user?.id);
-    const imported = filteredSales.filter((e) => !e.submittedBy);
+    const mine = effectiveSales.filter((e) => e.submittedBy === user?.id);
+    const others = effectiveSales.filter((e) => e.submittedBy && e.submittedBy !== user?.id);
+    const imported = effectiveSales.filter((e) => !e.submittedBy);
     return {
       mySales: mine.reduce((s, e) => s + e.amount, 0),
       myOrders: mine.reduce((s, e) => s + (e.orders ?? 0), 0),
@@ -230,7 +284,7 @@ export default function BADashboard() {
       importedSales: imported.reduce((s, e) => s + e.amount, 0),
       importedOrders: imported.reduce((s, e) => s + (e.orders ?? 0), 0),
     };
-  }, [filteredSales, isRestricted, user?.id]);
+  }, [effectiveSales, isRestricted, user?.id]);
 
   // ── Daily Sales chart data ─────────────────────
   const dailyChartData = useMemo(() => {
@@ -241,7 +295,7 @@ export default function BADashboard() {
       const result: { date: string; total: number }[] = [];
       for (let d = 1; d <= days; d++) {
         const key = `${selectedMonth}-${String(d).padStart(2, "0")}`;
-        const total = filteredSales.filter((e) => e.date === key).reduce((s, e) => s + e.amount, 0);
+        const total = effectiveSales.filter((e) => e.date === key).reduce((s, e) => s + e.amount, 0);
         result.push({ date: String(d), total });
       }
       return result;
@@ -251,7 +305,7 @@ export default function BADashboard() {
     if (timeTab === "daterange") {
       const dates = dateRange(drStart, drEnd);
       return dates.map((dt) => {
-        const dayEntries = filteredSales.filter((e) => e.date === dt);
+        const dayEntries = effectiveSales.filter((e) => e.date === dt);
         const mine = dayEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
         const others = dayEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
         return { date: dt.slice(5), mine, others, total: mine + others };
@@ -265,7 +319,7 @@ export default function BADashboard() {
       const result: { date: string; mine: number; others: number; total: number }[] = [];
       for (let d = 1; d <= days; d++) {
         const key = `${prefix}-${String(d).padStart(2, "0")}`;
-        const dayEntries = filteredSales.filter((e) => e.date === key);
+        const dayEntries = effectiveSales.filter((e) => e.date === key);
         const mine = dayEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
         const others = dayEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
         result.push({ date: String(d), mine, others, total: mine + others });
@@ -276,7 +330,7 @@ export default function BADashboard() {
       const result: { date: string; mine: number; others: number; total: number }[] = [];
       for (let m = 1; m <= 12; m++) {
         const prefix = `${monthlyYear}-${String(m).padStart(2, "0")}`;
-        const monthEntries = filteredSales.filter((e) => e.date.startsWith(prefix));
+        const monthEntries = effectiveSales.filter((e) => e.date.startsWith(prefix));
         const mine = monthEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
         const others = monthEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
         result.push({ date: MONTH_LABELS[m - 1], mine, others, total: mine + others });
@@ -290,7 +344,7 @@ export default function BADashboard() {
       const result: { date: string; mine: number; others: number; total: number }[] = [];
       for (let m = 1; m <= 12; m++) {
         const prefix = `${yr}-${String(m).padStart(2, "0")}`;
-        const monthEntries = filteredSales.filter((e) => e.date.startsWith(prefix));
+        const monthEntries = effectiveSales.filter((e) => e.date.startsWith(prefix));
         const mine = monthEntries.filter((e) => e.submittedBy === user?.id).reduce((s, e) => s + e.amount, 0);
         const others = monthEntries.filter((e) => e.submittedBy !== user?.id).reduce((s, e) => s + e.amount, 0);
         result.push({ date: MONTH_LABELS[m - 1], mine, others, total: mine + others });
@@ -303,15 +357,15 @@ export default function BADashboard() {
       const row: Record<string, any> = { date: MONTH_LABELS[m - 1] };
       yearsArr.forEach((yr) => {
         const prefix = `${yr}-${String(m).padStart(2, "0")}`;
-        row[yr] = filteredSales.filter((e) => e.date.startsWith(prefix)).reduce((s, e) => s + e.amount, 0);
+        row[yr] = effectiveSales.filter((e) => e.date.startsWith(prefix)).reduce((s, e) => s + e.amount, 0);
       });
       result.push(row);
     }
     return result;
-  }, [isRestricted, filteredSales, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears, user?.id]);
+  }, [isRestricted, effectiveSales, selectedMonth, timeTab, drStart, drEnd, monthlyYear, monthlyMonth, selectedYears, user?.id]);
 
   const isMultiYearOverlay = !isRestricted && timeTab === "yearly" && selectedYears.size > 1;
-  const hasAttribution = !isRestricted && filteredSales.some((e) => e.submittedBy && e.submittedBy !== user?.id);
+  const hasAttribution = !isRestricted && effectiveSales.some((e) => e.submittedBy && e.submittedBy !== user?.id);
 
   // ── Monthly Trend (BA monthly mode only) ───────
   const monthlyTrendData = useMemo(() => {
@@ -331,7 +385,7 @@ export default function BADashboard() {
   // ── Sales by Brand table data ──────────────────
   const brandTableData = useMemo(() => {
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       const b = brandMap.get(e.brandId);
       const name = b?.name ?? "Unknown";
       if (!map[name]) map[name] = { sales: 0, orders: 0, units: 0 };
@@ -342,7 +396,7 @@ export default function BADashboard() {
     return Object.entries(map)
       .map(([name, d]) => ({ name, ...d }))
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredSales, brandMap]);
+  }, [effectiveSales, brandMap]);
 
   // ── Promotion performance table ────────────────
   const { promoStart, promoEnd } = useMemo(() => {
@@ -436,6 +490,35 @@ export default function BADashboard() {
     () => myDeductions.reduce((s, p) => s + p.total, 0),
     [myDeductions],
   );
+
+  // By-brand allocation of the total deduction. Uses the same allocator as
+  // the Gross/Net toggle so the numbers match exactly: brand_gross / counter_day_gross
+  // × counter_day_deduction. Brands with no sales on a deduction-bearing day
+  // get no deduction and don't appear in the list. Only computed when there
+  // is actually a deduction to display — keeps the hot path fast.
+  const deductionByBrand = useMemo(() => {
+    if (totalDeductionAmount <= 0) return [] as { brandId: string; brandName: string; gross: number; deduction: number; net: number }[];
+    const byBrand = new Map<string, { gross: number; deduction: number }>();
+    for (const e of allocation.entries) {
+      if (!(e as any).brandId) continue;
+      const brandId = (e as any).brandId as string;
+      const prev = byBrand.get(brandId) ?? { gross: 0, deduction: 0 };
+      prev.gross += (e.amount ?? 0);
+      prev.deduction += (e.deduction ?? 0);
+      byBrand.set(brandId, prev);
+    }
+    return Array.from(byBrand.entries())
+      .map(([brandId, v]) => ({
+        brandId,
+        brandName: brandNameMap.get(brandId) ?? "Unknown brand",
+        gross: v.gross,
+        deduction: v.deduction,
+        net: Math.max(0, v.gross - v.deduction),
+      }))
+      // Only show brands that actually absorbed part of the deduction
+      .filter((r) => r.deduction > 0)
+      .sort((a, b) => b.deduction - a.deduction);
+  }, [allocation, brandNameMap, totalDeductionAmount]);
 
   // ── No POS assigned guard ──────────────────────
   if (posIds.length === 0) {
@@ -636,15 +719,61 @@ export default function BADashboard() {
         </div>
       )}
 
+      {/* Gross / Net toggle — only shown when the period has deductions to apply. */}
+      {hasAnyDeduction && (
+        <div className="flex items-center justify-between gap-3 px-1">
+          <div className="text-xs text-muted-foreground">
+            Showing <span className="font-semibold text-foreground">{salesView === "net" ? "Net" : "Gross"}</span> sales
+            {salesView === "net" && (
+              <> · {fmtCurrency(totalDeduction)} promo deductions
+                {unallocatedDeduction > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400"> ({fmtCurrency(unallocatedDeduction)} unallocated)</span>
+                )}
+              </>
+            )}
+          </div>
+          <div className="inline-flex rounded-md border bg-background p-0.5" role="group" data-testid="ba-sales-view-toggle">
+            <button
+              type="button"
+              onClick={() => setSalesView("net")}
+              className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "net" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="ba-toggle-view-net"
+            >
+              Net
+            </button>
+            <button
+              type="button"
+              onClick={() => setSalesView("gross")}
+              className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "gross" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="ba-toggle-view-gross"
+            >
+              Gross
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total Sales
+              {hasAnyDeduction && (
+                <Badge variant="outline" className="ml-1.5 text-[10px] font-normal">
+                  {salesView === "net" ? "Net" : "Gross"}
+                </Badge>
+              )}
+            </CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{fmtCurrency(totalSales)}</div>
+            {hasAnyDeduction && salesView === "net" && (
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                − {fmtCurrency(totalDeduction)} promo {totalDeduction === 1 ? "deduction" : "deductions"}
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -871,22 +1000,90 @@ export default function BADashboard() {
         </CardContent>
       </Card>
 
-      {/* Promotion Deductions — daily HK$ taken off counter sales via coupons */}
+      {/* Promotion Deductions — per-day or per-brand view of HK$ taken off counter sales via coupons */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle>Promotion Deductions (Coupon Redemptions)</CardTitle>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              <CardTitle>Promotion Deductions (Coupon Redemptions)</CardTitle>
+              {totalDeductionAmount > 0 && (
+                <Badge variant="outline" className="text-xs font-normal">
+                  Total: −{fmtCurrency(totalDeductionAmount)}
+                </Badge>
+              )}
+            </div>
             {totalDeductionAmount > 0 && (
-              <Badge variant="outline" className="text-xs font-normal">
-                Total: −{fmtCurrency(totalDeductionAmount)}
-              </Badge>
+              <div className="inline-flex rounded-md border bg-background p-0.5" role="group" data-testid="deduction-view-toggle">
+                <button
+                  type="button"
+                  onClick={() => setDeductionView("daily")}
+                  className={`px-2.5 py-1 text-xs font-medium rounded ${deductionView === "daily" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  data-testid="deduction-toggle-daily"
+                >
+                  By day
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeductionView("brand")}
+                  className={`px-2.5 py-1 text-xs font-medium rounded ${deductionView === "brand" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  data-testid="deduction-toggle-brand"
+                >
+                  By brand
+                </button>
+              </div>
             )}
           </div>
         </CardHeader>
         <CardContent>
           {myDeductions.length === 0 ? (
             <p className="text-muted-foreground text-sm">No coupon redemptions recorded in this period.</p>
+          ) : deductionView === "brand" ? (
+            /* ── By-brand allocation view ── */
+            deductionByBrand.length === 0 ? (
+              <p className="text-muted-foreground text-sm">
+                Deductions exist but couldn't be allocated to any brand (counter had no sales on deduction days).
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" data-testid="deduction-by-brand-table">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="px-3 py-2 font-medium">Brand</th>
+                      <th className="px-3 py-2 font-medium text-right">Gross Sales</th>
+                      <th className="px-3 py-2 font-medium text-right">Deduction</th>
+                      <th className="px-3 py-2 font-medium text-right">Net Sales</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deductionByBrand.map((b) => (
+                      <tr key={b.brandId} className="border-b last:border-0">
+                        <td className="px-3 py-1.5">{b.brandName}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{fmtCurrency(b.gross)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(b.deduction)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{fmtCurrency(b.net)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 font-semibold">
+                      <td className="px-3 py-2">Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.gross, 0))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-300">
+                        −{fmtCurrency(deductionByBrand.reduce((s, b) => s + b.deduction, 0))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.net, 0))}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Deductions are spread proportionally across brands that sold on each deduction day (brand share × daily deduction).
+                </p>
+              </div>
+            )
           ) : (
+            /* ── Original by-day view ── */
             <div className="space-y-4">
               {myDeductions.map((p) => (
                 <div key={p.promotionId} className="border rounded-md">

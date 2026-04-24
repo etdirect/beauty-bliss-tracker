@@ -541,6 +541,8 @@ export default function ManagementDashboard() {
   }, [effectiveSales, posNameMap]);
 
   // ── Brand table data ──────────────────────────
+  // Two aggregations per brand: view-aware 'sales' (respects Gross/Net toggle)
+  // and raw gross+deduction (always available for the extra columns).
   const brandTableData = useMemo(() => {
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
     effectiveSales.forEach((e) => {
@@ -549,18 +551,29 @@ export default function ManagementDashboard() {
       map[e.brandId].orders += e.orders ?? 0;
       map[e.brandId].units += e.units;
     });
+    const dedMap: Record<string, { gross: number; deduction: number }> = {};
+    for (const e of allocation.entries) {
+      const k = (e as any).brandId;
+      if (!k) continue;
+      if (!dedMap[k]) dedMap[k] = { gross: 0, deduction: 0 };
+      dedMap[k].gross += e.amount ?? 0;
+      dedMap[k].deduction += e.deduction ?? 0;
+    }
     return Object.entries(map)
       .map(([id, d]) => ({
         id,
         name: brandMap.get(id) ?? "Unknown",
         sales: d.sales,
+        gross: dedMap[id]?.gross ?? d.sales,
+        deduction: dedMap[id]?.deduction ?? 0,
+        net: Math.max(0, (dedMap[id]?.gross ?? d.sales) - (dedMap[id]?.deduction ?? 0)),
         orders: d.orders,
         units: d.units,
         atv: d.orders > 0 ? d.sales / d.orders : null,
         upt: d.orders > 0 ? d.units / d.orders : null,
       }))
       .sort((a, b) => b.sales - a.sales);
-  }, [effectiveSales, brandMap]);
+  }, [effectiveSales, allocation, brandMap]);
 
   // ── Monthly projection (daterange tab only, same-month range) ──
   const projection = useMemo(() => {
@@ -1315,6 +1328,12 @@ export default function ManagementDashboard() {
                   <tr className="border-b text-left">
                     <th className="pb-2 font-medium text-left">Brand</th>
                     <th className="pb-2 font-medium text-right w-[120px]">Sales</th>
+                    {totalDeduction > 0 && (
+                      <>
+                        <th className="pb-2 font-medium text-right w-[110px]" title="HK$ allocated from promo coupon redemptions">Deduction</th>
+                        <th className="pb-2 font-medium text-right w-[120px]">Net</th>
+                      </>
+                    )}
                     {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>}
                     <th className="pb-2 font-medium text-right w-[70px]">Units</th>
                     <th className="pb-2 font-medium text-right w-[90px]">ATV</th>
@@ -1331,6 +1350,16 @@ export default function ManagementDashboard() {
                       <tr key={row.name} className="border-b last:border-0">
                         <td className="py-2 text-left">{row.name}</td>
                         <td className="py-2 text-right font-medium w-[120px]">{fmtCurrency(row.sales)}</td>
+                        {totalDeduction > 0 && (
+                          <>
+                            <td className="py-2 text-right tabular-nums text-blue-700 dark:text-blue-300 w-[110px]">
+                              {row.deduction > 0 ? `−${fmtCurrency(row.deduction)}` : "—"}
+                            </td>
+                            <td className="py-2 text-right tabular-nums font-semibold w-[120px]">
+                              {fmtCurrency(row.net)}
+                            </td>
+                          </>
+                        )}
                         {timeTab === "daterange" && (
                           <td className={`py-2 text-right text-xs w-[130px] ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
@@ -1352,6 +1381,8 @@ export default function ManagementDashboard() {
                   {/* Totals row */}
                   {brandTableData.length > 1 && (() => {
                     const totSales = brandTableData.reduce((s, r) => s + r.sales, 0);
+                    const totDeduction = brandTableData.reduce((s, r) => s + r.deduction, 0);
+                    const totNet = brandTableData.reduce((s, r) => s + r.net, 0);
                     const totPP = Object.values(ppBrandSalesMap).reduce((s, v) => s + v, 0);
                     const totDelta = totSales - totPP;
                     const totPct = totPP > 0 ? (totDelta / totPP) * 100 : null;
@@ -1360,6 +1391,14 @@ export default function ManagementDashboard() {
                       <tr className="border-t-2 font-semibold bg-muted/30">
                         <td className="py-2 text-left">Total</td>
                         <td className="py-2 text-right w-[120px]">{fmtCurrency(totSales)}</td>
+                        {totalDeduction > 0 && (
+                          <>
+                            <td className="py-2 text-right tabular-nums text-blue-700 dark:text-blue-300 w-[110px]">
+                              {totDeduction > 0 ? `−${fmtCurrency(totDeduction)}` : "—"}
+                            </td>
+                            <td className="py-2 text-right tabular-nums w-[120px]">{fmtCurrency(totNet)}</td>
+                          </>
+                        )}
                         {timeTab === "daterange" && (
                           <td className={`py-2 text-right text-xs w-[130px] ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                             {totPP > 0 ? (
