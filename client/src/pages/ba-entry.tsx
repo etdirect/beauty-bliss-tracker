@@ -197,19 +197,10 @@ export default function BAEntry() {
   });
   // Local state for today's input values (so typing doesn't flicker)
   const [incentiveInputs, setIncentiveInputs] = useState<Record<string, string>>({});
-  // Sync from server when data loads
-  const prevDailyRef = useRef<string>("");
-  useEffect(() => {
-    const key = JSON.stringify(incentiveDailyEntries);
-    if (key !== prevDailyRef.current) {
-      prevDailyRef.current = key;
-      const inputs: Record<string, string> = {};
-      for (const [id, val] of Object.entries(incentiveDailyEntries)) {
-        inputs[id] = val > 0 ? String(val) : "";
-      }
-      setIncentiveInputs(inputs);
-    }
-  }, [incentiveDailyEntries]);
+  // NOTE: intentionally NOT auto-hydrating from incentiveDailyEntries.
+  // Same rule as sales/coupons: the BA must click 'Load & Edit' to pull
+  // previously-saved values. Pre-filling on revisit caused confusion and
+  // risked accidental double-entry on re-submit.
 
   // For management users, show all active POS locations; for BA, only assigned
   const isManagement = user?.role === "management";
@@ -263,16 +254,12 @@ export default function BAEntry() {
     }
   }, [existingPosFigures]);
 
-  // Hydrate deductionData whenever existing deductions load (e.g. user switches
-  // to a new date or POS). Doing this here keeps the inputs in sync even when
-  // the big "Load previous entries" button hasn't been clicked.
-  useEffect(() => {
-    const next: Record<string, { redemptionCount: number; notes: string }> = {};
-    for (const d of existingDeductions) {
-      next[d.promotionId] = { redemptionCount: d.redemptionCount ?? 0, notes: d.notes ?? "" };
-    }
-    setDeductionData(next);
-  }, [existingDeductions]);
+  // NOTE: deductionData is intentionally NOT auto-hydrated from
+  // existingDeductions. It mirrors the sales-entry behaviour: both sales
+  // and coupon inputs start empty on every counter/date change, and the BA
+  // must click 'Load & Edit' to pull in previously-saved values. Auto-
+  // populating creates confusion ("why is 1 coupon already showing?") and
+  // can cause accidental double-counting on a fresh revisit.
 
   // ─── Deductible promotion helpers ───
   // A promotion qualifies for BA deduction entry when it is flagged trackable
@@ -415,6 +402,7 @@ export default function BAEntry() {
     setSalesData({});
     setPromoData({});
     setDeductionData({});
+    setIncentiveInputs({});
     setSubmitted(false);
   };
 
@@ -629,7 +617,7 @@ export default function BAEntry() {
               <label className="text-sm font-medium flex items-center gap-1.5">
                 <Store className="w-3.5 h-3.5" /> POS Location
               </label>
-              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); }}>
+              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); setIncentiveInputs({}); }}>
                 <SelectTrigger data-testid="select-counter">
                   <SelectValue placeholder="Select your POS location" />
                 </SelectTrigger>
@@ -656,6 +644,7 @@ export default function BAEntry() {
                   setSalesData({});
                   setPromoData({});
                   setDeductionData({});
+                  setIncentiveInputs({});
                 }}
                 data-testid="input-date"
               />
@@ -687,7 +676,25 @@ export default function BAEntry() {
         </Card>
 
         {/* Existing Entries Notice */}
-        {selectedCounter && (myExistingEntries.length > 0 || existingDeductions.length > 0) && !submitted && (
+        {(() => {
+          const couponCount = existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0);
+          const incentiveValues = Object.values(incentiveDailyEntries);
+          const incentiveRecordedCount = incentiveValues.filter((v) => (v ?? 0) > 0).length;
+          const hasStored = myExistingEntries.length > 0 || couponCount > 0 || incentiveRecordedCount > 0;
+          if (!selectedCounter || !hasStored || submitted) return null;
+          const parts: string[] = [];
+          if (myExistingEntries.length > 0) {
+            parts.push(
+              `${myExistingEntries.length} brand${myExistingEntries.length !== 1 ? "s" : ""} recorded — HK$${myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}`,
+            );
+          }
+          if (couponCount > 0) {
+            parts.push(`${couponCount} coupon${couponCount !== 1 ? "s" : ""} redeemed`);
+          }
+          if (incentiveRecordedCount > 0) {
+            parts.push(`${incentiveRecordedCount} incentive target${incentiveRecordedCount !== 1 ? "s" : ""} logged`);
+          }
+          return (
           <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-start gap-2">
@@ -696,22 +703,7 @@ export default function BAEntry() {
                   <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
                     Existing entries for this date
                   </p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                    {myExistingEntries.length > 0 && (
-                      <>
-                        {myExistingEntries.length} brand{myExistingEntries.length !== 1 ? "s" : ""} recorded
-                        {" — HK$"}
-                        {myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}
-                      </>
-                    )}
-                    {existingDeductions.length > 0 && existingDeductions.some(d => (d.redemptionCount ?? 0) > 0) && (
-                      <>
-                        {myExistingEntries.length > 0 ? " · " : ""}
-                        {existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0)} coupon
-                        {existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0) !== 1 ? "s" : ""} redeemed
-                      </>
-                    )}
-                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">{parts.join(" · ")}</p>
                   <Button
                     variant="outline"
                     size="sm"
@@ -724,7 +716,8 @@ export default function BAEntry() {
               </div>
             </CardContent>
           </Card>
-        )}
+          );
+        })()}
 
         {/* Promotion Filter Bar + Collapse/Expand */}
         {selectedCounter && posFilteredPromotions.length > 0 && (

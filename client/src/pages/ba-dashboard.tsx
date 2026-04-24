@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { SalesEntry, Brand, Promotion, PromotionResult, PosLocation } from "@shared/schema";
+import type { SalesEntry, Brand, Promotion, PromotionResult, PosLocation, PromotionDeduction } from "@shared/schema";
 import { useAuth } from "@/App";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -132,6 +132,12 @@ export default function BADashboard() {
 
   const { data: allPromoResults = [] } = useQuery<PromotionResult[]>({
     queryKey: ["/api/promotion-results"],
+  });
+
+  // Promo deductions over the same date window as sales — used to show BAs
+  // exactly how much was deducted per day from coupon redemptions.
+  const { data: allDeductions = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
 
   // ── Derive available years from sales data ───────
@@ -391,6 +397,45 @@ export default function BADashboard() {
       };
     });
   }, [allPromotions, allPromoResults, activeCounterIds, promoStart, promoEnd, brandNameMap]);
+
+  // Deductions for this BA's POS locations over the selected time window.
+  // Grouped by (date, promotion) so the BA sees exactly how many coupons
+  // were redeemed per day, per promo, and how much HK$ that took out of
+  // the counter's gross sales that day.
+  const myDeductions = useMemo(() => {
+    const rows = allDeductions.filter((d) => {
+      if (!activeCounterIds.has(d.counterId)) return false;
+      if ((d.redemptionCount ?? 0) <= 0) return false;
+      return true;
+    });
+    // Group by promotion
+    const byPromo = new Map<string, { promoName: string; rows: { date: string; count: number; amount: number; posName: string }[]; total: number; totalCount: number }>();
+    for (const d of rows) {
+      const promo = allPromotions.find((p) => p.id === d.promotionId);
+      const promoName = promo?.name || "Unknown promotion";
+      const posName = assignedPos.find((p: any) => p.id === d.counterId)?.storeName || "Unknown POS";
+      const entry = byPromo.get(d.promotionId) ?? { promoName, rows: [], total: 0, totalCount: 0 };
+      entry.rows.push({
+        date: d.date,
+        count: d.redemptionCount ?? 0,
+        amount: d.totalDeduction ?? 0,
+        posName,
+      });
+      entry.total += d.totalDeduction ?? 0;
+      entry.totalCount += d.redemptionCount ?? 0;
+      byPromo.set(d.promotionId, entry);
+    }
+    // Sort each promo's rows by date desc
+    for (const v of byPromo.values()) {
+      v.rows.sort((a, b) => b.date.localeCompare(a.date));
+    }
+    return Array.from(byPromo.entries()).map(([promotionId, v]) => ({ promotionId, ...v }));
+  }, [allDeductions, allPromotions, activeCounterIds, assignedPos]);
+
+  const totalDeductionAmount = useMemo(
+    () => myDeductions.reduce((s, p) => s + p.total, 0),
+    [myDeductions],
+  );
 
   // ── No POS assigned guard ──────────────────────
   if (posIds.length === 0) {
@@ -821,6 +866,61 @@ export default function BADashboard() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Promotion Deductions — daily HK$ taken off counter sales via coupons */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Promotion Deductions (Coupon Redemptions)</CardTitle>
+            {totalDeductionAmount > 0 && (
+              <Badge variant="outline" className="text-xs font-normal">
+                Total: −{fmtCurrency(totalDeductionAmount)}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {myDeductions.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No coupon redemptions recorded in this period.</p>
+          ) : (
+            <div className="space-y-4">
+              {myDeductions.map((p) => (
+                <div key={p.promotionId} className="border rounded-md">
+                  <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between flex-wrap gap-2">
+                    <div className="text-sm font-medium">{p.promoName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {p.totalCount} coupon{p.totalCount !== 1 ? "s" : ""} redeemed ·{" "}
+                      <span className="font-semibold text-blue-700 dark:text-blue-300">−{fmtCurrency(p.total)}</span> deducted
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="px-3 py-2 font-medium">Date</th>
+                          <th className="px-3 py-2 font-medium">POS</th>
+                          <th className="px-3 py-2 font-medium text-right">Redemptions</th>
+                          <th className="px-3 py-2 font-medium text-right">Deduction (HK$)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.rows.map((r, i) => (
+                          <tr key={`${r.date}-${r.posName}-${i}`} className="border-b last:border-0">
+                            <td className="px-3 py-1.5 whitespace-nowrap">{(() => { const [y,m,d] = r.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
+                            <td className="px-3 py-1.5">{r.posName}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">{r.count}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(r.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

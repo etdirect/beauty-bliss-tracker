@@ -352,10 +352,12 @@ export default function IncentiveTracking() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [selectedPosId, setSelectedPosId] = useState<string>("__all__");
 
+  // 6 months back + 12 months forward so admins can view incentive schemes
+  // tied to upcoming promos (a June scheme in April) as well as historical.
   const monthOptions = useMemo(() => {
     const opts: string[] = [];
     const dt = new Date();
-    for (let i = 5; i >= 0; i--) {
+    for (let i = 5; i >= -12; i--) {
       const md = new Date(dt.getFullYear(), dt.getMonth() - i, 1);
       opts.push(`${md.getFullYear()}-${String(md.getMonth() + 1).padStart(2, "0")}`);
     }

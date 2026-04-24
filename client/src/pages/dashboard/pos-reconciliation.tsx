@@ -30,11 +30,13 @@ export default function PosReconciliation() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [importMonth, setImportMonth] = useState(currentMonth);
 
-  // Month options
+  // Month options — 12 months back + 12 months forward so admins can look
+  // at upcoming promo windows (e.g. a June deployment in April) as well as
+  // past reconciliation.
   const monthOptions = useMemo(() => {
     const opts: string[] = [];
     const dt = new Date();
-    for (let i = 11; i >= 0; i--) {
+    for (let i = 11; i >= -12; i--) {
       const md = new Date(dt.getFullYear(), dt.getMonth() - i, 1);
       opts.push(`${md.getFullYear()}-${String(md.getMonth() + 1).padStart(2, "0")}`);
     }
