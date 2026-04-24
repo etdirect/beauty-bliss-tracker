@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { SalesEntry, PosLocation, Brand } from "@shared/schema";
+import type { SalesEntry, PosLocation, Brand, PromotionDeduction } from "@shared/schema";
+import { allocateDeductions, type SalesViewMode } from "@shared/deductionAllocation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,6 +97,11 @@ export default function ManagementDashboard() {
   const [selectedChannels, setSelectedChannels] = useState<Set<string> | null>(null);
   const [selectedCounters, setSelectedCounters] = useState<Set<string> | null>(null);
 
+  // Gross / Net toggle — default "net" per business rule. Switching to
+  // "gross" leaves the raw sales_entries untouched. Switching to "net"
+  // applies proportional promo-deduction allocation to every aggregation.
+  const [salesView, setSalesView] = useState<SalesViewMode>("net");
+
   // ── Compute query date range ──────────────────
   const { queryStart, queryEnd } = useMemo(() => {
     if (timeTab === "daterange") {
@@ -115,6 +121,12 @@ export default function ManagementDashboard() {
   // ── Queries ───────────────────────────────────
   const { data: sales = [] } = useQuery<SalesEntry[]>({
     queryKey: ["/api/sales", `?startDate=${queryStart}&endDate=${queryEnd}`],
+  });
+
+  // Promotion deductions over the same date window as sales. Used by the
+  // allocation engine to produce net figures for every downstream report.
+  const { data: deductions = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
 
   const { data: posLocations = [] } = useQuery<PosLocation[]>({
@@ -176,6 +188,51 @@ export default function ManagementDashboard() {
     return base;
   }, [sales, activeCounterIds, timeTab, monthlyYear, monthlyMonth, selectedYears]);
 
+  // ── Filtered deductions (same POS + time window as filteredSales) ─────
+  const filteredDeductions = useMemo(() => {
+    return deductions.filter((d) => {
+      if (!activeCounterIds.has(d.counterId)) return false;
+      if (timeTab === "monthly" && monthlyMonth !== "all") {
+        const prefix = `${monthlyYear}-${monthlyMonth}`;
+        if (!d.date.startsWith(prefix)) return false;
+      }
+      if (timeTab === "yearly") {
+        if (!selectedYears.has(d.date.slice(0, 4))) return false;
+      }
+      return true;
+    });
+  }, [deductions, activeCounterIds, timeTab, monthlyYear, monthlyMonth, selectedYears]);
+
+  // ── Allocation + effective (view-aware) sales ──────────────────
+  // Allocation spreads each counter-day's total deduction proportionally
+  // across the brands that actually sold there that day. Result is stable:
+  // raw sales_entries untouched, so toggling view or amending deductions
+  // recomputes cleanly.
+  const allocation = useMemo(
+    () => allocateDeductions(filteredSales, filteredDeductions),
+    [filteredSales, filteredDeductions],
+  );
+
+  // Effective sales — when the toggle is "net" we swap each row's amount
+  // for its post-deduction net. Every downstream aggregator below reads
+  // e.amount, so nothing else has to change to honor the toggle.
+  const effectiveSales = useMemo(() => {
+    if (salesView === "gross") return filteredSales;
+    return allocation.entries.map((e) => ({
+      ...(e as unknown as SalesEntry),
+      amount: e.netAmount,
+    }));
+  }, [salesView, filteredSales, allocation]);
+
+  const totalDeduction = useMemo(
+    () => filteredDeductions.reduce((s, d) => s + (d.totalDeduction ?? 0), 0),
+    [filteredDeductions],
+  );
+  const unallocatedDeduction = useMemo(
+    () => Array.from(allocation.unallocatedByCounterDate.values()).reduce((s, n) => s + n, 0),
+    [allocation],
+  );
+
   // ── Lookups ───────────────────────────────────
   const posChannelMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -196,9 +253,9 @@ export default function ManagementDashboard() {
   }, [brands]);
 
   // ── KPIs ──────────────────────────────────────
-  const totalSales = useMemo(() => filteredSales.reduce((s, e) => s + e.amount, 0), [filteredSales]);
-  const totalOrders = useMemo(() => filteredSales.reduce((s, e) => s + (e.orders ?? 0), 0), [filteredSales]);
-  const totalUnits = useMemo(() => filteredSales.reduce((s, e) => s + e.units, 0), [filteredSales]);
+  const totalSales = useMemo(() => effectiveSales.reduce((s, e) => s + e.amount, 0), [effectiveSales]);
+  const totalOrders = useMemo(() => effectiveSales.reduce((s, e) => s + (e.orders ?? 0), 0), [effectiveSales]);
+  const totalUnits = useMemo(() => effectiveSales.reduce((s, e) => s + e.units, 0), [effectiveSales]);
   const atv = totalOrders > 0 ? totalSales / totalOrders : null;
   const upt = totalOrders > 0 ? totalUnits / totalOrders : null;
 
@@ -292,7 +349,7 @@ export default function ManagementDashboard() {
           activePosList.forEach((p) => { map[d][p.id] = 0; });
           map[d]["__combined__"] = 0;
         });
-        filteredSales.forEach((e) => {
+        effectiveSales.forEach((e) => {
           if (map[e.date]) {
             map[e.date][e.counterId] = (map[e.date][e.counterId] ?? 0) + e.amount;
             map[e.date]["__combined__"] += e.amount;
@@ -307,7 +364,7 @@ export default function ManagementDashboard() {
       }
       const map: Record<string, number> = {};
       allDates.forEach((d) => (map[d] = 0));
-      filteredSales.forEach((e) => {
+      effectiveSales.forEach((e) => {
         if (map[e.date] !== undefined) map[e.date] += e.amount;
       });
       return allDates.map((d) => ({ label: d.slice(5), Combined: map[d] }));
@@ -333,7 +390,7 @@ export default function ManagementDashboard() {
           activePosList.forEach((p) => { map[ym][p.id] = 0; });
           map[ym]["__combined__"] = 0;
         });
-        filteredSales.forEach((e) => {
+        effectiveSales.forEach((e) => {
           const ym = e.date.slice(0, 7);
           if (map[ym]) {
             map[ym][e.counterId] = (map[ym][e.counterId] ?? 0) + e.amount;
@@ -351,7 +408,7 @@ export default function ManagementDashboard() {
 
       const map: Record<string, number> = {};
       allMonths.forEach((ym) => (map[ym] = 0));
-      filteredSales.forEach((e) => {
+      effectiveSales.forEach((e) => {
         const ym = e.date.slice(0, 7);
         if (map[ym] !== undefined) map[ym] += e.amount;
       });
@@ -368,7 +425,7 @@ export default function ManagementDashboard() {
       map[ml] = {};
       yearsArr.forEach((y) => { map[ml][y] = 0; });
     });
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       const yr = e.date.slice(0, 4);
       const mi = Number(e.date.slice(5, 7)) - 1;
       if (selectedYears.has(yr)) {
@@ -382,7 +439,7 @@ export default function ManagementDashboard() {
     });
   }, [
     trendChartMode, timeTab, drStart, drEnd, monthlyYear, monthlyMonth,
-    selectedYears, filteredSales, showIndividualLines, activePosList, currentYear,
+    selectedYears, effectiveSales, showIndividualLines, activePosList, currentYear,
   ]);
 
   // Keys for multi-line charts
@@ -399,24 +456,39 @@ export default function ManagementDashboard() {
   // ── Channel pie data ──────────────────────────
   const channelPieData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       const ch = posChannelMap.get(e.counterId) ?? "Unknown";
       map[ch] = (map[ch] ?? 0) + e.amount;
     });
     return Object.entries(map)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [filteredSales, posChannelMap]);
+  }, [effectiveSales, posChannelMap]);
 
-  // ── PP & last-month filtered sales (same POS filter) ──
-  const ppFilteredSales = useMemo(
+  // ── PP & last-month filtered sales (same POS filter + view-mode swap) ──
+  // Apply the same allocation + view-mode swap to PP / LM so comparisons
+  // are apples-to-apples with the current-period figures.
+  const ppRawSales = useMemo(
     () => ppSalesRaw.filter((s) => activeCounterIds.has(s.counterId)),
     [ppSalesRaw, activeCounterIds],
   );
-  const lmFilteredSales = useMemo(
+  const ppFilteredSales = useMemo(() => {
+    if (salesView === "gross") return ppRawSales;
+    const ded = ppDeductionsRaw.filter((d) => activeCounterIds.has(d.counterId));
+    const alloc = allocateDeductions(ppRawSales, ded);
+    return alloc.entries.map((e) => ({ ...(e as unknown as SalesEntry), amount: e.netAmount }));
+  }, [salesView, ppRawSales, ppDeductionsRaw, activeCounterIds]);
+
+  const lmRawSales = useMemo(
     () => lmSalesRaw.filter((s) => activeCounterIds.has(s.counterId)),
     [lmSalesRaw, activeCounterIds],
   );
+  const lmFilteredSales = useMemo(() => {
+    if (salesView === "gross") return lmRawSales;
+    const ded = lmDeductionsRaw.filter((d) => activeCounterIds.has(d.counterId));
+    const alloc = allocateDeductions(lmRawSales, ded);
+    return alloc.entries.map((e) => ({ ...(e as unknown as SalesEntry), amount: e.netAmount }));
+  }, [salesView, lmRawSales, lmDeductionsRaw, activeCounterIds]);
 
   // PP & last-month totals
   const ppTotalSales = useMemo(() => ppFilteredSales.reduce((s, e) => s + e.amount, 0), [ppFilteredSales]);
@@ -437,7 +509,7 @@ export default function ManagementDashboard() {
   // ── Counter table data ────────────────────────
   const counterTableData = useMemo(() => {
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       if (!map[e.counterId]) map[e.counterId] = { sales: 0, orders: 0, units: 0 };
       map[e.counterId].sales += e.amount;
       map[e.counterId].orders += e.orders ?? 0;
@@ -454,12 +526,12 @@ export default function ManagementDashboard() {
         upt: d.orders > 0 ? d.units / d.orders : null,
       }))
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredSales, posNameMap]);
+  }, [effectiveSales, posNameMap]);
 
   // ── Brand table data ──────────────────────────
   const brandTableData = useMemo(() => {
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       if (!map[e.brandId]) map[e.brandId] = { sales: 0, orders: 0, units: 0 };
       map[e.brandId].sales += e.amount;
       map[e.brandId].orders += e.orders ?? 0;
@@ -476,7 +548,7 @@ export default function ManagementDashboard() {
         upt: d.orders > 0 ? d.units / d.orders : null,
       }))
       .sort((a, b) => b.sales - a.sales);
-  }, [filteredSales, brandMap]);
+  }, [effectiveSales, brandMap]);
 
   // ── Monthly projection (daterange tab only, same-month range) ──
   const projection = useMemo(() => {
@@ -552,7 +624,7 @@ export default function ManagementDashboard() {
 
   function exportDailySales() {
     const map: Record<string, { sales: number; units: number; orders: number }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       if (!map[e.date]) map[e.date] = { sales: 0, units: 0, orders: 0 };
       map[e.date].sales += e.amount;
       map[e.date].units += e.units;
@@ -576,7 +648,7 @@ export default function ManagementDashboard() {
 
   function exportPosPerformance() {
     const map: Record<string, { sales: number; units: number; orders: number }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       if (!map[e.counterId]) map[e.counterId] = { sales: 0, units: 0, orders: 0 };
       map[e.counterId].sales += e.amount;
       map[e.counterId].units += e.units;
@@ -602,7 +674,7 @@ export default function ManagementDashboard() {
 
   function exportChannelSummary() {
     const map: Record<string, { sales: number; units: number; orders: number; counters: Set<string> }> = {};
-    filteredSales.forEach((e) => {
+    effectiveSales.forEach((e) => {
       const ch = posChannelMap.get(e.counterId) ?? "Unknown";
       if (!map[ch]) map[ch] = { sales: 0, units: 0, orders: 0, counters: new Set() };
       map[ch].sales += e.amount;
@@ -668,7 +740,7 @@ export default function ManagementDashboard() {
   }
 
   function exportRawData() {
-    const rows = filteredSales
+    const rows = effectiveSales
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((e) => ({
         Date: e.date,
@@ -895,15 +967,57 @@ export default function ManagementDashboard() {
         </CardContent>
       </Card>
 
+      {/* Gross / Net toggle — applies to every figure on this dashboard */}
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="text-xs text-muted-foreground">
+          Showing <span className="font-semibold text-foreground">{salesView === "net" ? "Net" : "Gross"}</span> sales
+          {salesView === "net" && totalDeduction > 0 && (
+            <> · {fmtCurrency(totalDeduction)} promo deductions
+              {unallocatedDeduction > 0 && (
+                <span className="text-amber-600 dark:text-amber-400"> ({fmtCurrency(unallocatedDeduction)} unallocated)</span>
+              )}
+            </>
+          )}
+        </div>
+        <div className="inline-flex rounded-md border bg-background p-0.5" role="group" data-testid="sales-view-toggle">
+          <button
+            type="button"
+            onClick={() => setSalesView("net")}
+            className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "net" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="toggle-view-net"
+          >
+            Net
+          </button>
+          <button
+            type="button"
+            onClick={() => setSalesView("gross")}
+            className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "gross" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="toggle-view-gross"
+          >
+            Gross
+          </button>
+        </div>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total Sales
+              <Badge variant="outline" className="ml-1.5 text-[10px] font-normal">
+                {salesView === "net" ? "Net" : "Gross"}
+              </Badge>
+            </CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{fmtCurrency(totalSales)}</div>
+            {salesView === "net" && totalDeduction > 0 && (
+              <div className="text-[11px] text-muted-foreground mt-0.5" data-testid="kpi-deduction-note">
+                − {fmtCurrency(totalDeduction)} promo {totalDeduction === 1 ? "deduction" : "deductions"}
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card>

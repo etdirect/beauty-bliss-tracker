@@ -15,6 +15,7 @@ import {
   type IncentiveScheme, type InsertIncentiveScheme,
   type PosDailyFigure, type InsertPosDailyFigure,
 } from "@shared/schema";
+import { allocateDeductions } from "@shared/deductionAllocation";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import pg from "pg";
@@ -1161,6 +1162,106 @@ export class PgStorage implements IStorage {
     await this.q("DELETE FROM incentive_schemes WHERE id=$1", [id]);
   }
 
+  /**
+   * Compute net-sales totals for incentive progress by applying the standard
+   * promo-deduction allocation. This is slightly heavier than the old SUM()
+   * query because we need every sales entry at the affected counter-days to
+   * compute each brand's proportional share of the deduction, not just the
+   * target brand's rows. But the dataset is a month at most, and the alloc
+   * function is linear — cost is negligible next to a single network roundtrip.
+   *
+   * @param targetCol 'brand_id' | 'counter_id' — what the scheme targets.
+   * @returns net-of-deduction HK$ sum across all matching entries.
+   */
+  private async sumNetAmount(
+    targetCol: "brand_id" | "counter_id",
+    targetId: string,
+    dateStart: string,
+    dateEnd: string,
+    userId?: string,
+  ): Promise<number> {
+    // Distinct counter-day pairs hit by this target+user+date window. Needed
+    // to fetch every brand's sales at those counter-days for the allocator.
+    const keyRows = await this.q(
+      `SELECT DISTINCT counter_id, date FROM sales_entries WHERE ${targetCol} = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
+      userId ? [targetId, dateStart, dateEnd, userId] : [targetId, dateStart, dateEnd],
+    );
+    if (keyRows.rows.length === 0) return 0;
+
+    const counterIds = [...new Set(keyRows.rows.map((r: any) => r.counter_id))];
+    const dates = [...new Set(keyRows.rows.map((r: any) => r.date))];
+
+    // Pull ALL sales at these counter-days (all brands, all users) — allocator
+    // needs the full basket context.
+    const salesRes = await this.q(
+      `SELECT counter_id, brand_id, date, amount FROM sales_entries
+       WHERE counter_id = ANY($1::text[]) AND date = ANY($2::text[])`,
+      [counterIds, dates],
+    );
+    const entries = salesRes.rows.map((r: any) => ({
+      counterId: r.counter_id, brandId: r.brand_id, date: r.date, amount: Number(r.amount ?? 0),
+    }));
+
+    // Pull deductions at the same counter-days.
+    const dedRes = await this.q(
+      `SELECT counter_id, date, total_deduction FROM promotion_deductions
+       WHERE counter_id = ANY($1::text[]) AND date = ANY($2::text[])`,
+      [counterIds, dates],
+    );
+    const deductions = dedRes.rows.map((r: any) => ({
+      counterId: r.counter_id, date: r.date, totalDeduction: Number(r.total_deduction ?? 0),
+    }));
+
+    const alloc = allocateDeductions(entries, deductions);
+
+    // Sum netAmount for rows matching the scheme's target + user filter.
+    let total = 0;
+    for (const e of alloc.entries) {
+      const match = targetCol === "brand_id"
+        ? (e as any).brandId === targetId
+        : (e as any).counterId === targetId;
+      if (match) total += e.netAmount;
+    }
+    // userId was already applied on keyRows filtering. Since the sum above
+    // iterates over all sales at the affected counter-days, we also need to
+    // restrict the sum to the userId's rows. Re-pull with a dedicated query
+    // only if userId is set — cheap because we can reuse the same counters.
+    if (userId) {
+      const userIds = await this.q(
+        `SELECT id FROM sales_entries WHERE ${targetCol} = $1 AND date >= $2 AND date <= $3 AND submitted_by = $4`,
+        [targetId, dateStart, dateEnd, userId],
+      );
+      // Use direct SUM — we re-apply the allocation ratio per-entry.
+      const idSet = new Set(userIds.rows.map((r: any) => r.id));
+      // Lightweight fallback: recompute by summing only matching entries.
+      // The above total already over-counts (included other BAs), so overwrite.
+      total = 0;
+      const entryById = await this.q(
+        `SELECT id, counter_id, brand_id, date, amount, submitted_by FROM sales_entries
+         WHERE ${targetCol} = $1 AND date >= $2 AND date <= $3 AND submitted_by = $4`,
+        [targetId, dateStart, dateEnd, userId],
+      );
+      // For each user entry, look up its netAmount from the allocation.
+      const netByKey = new Map<string, number>();
+      for (const e of alloc.entries) {
+        const k = `${(e as any).counterId}|${(e as any).brandId}|${(e as any).date}`;
+        netByKey.set(k, ((netByKey.get(k) ?? 0) + e.netAmount));
+      }
+      for (const r of entryById.rows) {
+        if (!idSet.has(r.id)) continue;
+        const gross = Number(r.amount ?? 0);
+        const k = `${r.counter_id}|${r.brand_id}|${r.date}`;
+        const brandNetTotal = netByKey.get(k) ?? gross;
+        // Proportional slice within a (counter,brand,date) group if multiple BAs.
+        // Usually just one row per group; in that case ratio is 1.
+        const brandGrossTotal = entries.filter(e => e.counterId === r.counter_id && e.brandId === r.brand_id && e.date === r.date).reduce((s, e) => s + e.amount, 0);
+        const ratio = brandGrossTotal > 0 ? gross / brandGrossTotal : 0;
+        total += brandNetTotal * ratio;
+      }
+    }
+    return +total.toFixed(2);
+  }
+
   async getIncentiveProgress(month: string, userId?: string, _posId?: string): Promise<Record<string, number>> {
     const schemes = await this.getIncentiveSchemesByMonth(month);
     const result: Record<string, number> = {};
@@ -1170,17 +1271,16 @@ export class PgStorage implements IStorage {
       const monthEnd = `${month}-31`;
 
       if (scheme.category === "brand_units" || scheme.category === "product_units") {
+        // Unit-based schemes aren't affected by deductions (rebate is in HK$, not units).
         const { rows } = await this.q(
           `SELECT COALESCE(SUM(units), 0) as total FROM sales_entries WHERE brand_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
           userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
         );
         total = Number(rows[0]?.total || 0);
       } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
-        const { rows } = await this.q(
-          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE brand_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
-          userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
-        );
-        total = Number(rows[0]?.total || 0);
+        // Amount-based schemes use NET sales per business rule (commission is
+        // on what the counter actually received, not the pre-deduction gross).
+        total = await this.sumNetAmount("brand_id", scheme.targetId, monthStart, monthEnd, userId);
       } else if (scheme.category === "promo_achievement") {
         const { rows } = await this.q(
           `SELECT COALESCE(SUM(gwp_given), 0) as total FROM promotion_results WHERE promotion_id = $1 AND date >= $2 AND date <= $3`,
@@ -1188,11 +1288,8 @@ export class PgStorage implements IStorage {
         );
         total = Number(rows[0]?.total || 0);
       } else if (scheme.category === "pos_volume") {
-        const { rows } = await this.q(
-          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE counter_id = $1 AND date >= $2 AND date <= $3${userId ? " AND submitted_by = $4" : ""}`,
-          userId ? [scheme.targetId, monthStart, monthEnd, userId] : [scheme.targetId, monthStart, monthEnd]
-        );
-        total = Number(rows[0]?.total || 0);
+        // Counter-level target: counter net = counter gross − counter deduction.
+        total = await this.sumNetAmount("counter_id", scheme.targetId, monthStart, monthEnd, userId);
       }
       result[scheme.id] = total;
     }
@@ -1211,11 +1308,7 @@ export class PgStorage implements IStorage {
         );
         total = Number(rows[0]?.total || 0);
       } else if (scheme.category === "brand_amount" || scheme.category === "product_amount") {
-        const { rows } = await this.q(
-          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE brand_id = $1 AND date = $2${userId ? " AND submitted_by = $3" : ""}`,
-          userId ? [scheme.targetId, date, userId] : [scheme.targetId, date]
-        );
-        total = Number(rows[0]?.total || 0);
+        total = await this.sumNetAmount("brand_id", scheme.targetId, date, date, userId);
       } else if (scheme.category === "promo_achievement") {
         const { rows } = await this.q(
           `SELECT COALESCE(SUM(gwp_given), 0) as total FROM promotion_results WHERE promotion_id = $1 AND date = $2`,
@@ -1223,11 +1316,7 @@ export class PgStorage implements IStorage {
         );
         total = Number(rows[0]?.total || 0);
       } else if (scheme.category === "pos_volume") {
-        const { rows } = await this.q(
-          `SELECT COALESCE(SUM(amount), 0) as total FROM sales_entries WHERE counter_id = $1 AND date = $2${userId ? " AND submitted_by = $3" : ""}`,
-          userId ? [scheme.targetId, date, userId] : [scheme.targetId, date]
-        );
-        total = Number(rows[0]?.total || 0);
+        total = await this.sumNetAmount("counter_id", scheme.targetId, date, date, userId);
       }
       result[scheme.id] = total;
     }

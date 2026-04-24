@@ -14,7 +14,7 @@ import {
   Upload, FileSpreadsheet, TrendingUp, TrendingDown, Store,
   AlertTriangle, CheckCircle2, ArrowUpRight, ArrowDownRight, Minus,
 } from "lucide-react";
-import type { PosLocation, SalesEntry } from "@shared/schema";
+import type { PosLocation, SalesEntry, PromotionDeduction } from "@shared/schema";
 
 type PosDailyFigure = { id: string; counterId: string; date: string; posFigure: number };
 
@@ -63,6 +63,19 @@ export default function PosReconciliation() {
     queryKey: ["/api/sales", "reconciliation", selectedMonth],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/sales?startDate=${startDate}&endDate=${endDate}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  // Promotion deductions over the same month — surfaced as a separate
+  // column in the reconciliation table. The variance between BA-entered
+  // gross and POS system figures often matches the total deduction exactly
+  // (POS rings full gross but customer pays less thanks to the voucher).
+  const { data: deductions = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", "reconciliation", selectedMonth],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/promotion-deductions?startDate=${startDate}&endDate=${endDate}`);
       return res.json();
     },
     staleTime: 30_000,
@@ -120,63 +133,75 @@ export default function PosReconciliation() {
       posFigs.set(`${f.counterId}|${f.date}`, f.posFigure);
     }
 
+    // Group promotion deductions by counter+date (sum across multiple
+    // deductible promos per day).
+    const dedTotals = new Map<string, number>();
+    for (const d of deductions) {
+      const k = `${d.counterId}|${d.date}`;
+      dedTotals.set(k, (dedTotals.get(k) || 0) + (d.totalDeduction || 0));
+    }
+
     // Build per-POS monthly summary
     type PosSummary = {
       posId: string; posName: string; channel: string;
-      baSalesTotal: number; posFigureTotal: number; variance: number;
+      baSalesTotal: number;
+      posFigureTotal: number;
+      deductionTotal: number;
+      baNetTotal: number;      // BA gross − deduction (what the counter actually received)
+      variance: number;        // POS − BA gross (existing behaviour)
+      varianceNet: number;     // POS − BA net    (after deduction allocation)
       daysWithData: number; daysWithPosFigure: number;
-      dailyData: { date: string; baSales: number; posFigure: number; variance: number }[];
+      dailyData: { date: string; baSales: number; posFigure: number; deduction: number; baNet: number; variance: number; varianceNet: number }[];
     };
 
     const summaryMap = new Map<string, PosSummary>();
+    const allKeys = new Set<string>([
+      ...baSales.keys(),
+      ...posFigs.keys(),
+      ...dedTotals.keys(),
+    ]);
 
-    // Collect all dates with BA data
-    for (const [key, amount] of baSales.entries()) {
+    for (const key of allKeys) {
       const [posId, date] = key.split("|");
       if (!summaryMap.has(posId)) {
         const pos = posMap.get(posId);
         summaryMap.set(posId, {
           posId, posName: pos?.storeName || posId, channel: pos?.salesChannel || "",
-          baSalesTotal: 0, posFigureTotal: 0, variance: 0,
+          baSalesTotal: 0, posFigureTotal: 0, deductionTotal: 0, baNetTotal: 0,
+          variance: 0, varianceNet: 0,
           daysWithData: 0, daysWithPosFigure: 0, dailyData: [],
         });
       }
       const s = summaryMap.get(posId)!;
-      s.baSalesTotal += amount;
-      s.daysWithData++;
+      const baAmount = baSales.get(key) || 0;
       const posFig = posFigs.get(key) || 0;
-      if (posFig > 0) s.daysWithPosFigure++;
-      s.posFigureTotal += posFig;
-      s.dailyData.push({ date, baSales: amount, posFigure: posFig, variance: posFig - amount });
-    }
+      const ded = dedTotals.get(key) || 0;
+      const baNet = Math.max(0, baAmount - ded);
 
-    // Add POS-only days (POS figure but no BA sales)
-    for (const [key, fig] of posFigs.entries()) {
-      if (!baSales.has(key)) {
-        const [posId, date] = key.split("|");
-        if (!summaryMap.has(posId)) {
-          const pos = posMap.get(posId);
-          summaryMap.set(posId, {
-            posId, posName: pos?.storeName || posId, channel: pos?.salesChannel || "",
-            baSalesTotal: 0, posFigureTotal: 0, variance: 0,
-            daysWithData: 0, daysWithPosFigure: 0, dailyData: [],
-          });
-        }
-        const s = summaryMap.get(posId)!;
-        s.posFigureTotal += fig;
-        s.daysWithPosFigure++;
-        s.dailyData.push({ date, baSales: 0, posFigure: fig, variance: fig });
-      }
+      if (baAmount > 0) { s.baSalesTotal += baAmount; s.daysWithData++; }
+      if (posFig > 0) { s.posFigureTotal += posFig; s.daysWithPosFigure++; }
+      s.deductionTotal += ded;
+      s.baNetTotal += baNet;
+      s.dailyData.push({
+        date,
+        baSales: baAmount,
+        posFigure: posFig,
+        deduction: ded,
+        baNet,
+        variance: posFig - baAmount,
+        varianceNet: posFig - baNet,
+      });
     }
 
     // Compute variance
     for (const s of summaryMap.values()) {
       s.variance = s.posFigureTotal - s.baSalesTotal;
+      s.varianceNet = s.posFigureTotal - s.baNetTotal;
       s.dailyData.sort((a, b) => a.date.localeCompare(b.date));
     }
 
     return Array.from(summaryMap.values()).sort((a, b) => b.baSalesTotal - a.baSalesTotal);
-  }, [salesEntries, posFigures, posMap]);
+  }, [salesEntries, posFigures, deductions, posMap]);
 
   const totalBA = reconciliation.reduce((s, r) => s + r.baSalesTotal, 0);
   const totalPOS = reconciliation.reduce((s, r) => s + r.posFigureTotal, 0);
@@ -325,6 +350,12 @@ export default function PosReconciliation() {
                         <span className="text-xs text-muted-foreground">BA: </span>
                         <span className="font-medium">{fmtCurrency(r.baSalesTotal)}</span>
                       </span>
+                      {r.deductionTotal > 0 && (
+                        <span className="text-right" title="Total HK$ deducted via promo redemptions this month">
+                          <span className="text-xs text-muted-foreground">Ded: </span>
+                          <span className="font-medium text-blue-700 dark:text-blue-300">−{fmtCurrency(r.deductionTotal)}</span>
+                        </span>
+                      )}
                       {hasPos && (
                         <>
                           <span className="text-right">
@@ -355,9 +386,11 @@ export default function PosReconciliation() {
                       <thead>
                         <tr className="border-b">
                           <th className="text-left py-1 font-medium">Date</th>
-                          <th className="text-right py-1 font-medium">BA Sales</th>
+                          <th className="text-right py-1 font-medium">BA Gross</th>
+                          <th className="text-right py-1 font-medium" title="Promo deduction recorded for that day">Deduction</th>
+                          <th className="text-right py-1 font-medium">BA Net</th>
                           <th className="text-right py-1 font-medium">POS Figure</th>
-                          <th className="text-right py-1 font-medium">Variance</th>
+                          <th className="text-right py-1 font-medium" title="POS − BA Net (after promo deduction)">Variance (vs Net)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -365,9 +398,11 @@ export default function PosReconciliation() {
                           <tr key={dd.date} className="border-b last:border-0">
                             <td className="py-1">{(() => { const [y,m,d] = dd.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
                             <td className="py-1 text-right font-mono">{fmtCurrency(dd.baSales)}</td>
+                            <td className="py-1 text-right font-mono text-blue-700 dark:text-blue-300">{dd.deduction > 0 ? `−${fmtCurrency(dd.deduction)}` : "—"}</td>
+                            <td className="py-1 text-right font-mono font-semibold">{fmtCurrency(dd.baNet)}</td>
                             <td className="py-1 text-right font-mono">{dd.posFigure > 0 ? fmtCurrency(dd.posFigure) : "—"}</td>
-                            <td className={`py-1 text-right font-mono ${dd.variance > 0 ? "text-amber-600" : dd.variance < 0 ? "text-red-600" : ""}`}>
-                              {dd.posFigure > 0 ? `${dd.variance > 0 ? "+" : ""}${fmtCurrency(dd.variance)}` : "—"}
+                            <td className={`py-1 text-right font-mono ${dd.varianceNet > 0 ? "text-amber-600" : dd.varianceNet < 0 ? "text-red-600" : ""}`}>
+                              {dd.posFigure > 0 ? `${dd.varianceNet > 0 ? "+" : ""}${fmtCurrency(dd.varianceNet)}` : "—"}
                             </td>
                           </tr>
                         ))}
