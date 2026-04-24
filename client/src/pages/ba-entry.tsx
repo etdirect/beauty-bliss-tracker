@@ -647,7 +647,16 @@ export default function BAEntry() {
               <Input
                 type="date"
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => {
+                  // Changing the date resets all in-progress inputs so we
+                  // don't accidentally carry over the previous day's values.
+                  // Any previously-saved data for the new date is only
+                  // loaded when the BA clicks "Load & Edit".
+                  setSelectedDate(e.target.value);
+                  setSalesData({});
+                  setPromoData({});
+                  setDeductionData({});
+                }}
                 data-testid="input-date"
               />
             </div>
@@ -678,7 +687,7 @@ export default function BAEntry() {
         </Card>
 
         {/* Existing Entries Notice */}
-        {selectedCounter && myExistingEntries.length > 0 && !submitted && (
+        {selectedCounter && (myExistingEntries.length > 0 || existingDeductions.length > 0) && !submitted && (
           <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-start gap-2">
@@ -688,9 +697,20 @@ export default function BAEntry() {
                     Existing entries for this date
                   </p>
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                    {myExistingEntries.length} brand{myExistingEntries.length !== 1 ? "s" : ""} recorded
-                    {" — "}
-                    HK${myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}
+                    {myExistingEntries.length > 0 && (
+                      <>
+                        {myExistingEntries.length} brand{myExistingEntries.length !== 1 ? "s" : ""} recorded
+                        {" — HK$"}
+                        {myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}
+                      </>
+                    )}
+                    {existingDeductions.length > 0 && existingDeductions.some(d => (d.redemptionCount ?? 0) > 0) && (
+                      <>
+                        {myExistingEntries.length > 0 ? " · " : ""}
+                        {existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0)} coupon
+                        {existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0) !== 1 ? "s" : ""} redeemed
+                      </>
+                    )}
                   </p>
                   <Button
                     variant="outline"
