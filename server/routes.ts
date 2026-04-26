@@ -463,6 +463,58 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/public/promotion-redemption-stats?sourceScenarioId=...
+  // No-auth, server-to-server. Returns whether the linked tracker promotion has
+  // any recorded redemptions (gwpGiven from results, redemptionCount from
+  // deductions). Used by Simulator's edit-mode to warn before retroactive edits.
+  app.get("/api/public/promotion-redemption-stats", async (req, res) => {
+    try {
+      const sourceScenarioId = req.query.sourceScenarioId as string | undefined;
+      if (!sourceScenarioId) return res.status(400).json({ error: "sourceScenarioId required" });
+      const all = await storage.getPromotions();
+      const matches = (all as any[]).filter(p => p.sourceScenarioId === sourceScenarioId);
+      if (matches.length === 0) {
+        return res.json({ found: false, totalRedemptions: 0, totalGwpGiven: 0, totalDeductionAmount: 0, firstDate: null, lastDate: null, counterCount: 0 });
+      }
+      let totalRedemptions = 0;
+      let totalGwpGiven = 0;
+      let totalDeductionAmount = 0;
+      const dates = new Set<string>();
+      const counters = new Set<string>();
+      for (const m of matches) {
+        const results = await storage.getPromotionResults({ promotionId: m.id });
+        for (const r of results) {
+          if ((r.gwpGiven ?? 0) > 0) {
+            totalGwpGiven += r.gwpGiven;
+            dates.add(r.date);
+            counters.add(r.counterId);
+          }
+        }
+        const deductions = await storage.getPromotionDeductions({ promotionId: m.id });
+        for (const d of deductions) {
+          if ((d.redemptionCount ?? 0) > 0) {
+            totalRedemptions += d.redemptionCount;
+            totalDeductionAmount += d.totalDeduction ?? 0;
+            dates.add(d.date);
+            counters.add(d.counterId);
+          }
+        }
+      }
+      const sortedDates = Array.from(dates).sort();
+      return res.json({
+        found: true,
+        totalRedemptions: totalRedemptions + totalGwpGiven,
+        totalGwpGiven,
+        totalDeductionAmount,
+        firstDate: sortedDates[0] ?? null,
+        lastDate: sortedDates[sortedDates.length - 1] ?? null,
+        counterCount: counters.size,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/promotions/push — receive promotion from Simulator (no auth — server-to-server)
   app.post("/api/promotions/push", async (req, res) => {
     try {
