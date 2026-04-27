@@ -537,34 +537,72 @@ export async function registerRoutes(
 
       const existing = await storage.getPromotions();
 
-      // Check 1: exact match by sourceScenarioId (same push, re-pushed)
-      // Update ALL promos with this sourceScenarioId+layer (covers multi-location pushes)
+      // Check 1: re-push with the same sourceScenarioId. Treat this as a
+      // CONSOLIDATING update — all matching tracker rows are collapsed into a
+      // single canonical row built from the new payload. This is what makes
+      // “untick SOGO and redeploy” actually remove SOGO from BAs’ view: the
+      // SOGO row gets deleted along with the others, replaced by one row
+      // whose shopLocation no longer contains SOGO.
+      //
+      // Why not a per-field update? Older pushes split into one row per
+      // location, so there is no single row to update — we have to fold
+      // them into one before applying the new state.
+      // Legacy fallback: pre-link these rows by adopting the new
+      // sourceScenarioId. Only applies when no rows match the incoming ID
+      // exactly. We match on (sourceApp=simulator, name, promotionLayer) so
+      // that older split-row pushes with no sourceScenarioId can still be
+      // collapsed into a single canonical row by the consolidate path below.
       if (data.sourceScenarioId) {
-        const matches = existing.filter(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
-        if (matches.length > 0) {
-          const updateFields: any = {};
-          if (data.name) updateFields.name = data.name;
-          if (data.startDate) updateFields.startDate = data.startDate;
-          if (data.endDate) updateFields.endDate = data.endDate;
-          if (data.description) updateFields.description = data.description;
-          if (data.descriptionZh) updateFields.descriptionZh = data.descriptionZh;
-          if (data.mechanics) updateFields.mechanics = data.mechanics;
-          if (data.mechanicsZh) updateFields.mechanicsZh = data.mechanicsZh;
-          if (data.isActive !== undefined) updateFields.isActive = data.isActive;
-          if (data.brandId) updateFields.brandId = data.brandId;
-          // Keep trackable + monetary reward fields in sync on re-push so the
-          // BA entry screen can pick up the deduction counter without an
-          // admin manually toggling fields.
-          if (data.trackable !== undefined) updateFields.trackable = data.trackable;
-          if (data.spendGetSpendAmount !== undefined) updateFields.spendGetSpendAmount = data.spendGetSpendAmount;
-          if (data.spendGetDiscountAmount !== undefined) updateFields.spendGetDiscountAmount = data.spendGetDiscountAmount;
-          if (data.discountFixedAmount !== undefined) updateFields.discountFixedAmount = data.discountFixedAmount;
-          if (data.discountPercentage !== undefined) updateFields.discountPercentage = data.discountPercentage;
-          let lastUpdated;
-          for (const match of matches) {
-            lastUpdated = await storage.updatePromotion(match.id, { ...match, ...updateFields });
+        const exactMatches = existing.filter(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer);
+        if (exactMatches.length === 0 && data.name && data.promotionLayer) {
+          const orphanCandidates = existing.filter(p =>
+            (p.sourceApp || "") === "simulator" &&
+            !p.sourceScenarioId &&
+            p.promotionLayer === data.promotionLayer &&
+            (p.name || "").trim().toLowerCase() === (data.name || "").trim().toLowerCase()
+          );
+          // Adopt the new sourceScenarioId on each orphan so the consolidate
+          // step below picks them up uniformly.
+          for (const orphan of orphanCandidates) {
+            try { await storage.updatePromotion(orphan.id, { ...orphan, sourceScenarioId: data.sourceScenarioId }); } catch { /* best-effort */ }
           }
-          return res.json({ action: "updated", updatedCount: matches.length, promotion: lastUpdated });
+        }
+      }
+
+      if (data.sourceScenarioId) {
+        const matches = existing.filter(p => p.sourceScenarioId === data.sourceScenarioId && p.promotionLayer === data.promotionLayer)
+          .concat(
+            // Also include rows we just adopted in the loop above. Re-fetching
+            // would be cleaner but is more expensive; the in-memory `existing`
+            // is stale for adopted rows so we add them by name match.
+            existing.filter(p =>
+              (p.sourceApp || "") === "simulator" &&
+              !p.sourceScenarioId &&
+              p.promotionLayer === data.promotionLayer &&
+              (p.name || "").trim().toLowerCase() === (data.name || "").trim().toLowerCase()
+            )
+          )
+          // Dedup by id
+          .filter((p, i, arr) => arr.findIndex(q => q.id === p.id) === i);
+        if (matches.length > 0) {
+          // Preserve the FIRST matching row’s id so foreign keys
+          // (promotion_results, promotion_deductions) stay intact. Delete
+          // any extras, then patch the survivor with the full new payload.
+          const survivor = matches[0];
+          const extras = matches.slice(1);
+          for (const e of extras) {
+            try { await storage.deletePromotion(e.id); } catch { /* best effort */ }
+          }
+          const merged: any = {
+            ...survivor,
+            ...data,
+            id: survivor.id,
+            // Allow shopLocation to be cleared (empty string) on deactivate —
+            // don’t fall back to survivor.shopLocation in that case.
+            shopLocation: data.shopLocation !== undefined ? data.shopLocation : survivor.shopLocation,
+          };
+          const updated = await storage.updatePromotion(survivor.id, merged);
+          return res.json({ action: "consolidated", deletedExtras: extras.length, promotion: updated });
         }
       }
 
