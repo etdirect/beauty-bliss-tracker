@@ -924,9 +924,16 @@ export default function BAEntry() {
                     const nameLC = (promo.name || "").toLowerCase();
                     brandName = brands.find(b => nameLC.includes(b.name.toLowerCase()))?.name || null;
                   }
+                  // Promo number for BA reference — prefer the Simulator's #
+                  // (matches what admins say in WhatsApp / email) and fall
+                  // back to the tracker-local sequential.
+                  const promoNum = (promo as any).simulatorPromoNumber ?? (promo as any).promoNumber ?? null;
                   return (
                     <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {promoNum != null && (
+                          <span className="text-xs font-mono text-muted-foreground">#{promoNum}</span>
+                        )}
                         {brandName && (
                           <span className="text-sm font-bold text-foreground/80">{brandName}</span>
                         )}
@@ -1016,17 +1023,37 @@ export default function BAEntry() {
                 {filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").map(promo => {
                   const typeColor = PROMO_TYPE_COLORS[promo.type] || PROMO_TYPE_COLORS["Other"];
                   const fmtD = (d: string) => { const [y,m,dd] = d.split("-"); return `${dd}/${m}`; };
+                  const promoNum = (promo as any).simulatorPromoNumber ?? (promo as any).promoNumber ?? null;
+                  // Split the Chinese description into a short layer label
+                  // (專櫃加購 / 專櫃優惠) and the body. The simulator's description
+                  // engine prefixes "專櫃加購：" or "專櫃優惠：" to L2 promos so we
+                  // can split on the full-width colon. Fallback uses the
+                  // promo type to pick a sensible default tag.
+                  const desc = (promo.descriptionZh || promo.name || "").trim();
+                  const colonIdx = desc.indexOf("：");
+                  let layerTag = "";
+                  let descBody = desc;
+                  if (colonIdx > 0 && colonIdx <= 8) {
+                    layerTag = desc.substring(0, colonIdx).trim();
+                    descBody = desc.substring(colonIdx + 1).trim();
+                  } else {
+                    layerTag = promo.type === "PWP" ? "專櫃加購" : "專櫃優惠";
+                  }
                   return (
                     <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-2.5 space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {promoNum != null && (
+                          <span className="text-xs font-mono text-muted-foreground">#{promoNum}</span>
+                        )}
+                        <span className="text-sm font-bold text-foreground/80">{layerTag}</span>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
                           {promo.type}
                         </span>
                         {promo.startDate && promo.endDate && (
                           <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
-                        <span className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</span>
                       </div>
+                      <div className="font-medium text-sm break-words">{descBody}</div>
                       {(promo.mechanicsZh || promo.mechanics) && (
                         <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
                           {promo.mechanicsZh || promo.mechanics}
