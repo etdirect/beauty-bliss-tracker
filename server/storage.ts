@@ -314,6 +314,32 @@ export class PgStorage implements IStorage {
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS spend_get_tiers TEXT`);
     await this.q(`ALTER TABLE promotion_deductions ADD COLUMN IF NOT EXISTS tier_breakdown TEXT`);
 
+    // One-time backfill: a previous simulator version stored brand NAMES in
+    // the brand_id column. Resolve them to the real UUID so the BA filter
+    // works. Idempotent — only touches rows where brand_id is non-null and
+    // not a UUID, and where the name has a matching brand row.
+    try {
+      await this.q(`
+        UPDATE promotions p
+        SET brand_id = b.id
+        FROM brands b
+        WHERE p.brand_id IS NOT NULL
+          AND p.brand_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          AND lower(regexp_replace(b.name, '[^a-zA-Z0-9]', '', 'g')) =
+              lower(regexp_replace(p.brand_id, '[^a-zA-Z0-9]', '', 'g'))
+      `);
+      // Strip any remaining non-UUID brand_ids that didn't resolve so they
+      // don't keep failing the filter silently.
+      await this.q(`
+        UPDATE promotions
+        SET brand_id = NULL
+        WHERE brand_id IS NOT NULL
+          AND brand_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      `);
+    } catch (err) {
+      console.warn("[migration] brand_id backfill skipped:", (err as any)?.message);
+    }
+
     // NEW tables for auth + POS restructure
     await this.q(`
       CREATE TABLE IF NOT EXISTS pos_locations (

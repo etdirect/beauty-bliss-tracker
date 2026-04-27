@@ -526,13 +526,23 @@ export async function registerRoutes(
       // Resolve brand name to brandId early (needed for both create and update)
       // Simulator sends "brand" field; older clients used "brandName". Accept both.
       // Match tolerates hyphens/spaces/punctuation (e.g. "Addmino-18" == "Addmino18").
+      //
+      // Defense-in-depth: a previous simulator version sent the brand NAME
+      // in the brandId slot. Detect that case (brandId looks nothing like a
+      // UUID) and re-resolve so we don't poison the brand filter.
       const incomingBrandName: string | undefined = data.brandName || data.brand;
-      if (!data.brandId && incomingBrandName) {
-        const allBrands = await storage.getBrands();
-        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const needle = normalize(incomingBrandName);
-        const brandMatch = allBrands.find((b: any) => normalize(b.name) === needle);
-        if (brandMatch) data.brandId = brandMatch.id;
+      const looksLikeUuid = (v: any) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+      const needsResolve = !data.brandId || (typeof data.brandId === "string" && !looksLikeUuid(data.brandId));
+      if (needsResolve) {
+        const candidate: string | undefined = incomingBrandName || (typeof data.brandId === "string" ? data.brandId : undefined);
+        if (candidate) {
+          const allBrands = await storage.getBrands();
+          const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const needle = normalize(candidate);
+          const brandMatch = allBrands.find((b: any) => normalize(b.name) === needle);
+          if (brandMatch) data.brandId = brandMatch.id;
+          else if (!looksLikeUuid(data.brandId)) data.brandId = null; // strip the bad value
+        }
       }
 
       const existing = await storage.getPromotions();
