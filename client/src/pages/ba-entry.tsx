@@ -928,25 +928,34 @@ export default function BAEntry() {
                   // (matches what admins say in WhatsApp / email) and fall
                   // back to the tracker-local sequential.
                   const promoNum = (promo as any).simulatorPromoNumber ?? (promo as any).promoNumber ?? null;
+                  // Layer-1 (Brand) card. Title-first hierarchy:
+                  //   Line 1: TITLE in dark / bold
+                  //   Line 2: meta row (#N · brand · type chip · dates) muted
+                  //   Body:   long mechanics, exclusions
+                  //   Inputs: wrapped in their own sub-card so BAs can spot
+                  //           "where do I type" without scanning past prose.
                   return (
-                    <div key={promo.id} className="bg-background/60 rounded-md p-2.5 space-y-1.5">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <div key={promo.id} className="bg-background/60 rounded-md p-3 space-y-2">
+                      <div className="font-semibold text-foreground break-words">{promo.descriptionZh || promo.name}</div>
+                      <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                         {promoNum != null && (
-                          <span className="text-xs font-mono text-muted-foreground">#{promoNum}</span>
+                          <span className="font-mono">#{promoNum}</span>
                         )}
                         {brandName && (
-                          <span className="text-sm font-bold text-foreground/80">{brandName}</span>
+                          <>
+                            {promoNum != null && <span aria-hidden>·</span>}
+                            <span className="font-medium text-foreground/80">{brandName}</span>
+                          </>
                         )}
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
+                        <span className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-muted text-muted-foreground">
                           {promo.type}
                         </span>
                         {promo.startDate && promo.endDate && (
-                          <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
+                          <span>{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
                       </div>
-                      <div className="font-medium text-sm break-words">{promo.descriptionZh || promo.name}</div>
                       {(promo.mechanicsZh || promo.mechanics) && (
-                        <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
+                        <p className="text-xs text-foreground/90 leading-relaxed break-words">
                           {promo.mechanicsZh || promo.mechanics}
                         </p>
                       )}
@@ -956,41 +965,46 @@ export default function BAEntry() {
                           <span className="break-words">除外: {promo.exclusions}</span>
                         </p>
                       )}
-                      {promo.trackable && promo.type === "GWP" && (
-                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
-                          <label className="text-xs font-medium whitespace-nowrap">
-                            {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
-                          </label>
-                          <Input
-                            type="number" min={0} className="h-7 w-20 text-sm"
-                            value={promoData[promo.id]?.gwpGiven || ""}
-                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                            placeholder="0"
-                          />
-                        </div>
-                      )}
-                      {promo.trackable && promo.type === "PWP" && (
-                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
-                          <label className="text-xs font-medium whitespace-nowrap">
-                            {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
-                          </label>
-                          <Input
-                            type="number" min={0} className="h-7 w-20 text-sm"
-                            value={promoData[promo.id]?.gwpGiven || ""}
-                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                            placeholder="0"
-                          />
-                        </div>
-                      )}
-                      {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
-                        <div className="flex gap-2 items-center pt-1 border-t border-dashed mt-1.5">
-                          <label className="text-xs font-medium whitespace-nowrap">{promo.gwpItem} given:</label>
-                          <Input
-                            type="number" min={0} className="h-7 w-20 text-sm"
-                            value={promoData[promo.id]?.gwpGiven || ""}
-                            onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                            placeholder="0"
-                          />
+                      {((promo.trackable && (promo.type === "GWP" || promo.type === "PWP")) || (!promo.trackable && promo.type === "GWP" && promo.gwpItem)) && (
+                        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-2.5 py-2">
+                          <div className="text-[11px] font-medium text-amber-900 dark:text-amber-200 mb-1.5">今日記錄</div>
+                          {promo.trackable && promo.type === "GWP" && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap text-foreground">
+                                {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
+                              </label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
+                          {promo.trackable && promo.type === "PWP" && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap text-foreground">
+                                {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
+                              </label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
+                          {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
+                            <div className="flex gap-2 items-center">
+                              <label className="text-xs font-medium whitespace-nowrap text-foreground">{promo.gwpItem} given:</label>
+                              <Input
+                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
+                                value={promoData[promo.id]?.gwpGiven || ""}
+                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1040,22 +1054,24 @@ export default function BAEntry() {
                     layerTag = promo.type === "PWP" ? "專櫃加購" : "專櫃優惠";
                   }
                   return (
-                    <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-2.5 space-y-1.5">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-3 space-y-2">
+                      {/* Title-first: large dark line, then a small muted meta row. */}
+                      <div className="font-semibold text-foreground break-words">{descBody}</div>
+                      <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                         {promoNum != null && (
-                          <span className="text-xs font-mono text-muted-foreground">#{promoNum}</span>
+                          <span className="font-mono">#{promoNum}</span>
                         )}
-                        <span className="text-sm font-bold text-foreground/80">{layerTag}</span>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeColor}`}>
+                        {promoNum != null && <span aria-hidden>·</span>}
+                        <span className="font-medium text-foreground/80">{layerTag}</span>
+                        <span className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-muted text-muted-foreground">
                           {promo.type}
                         </span>
                         {promo.startDate && promo.endDate && (
-                          <span className="text-[10px] text-muted-foreground">{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
+                          <span>{fmtD(promo.startDate)} – {fmtD(promo.endDate)}</span>
                         )}
                       </div>
-                      <div className="font-medium text-sm break-words">{descBody}</div>
                       {(promo.mechanicsZh || promo.mechanics) && (
-                        <p className="text-xs text-foreground/90 leading-relaxed font-medium break-words">
+                        <p className="text-xs text-foreground/90 leading-relaxed break-words">
                           {promo.mechanicsZh || promo.mechanics}
                         </p>
                       )}
