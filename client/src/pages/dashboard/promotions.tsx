@@ -198,19 +198,52 @@ export default function Promotions() {
   };
 
   // Deduction stats (how many "Get Y" redemptions were recorded and the total HK$ deducted)
+  // Also rolls up tierBreakdown into a `byTier` map so the promo card can
+  // show "Spend $500 → $50: 3× ($150)" alongside the by-counter view.
   const getDeductionStats = (promo: Promotion) => {
     const rows = promotionDeductions.filter(r => r.promotionId === promo.id);
     const totalCount = rows.reduce((s, r) => s + (r.redemptionCount ?? 0), 0);
     const totalAmount = rows.reduce((s, r) => s + (r.totalDeduction ?? 0), 0);
     const byCounter: Record<string, { count: number; amount: number }> = {};
+    const byTier: Record<string, { count: number; amount: number; label: string }> = {};
+    // Parse tier definition off the promo to map ids → readable labels.
+    let tiersMeta: { id: string; threshold: number; thresholdType?: "spend" | "qty"; thresholdQty?: number; rewardType: string; discountAmount?: number }[] = [];
+    const rawTiers = (promo as any).spendGetTiers as string | null | undefined;
+    if (rawTiers) {
+      try {
+        const arr = JSON.parse(rawTiers);
+        if (Array.isArray(arr)) tiersMeta = arr.filter((t: any) => t.rewardType !== "gift");
+      } catch { /* ignore */ }
+    }
+    const labelOf = (tierId: string) => {
+      const t = tiersMeta.find(m => m.id === tierId);
+      if (!t) return tierId;
+      return t.thresholdType === "qty"
+        ? `買${t.thresholdQty ?? 0}件→HK$${t.discountAmount ?? 0}`
+        : `HK$${t.threshold}→HK$${t.discountAmount ?? 0}`;
+    };
     for (const r of rows) {
       const pos = posLocations.find(p => p.id === r.counterId);
       const name = pos?.storeName || "Unknown";
       if (!byCounter[name]) byCounter[name] = { count: 0, amount: 0 };
       byCounter[name].count += r.redemptionCount ?? 0;
       byCounter[name].amount += r.totalDeduction ?? 0;
+      // Roll up the per-tier counts if this row has a tierBreakdown.
+      const rawBreakdown = (r as any).tierBreakdown as string | null | undefined;
+      if (rawBreakdown) {
+        try {
+          const arr = JSON.parse(rawBreakdown) as { tierId: string; redemptionCount: number; rewardPerRedemption: number }[];
+          for (const tb of arr) {
+            if ((tb.redemptionCount ?? 0) <= 0) continue;
+            const key = tb.tierId;
+            if (!byTier[key]) byTier[key] = { count: 0, amount: 0, label: labelOf(key) };
+            byTier[key].count += tb.redemptionCount;
+            byTier[key].amount += tb.redemptionCount * (tb.rewardPerRedemption ?? 0);
+          }
+        } catch { /* ignore */ }
+      }
     }
-    return { totalCount, totalAmount, byCounter };
+    return { totalCount, totalAmount, byCounter, byTier };
   };
 
   // Summary
@@ -288,13 +321,25 @@ export default function Promotions() {
           )}
           {/* Deduction stats (Spend & Get / Fixed Amount) */}
           {dedStats.totalCount > 0 && (
-            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700">Get Y</Badge>
-              <span className="text-[11px] font-medium">{dedStats.totalCount} redemptions · HK${dedStats.totalAmount.toLocaleString()} deducted</span>
-              {Object.entries(dedStats.byCounter).slice(0, 5).map(([name, v]) => (
-                <Badge key={name} variant="secondary" className="text-[10px] tabular-nums">{name}: {v.count} · HK${v.amount.toLocaleString()}</Badge>
-              ))}
-            </div>
+            <>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700">Get Y</Badge>
+                <span className="text-[11px] font-medium">{dedStats.totalCount} redemptions · HK${dedStats.totalAmount.toLocaleString()} deducted</span>
+                {Object.entries(dedStats.byCounter).slice(0, 5).map(([name, v]) => (
+                  <Badge key={name} variant="secondary" className="text-[10px] tabular-nums">{name}: {v.count} · HK${v.amount.toLocaleString()}</Badge>
+                ))}
+              </div>
+              {Object.keys(dedStats.byTier).length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground">By tier:</span>
+                  {Object.entries(dedStats.byTier).map(([tierId, v]) => (
+                    <Badge key={tierId} variant="outline" className="text-[10px] tabular-nums border-blue-200 text-blue-800 dark:text-blue-200" title={v.label}>
+                      {v.label}: {v.count}× (HK${v.amount.toLocaleString()})
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
         {/* Right side: dates + actions */}

@@ -39,6 +39,10 @@ export default function BAEntry() {
   // the promo fired today. reward is snapshotted from the promotion's
   // spendGetDiscountAmount / discountFixedAmount at entry time.
   const [deductionData, setDeductionData] = useState<Record<string, { redemptionCount: number; notes: string }>>({});
+  // For multi-tier Spend & Get promos: per-tier redemption counts.
+  // Keyed by promotionId, then by tierId. The total is summed for legacy
+  // dashboards that still read redemptionCount.
+  const [tierDeductionData, setTierDeductionData] = useState<Record<string, Record<string, number>>>({});
   const [submitted, setSubmitted] = useState(false);
   const [posFigure, setPosFigure] = useState<string>("");
 
@@ -297,10 +301,52 @@ export default function BAEntry() {
     if (p.discountFixedAmount != null && Number(p.discountFixedAmount) > 0) return Number(p.discountFixedAmount);
     return parseRewardFromText(p);
   }
+
+  // Parse multi-tier Spend & Get configuration off a promotion. Returns
+  // monetary tiers (used for deduction inputs) and gift tiers separately
+  // so gift tiers go through the existing GWP "今日兌換次數" path. Empty
+  // when the promo isn't tiered.
+  type ParsedTier = {
+    id: string;
+    threshold: number;
+    thresholdType: "spend" | "qty";
+    thresholdQty?: number;
+    rewardType: "percentage" | "fixed" | "gift";
+    discountAmount?: number;
+    discountPct?: number;
+    giftItem?: string;
+    giftValue?: number;
+  };
+  function parseTiers(p: Promotion): { monetary: ParsedTier[]; gifts: ParsedTier[] } {
+    const raw = (p as any).spendGetTiers as string | null | undefined;
+    if (!raw) return { monetary: [], gifts: [] };
+    try {
+      const arr = JSON.parse(raw) as ParsedTier[];
+      if (!Array.isArray(arr) || arr.length === 0) return { monetary: [], gifts: [] };
+      const monetary = arr.filter(t => t.rewardType !== "gift" && (t.discountAmount ?? 0) > 0);
+      const gifts = arr.filter(t => t.rewardType === "gift");
+      return { monetary, gifts };
+    } catch { return { monetary: [], gifts: [] }; }
+  }
+
   function isDeductiblePromo(p: Promotion): boolean {
     if (!p.trackable) return false;
     if (p.type !== "Spend & Get" && p.type !== "Fixed Amount Discount") return false;
+    const { monetary } = parseTiers(p);
+    if (monetary.length > 0) return true;
     return rewardPerRedemption(p) > 0;
+  }
+
+  // Sum the per-tier counts for a multi-tier promo — used in submit payload
+  // and the over-redemption warning.
+  function getTierTotalCount(promoId: string): number {
+    const tiers = tierDeductionData[promoId] ?? {};
+    return Object.values(tiers).reduce((s, n) => s + (Number(n) || 0), 0);
+  }
+  function getTierTotalSubtotal(p: Promotion): number {
+    const counts = tierDeductionData[p.id] ?? {};
+    const { monetary } = parseTiers(p);
+    return monetary.reduce((s, t) => s + ((counts[t.id] ?? 0) * (t.discountAmount ?? 0)), 0);
   }
 
   // Filter existing sales: for non-management, only show entries they submitted (or all if canViewHistory)
@@ -352,15 +398,38 @@ export default function BAEntry() {
         }));
 
       // Include every deductible promo — zero counts are sent so a BA can
-      // clear a previous day's deduction by re-submitting with 0.
+      // clear a previous day's deduction by re-submitting with 0. For
+      // multi-tier promos we send a tierBreakdown array; the server
+      // recomputes redemptionCount + total from it.
       const promotionDeductions = activePromotions
         .filter(p => isDeductiblePromo(p))
-        .map(p => ({
-          promotionId: p.id,
-          redemptionCount: deductionData[p.id]?.redemptionCount ?? 0,
-          rewardPerRedemption: rewardPerRedemption(p),
-          notes: deductionData[p.id]?.notes || "",
-        }));
+        .map(p => {
+          const { monetary } = parseTiers(p);
+          if (monetary.length > 0) {
+            const tierBreakdown = monetary.map(t => ({
+              tierId: t.id,
+              redemptionCount: tierDeductionData[p.id]?.[t.id] ?? 0,
+              rewardPerRedemption: t.discountAmount ?? 0,
+            }));
+            const totalCount = tierBreakdown.reduce((s, t) => s + t.redemptionCount, 0);
+            // Use the dominant (highest contribution) tier's reward as the
+            // legacy rewardPerRedemption fallback for non-tier dashboards.
+            const dominant = tierBreakdown.reduce((a, b) => (a.redemptionCount * a.rewardPerRedemption >= b.redemptionCount * b.rewardPerRedemption) ? a : b, tierBreakdown[0]);
+            return {
+              promotionId: p.id,
+              redemptionCount: totalCount,
+              rewardPerRedemption: dominant?.rewardPerRedemption ?? 0,
+              tierBreakdown,
+              notes: deductionData[p.id]?.notes || "",
+            };
+          }
+          return {
+            promotionId: p.id,
+            redemptionCount: deductionData[p.id]?.redemptionCount ?? 0,
+            rewardPerRedemption: rewardPerRedemption(p),
+            notes: deductionData[p.id]?.notes || "",
+          };
+        });
 
       const posVal = posFigure ? parseFloat(posFigure) : undefined;
       await apiRequest("POST", "/api/sales/batch", {
@@ -402,6 +471,7 @@ export default function BAEntry() {
     setSalesData({});
     setPromoData({});
     setDeductionData({});
+    setTierDeductionData({});
     setIncentiveInputs({});
     setSubmitted(false);
   };
@@ -435,13 +505,27 @@ export default function BAEntry() {
     const dedRefetch = await refetchDeductions();
     const freshDed = (dedRefetch.data ?? []) as PromotionDeduction[];
     const dData: Record<string, { redemptionCount: number; notes: string }> = {};
+    const tData: Record<string, Record<string, number>> = {};
     for (const d of freshDed) {
       dData[d.promotionId] = {
         redemptionCount: d.redemptionCount ?? 0,
         notes: d.notes ?? "",
       };
+      const rawBreakdown = (d as any).tierBreakdown as string | null | undefined;
+      if (rawBreakdown) {
+        try {
+          const arr = JSON.parse(rawBreakdown) as { tierId: string; redemptionCount: number }[];
+          if (Array.isArray(arr)) {
+            tData[d.promotionId] = {};
+            for (const t of arr) {
+              if (t.tierId) tData[d.promotionId][t.tierId] = Number(t.redemptionCount ?? 0) || 0;
+            }
+          }
+        } catch { /* ignore */ }
+      }
     }
     setDeductionData(dData);
+    setTierDeductionData(tData);
 
     // 3. Load incentive entries — force refetch and set inputs directly
     const incentiveRefetch = await refetchDailyEntries();
@@ -617,7 +701,7 @@ export default function BAEntry() {
               <label className="text-sm font-medium flex items-center gap-1.5">
                 <Store className="w-3.5 h-3.5" /> POS Location
               </label>
-              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); setIncentiveInputs({}); }}>
+              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); setTierDeductionData({}); setIncentiveInputs({}); }}>
                 <SelectTrigger data-testid="select-counter">
                   <SelectValue placeholder="Select your POS location" />
                 </SelectTrigger>
@@ -644,6 +728,7 @@ export default function BAEntry() {
                   setSalesData({});
                   setPromoData({});
                   setDeductionData({});
+                  setTierDeductionData({});
                   setIncentiveInputs({});
                 }}
                 data-testid="input-date"
@@ -948,12 +1033,60 @@ export default function BAEntry() {
                         </p>
                       )}
                       {isDeductiblePromo(promo) && (() => {
+                        const { monetary } = parseTiers(promo);
+                        const dayGross = Object.values(salesData).reduce((s, v) => s + (v?.amount ?? 0), 0);
+                        // Multi-tier path — one input per monetary tier.
+                        if (monetary.length > 0) {
+                          const subtotal = getTierTotalSubtotal(promo);
+                          const overRedeemed = dayGross > 0 && subtotal > dayGross;
+                          const totalCount = getTierTotalCount(promo.id);
+                          return (
+                            <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-white/80 dark:bg-blue-950/40 px-2.5 py-2 space-y-2">
+                              <div className="text-[11px] font-medium text-blue-900 dark:text-blue-200">今日各階兌換次數</div>
+                              <div className="space-y-1.5">
+                                {monetary.map((t) => {
+                                  const tCount = tierDeductionData[promo.id]?.[t.id] ?? 0;
+                                  const tSub = tCount * (t.discountAmount ?? 0);
+                                  const tierLabel = t.thresholdType === "qty"
+                                    ? `購買${t.thresholdQty ?? 0}件減HK$${(t.discountAmount ?? 0).toLocaleString()}`
+                                    : `消費滿 HK$${t.threshold.toLocaleString()} 減 HK$${(t.discountAmount ?? 0).toLocaleString()}`;
+                                  return (
+                                    <div key={t.id} className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-xs text-foreground min-w-[200px]">{tierLabel}</span>
+                                      <Input
+                                        data-testid={`input-deduction-tier-${promo.id}-${t.id}`}
+                                        type="number" min={0} step={1} inputMode="numeric"
+                                        className="h-7 w-20 text-sm tabular-nums"
+                                        value={tCount > 0 ? String(tCount) : ""}
+                                        onChange={(e) => {
+                                          const n = e.target.value === "" ? 0 : Math.max(0, Math.floor(Number(e.target.value)));
+                                          setTierDeductionData((prev) => ({
+                                            ...prev,
+                                            [promo.id]: { ...(prev[promo.id] ?? {}), [t.id]: n },
+                                          }));
+                                        }}
+                                      />
+                                      <span className="text-xs text-muted-foreground">
+                                        × HK${(t.discountAmount ?? 0).toLocaleString()} = <span className="font-medium text-blue-900 dark:text-blue-100">HK${tSub.toLocaleString()}</span>
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center justify-between text-xs pt-1 border-t border-blue-200/60 dark:border-blue-800/60">
+                                <span className="text-blue-900 dark:text-blue-200">今日總兌換 {totalCount} 次</span>
+                                <span className="font-semibold text-blue-900 dark:text-blue-100">總扣除 HK${subtotal.toLocaleString()}</span>
+                              </div>
+                              {overRedeemed && (
+                                <p className="text-[11px] text-amber-700 dark:text-amber-300">⚠ 扣除總額大於今日銷售額，請核對數據。</p>
+                              )}
+                            </div>
+                          );
+                        }
+                        // Single-tier (legacy) path — unchanged.
                         const reward = rewardPerRedemption(promo);
                         const count = deductionData[promo.id]?.redemptionCount ?? 0;
                         const subtotal = count * reward;
-                        // Sum of all deductible promo subtotals today — used
-                        // for the over-redemption warning.
-                        const dayGross = Object.values(salesData).reduce((s, v) => s + (v?.amount ?? 0), 0);
                         const overRedeemed = dayGross > 0 && subtotal > dayGross;
                         return (
                           <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-white/80 dark:bg-blue-950/40 px-2.5 py-2 space-y-1.5">
@@ -964,10 +1097,7 @@ export default function BAEntry() {
                               <Input
                                 id={`ded-${promo.id}`}
                                 data-testid={`input-deduction-${promo.id}`}
-                                type="number"
-                                min={0}
-                                step={1}
-                                inputMode="numeric"
+                                type="number" min={0} step={1} inputMode="numeric"
                                 className="h-7 w-20 text-sm tabular-nums"
                                 value={count > 0 ? String(count) : ""}
                                 onChange={(e) => {

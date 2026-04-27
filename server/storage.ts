@@ -310,6 +310,9 @@ export class PgStorage implements IStorage {
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS promo_number SERIAL`);
     // Simulator's own #N (so tracker can display the matching number)
     await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS simulator_promo_number INTEGER`);
+    // Multi-tier Spend & Get support — see schema.ts for shape.
+    await this.q(`ALTER TABLE promotions ADD COLUMN IF NOT EXISTS spend_get_tiers TEXT`);
+    await this.q(`ALTER TABLE promotion_deductions ADD COLUMN IF NOT EXISTS tier_breakdown TEXT`);
 
     // NEW tables for auth + POS restructure
     await this.q(`
@@ -568,6 +571,7 @@ export class PgStorage implements IStorage {
       descriptionZh: r.description_zh, mechanicsZh: r.mechanics_zh,
       promoNumber: r.promo_number != null ? Number(r.promo_number) : null,
       simulatorPromoNumber: r.simulator_promo_number != null ? Number(r.simulator_promo_number) : null,
+      spendGetTiers: r.spend_get_tiers ?? null,
     } as Promotion;
   }
   private mapPromotionResult(r: any): PromotionResult {
@@ -789,7 +793,14 @@ export class PgStorage implements IStorage {
     // gross sales without mutating the raw sales_entries table.
     if (submission.promotionDeductions) {
       for (const pd of submission.promotionDeductions) {
-        if ((pd.redemptionCount ?? 0) > 0) {
+        // For tier-aware submissions, redemptionCount is the SUM across
+        // tiers (the BA UI computes it). We accept either path: tier
+        // breakdown when present, single-row otherwise. Server recomputes
+        // totals from the tier breakdown if it's there.
+        const tierBreakdownArr = (pd as any).tierBreakdown as { tierId: string; redemptionCount: number; rewardPerRedemption: number }[] | undefined;
+        const tierTotalCount = tierBreakdownArr ? tierBreakdownArr.reduce((s, t) => s + (t.redemptionCount ?? 0), 0) : 0;
+        const effectiveCount = tierBreakdownArr ? tierTotalCount : (pd.redemptionCount ?? 0);
+        if (effectiveCount > 0) {
           await this.upsertPromotionDeduction({
             promotionId: pd.promotionId,
             counterId: submission.counterId,
@@ -797,9 +808,10 @@ export class PgStorage implements IStorage {
             redemptionCount: pd.redemptionCount,
             rewardPerRedemption: pd.rewardPerRedemption,
             totalDeduction: +(pd.redemptionCount * pd.rewardPerRedemption).toFixed(2),
+            tierBreakdown: tierBreakdownArr ? JSON.stringify(tierBreakdownArr) : null,
             notes: pd.notes ?? null,
             submittedBy: submittedBy ?? null,
-          });
+          } as any);
         } else {
           // Zeroed out — remove the row so reports don't show a stale deduction
           await this.deletePromotionDeduction(pd.promotionId, submission.counterId, submission.date);
@@ -840,8 +852,8 @@ export class PgStorage implements IStorage {
        condition_minimum_spend, condition_minimum_qty, condition_required_items, condition_other,
        reference_original_price, reference_promo_price, remarks, entered_by, date_entered,
        source_list_id, last_synced_at, source_app, source_scenario_id, promotion_layer, trackable,
-       description_zh, mechanics_zh)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45)`,
+       description_zh, mechanics_zh, spend_get_tiers)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
       [
         id, data.name, data.brandId ?? null, data.type, data.description, data.startDate, data.endDate, data.isActive ?? true,
         data.shopLocation ?? null, data.mechanics ?? null, data.promoAppliesTo ?? null, data.applicableProducts ?? null, data.exclusions ?? null,
@@ -854,6 +866,7 @@ export class PgStorage implements IStorage {
         data.sourceListId ?? null, data.lastSyncedAt ?? null,
         data.sourceApp ?? null, data.sourceScenarioId ?? null, data.promotionLayer ?? null, data.trackable ?? false,
         data.descriptionZh ?? null, data.mechanicsZh ?? null,
+        (data as any).spendGetTiers ?? null,
       ],
     );
     return makePromotion(id, data);
@@ -880,6 +893,7 @@ export class PgStorage implements IStorage {
       promotionLayer: "promotion_layer", trackable: "trackable",
       descriptionZh: "description_zh", mechanicsZh: "mechanics_zh",
       simulatorPromoNumber: "simulator_promo_number",
+      spendGetTiers: "spend_get_tiers",
     };
     const sets: string[] = []; const vals: any[] = []; let i = 1;
     for (const [key, col] of Object.entries(fieldMap)) {
@@ -958,9 +972,10 @@ export class PgStorage implements IStorage {
       redemptionCount: Number(r.redemption_count ?? 0),
       rewardPerRedemption: Number(r.reward_per_redemption ?? 0),
       totalDeduction: Number(r.total_deduction ?? 0),
+      tierBreakdown: r.tier_breakdown ?? null,
       notes: r.notes ?? null,
       submittedBy: r.submitted_by ?? null,
-    };
+    } as PromotionDeduction;
   }
   async getPromotionDeductions(filters?: { promotionId?: string; counterId?: string; date?: string; startDate?: string; endDate?: string }): Promise<PromotionDeduction[]> {
     let where = "WHERE 1=1"; const vals: any[] = []; let i = 1;
@@ -973,24 +988,48 @@ export class PgStorage implements IStorage {
     return rows.map((r: any) => this.mapPromotionDeduction(r));
   }
   async upsertPromotionDeduction(data: InsertPromotionDeduction): Promise<PromotionDeduction> {
-    const count = Math.max(0, Math.round(data.redemptionCount ?? 0));
-    const reward = Math.max(0, data.rewardPerRedemption ?? 0);
-    const total = +(count * reward).toFixed(2);
+    // If a per-tier breakdown is provided, derive the consolidated count +
+    // total deduction from it server-side so legacy reports keep working
+    // with no changes (POS reconciliation, incentives, monthly summaries).
+    let count = Math.max(0, Math.round(data.redemptionCount ?? 0));
+    let reward = Math.max(0, data.rewardPerRedemption ?? 0);
+    let total = +(count * reward).toFixed(2);
+    let tierBreakdownJson: string | null = (data as any).tierBreakdown ?? null;
+    if (tierBreakdownJson) {
+      try {
+        const tiers = JSON.parse(tierBreakdownJson) as { tierId: string; redemptionCount: number; rewardPerRedemption: number; subtotal?: number }[];
+        let sumCount = 0;
+        let sumTotal = 0;
+        for (const t of tiers) {
+          const c = Math.max(0, Math.round(t.redemptionCount ?? 0));
+          const r = Math.max(0, t.rewardPerRedemption ?? 0);
+          sumCount += c;
+          sumTotal += +(c * r).toFixed(2);
+        }
+        count = sumCount;
+        total = +sumTotal.toFixed(2);
+        // Pick the dominant tier reward as the back-compat reward field
+        // (largest contribution). Used only by very old dashboards —
+        // tier-aware ones read tierBreakdown directly.
+        const dominant = tiers.reduce((a, b) => (a && a.redemptionCount * a.rewardPerRedemption >= b.redemptionCount * b.rewardPerRedemption) ? a : b, tiers[0]);
+        reward = dominant ? Math.max(0, dominant.rewardPerRedemption ?? 0) : reward;
+      } catch { /* keep computed values from non-tier path */ }
+    }
     const { rows } = await this.q("SELECT id FROM promotion_deductions WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [data.promotionId, data.counterId, data.date]);
     if (rows.length > 0) {
       const existingId = rows[0].id;
       await this.q(
-        "UPDATE promotion_deductions SET redemption_count=$1, reward_per_redemption=$2, total_deduction=$3, notes=$4, submitted_by=$5 WHERE id=$6",
-        [count, reward, total, data.notes ?? null, data.submittedBy ?? null, existingId],
+        "UPDATE promotion_deductions SET redemption_count=$1, reward_per_redemption=$2, total_deduction=$3, tier_breakdown=$4, notes=$5, submitted_by=$6 WHERE id=$7",
+        [count, reward, total, tierBreakdownJson, data.notes ?? null, data.submittedBy ?? null, existingId],
       );
-      return { id: existingId, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+      return { id: existingId, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, tierBreakdown: tierBreakdownJson, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null } as PromotionDeduction;
     }
     const id = randomUUID();
     await this.q(
-      "INSERT INTO promotion_deductions (id, promotion_id, counter_id, date, redemption_count, reward_per_redemption, total_deduction, notes, submitted_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [id, data.promotionId, data.counterId, data.date, count, reward, total, data.notes ?? null, data.submittedBy ?? null],
+      "INSERT INTO promotion_deductions (id, promotion_id, counter_id, date, redemption_count, reward_per_redemption, total_deduction, tier_breakdown, notes, submitted_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+      [id, data.promotionId, data.counterId, data.date, count, reward, total, tierBreakdownJson, data.notes ?? null, data.submittedBy ?? null],
     );
-    return { id, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null };
+    return { id, promotionId: data.promotionId, counterId: data.counterId, date: data.date, redemptionCount: count, rewardPerRedemption: reward, totalDeduction: total, tierBreakdown: tierBreakdownJson, notes: data.notes ?? null, submittedBy: data.submittedBy ?? null } as PromotionDeduction;
   }
   async deletePromotionDeduction(promotionId: string, counterId: string, date: string): Promise<void> {
     await this.q("DELETE FROM promotion_deductions WHERE promotion_id=$1 AND counter_id=$2 AND date=$3", [promotionId, counterId, date]);

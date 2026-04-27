@@ -162,6 +162,12 @@ export const promotions = pgTable("promotions", {
   multiBuyFixedPrice: real("multi_buy_fixed_price"),
   spendGetSpendAmount: real("spend_get_spend_amount"),
   spendGetDiscountAmount: real("spend_get_discount_amount"),
+  // Multi-tier Spend & Get. JSON-serialised array of
+  // { id, threshold, rewardType, discountAmount?, giftItem?, giftValue?, label? }
+  // — see SpendGetTier in the simulator schema. Empty/absent on legacy promos
+  // means "single tier" and the BA UI falls back to spendGetSpendAmount /
+  // spendGetDiscountAmount.
+  spendGetTiers: text("spend_get_tiers"),
   conditionMinimumSpend: real("condition_minimum_spend"),
   conditionMinimumQty: integer("condition_minimum_qty"),
   conditionRequiredItems: text("condition_required_items"),
@@ -213,6 +219,11 @@ export const promotionDeductions = pgTable("promotion_deductions", {
   redemptionCount: integer("redemption_count").notNull().default(0),
   rewardPerRedemption: real("reward_per_redemption").notNull().default(0),
   totalDeduction: real("total_deduction").notNull().default(0),
+  // Per-tier breakdown for multi-tier Spend & Get promos.
+  // JSON-serialised array of { tierId, redemptionCount, rewardPerRedemption,
+  // subtotal }. The consolidated redemptionCount + totalDeduction above stay
+  // in sync server-side so legacy reports keep working without changes.
+  tierBreakdown: text("tier_breakdown"),
   notes: text("notes"),
   submittedBy: varchar("submitted_by"),
 });
@@ -245,6 +256,14 @@ export const batchSalesSubmissionSchema = z.object({
     promotionId: z.string(),
     redemptionCount: z.number().int().min(0),
     rewardPerRedemption: z.number().min(0),
+    // Optional per-tier breakdown for multi-tier Spend & Get promos. When
+    // present, the server uses these to compute redemptionCount + total
+    // server-side; the top-level fields are kept in sync for legacy reports.
+    tierBreakdown: z.array(z.object({
+      tierId: z.string(),
+      redemptionCount: z.number().int().min(0),
+      rewardPerRedemption: z.number().min(0),
+    })).optional(),
     notes: z.string().optional(),
   })).optional(),
   posFigure: z.number().min(0).optional(), // POS system daily figure (對數紙)

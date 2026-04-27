@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { SalesEntry, Brand, Promotion, PromotionResult, PosLocation, PromotionDeduction } from "@shared/schema";
 import { allocateDeductions, type SalesViewMode } from "@shared/deductionAllocation";
@@ -463,20 +463,44 @@ export default function BADashboard() {
       return true;
     });
     // Group by promotion
-    const byPromo = new Map<string, { promoName: string; rows: { date: string; count: number; amount: number; posName: string }[]; total: number; totalCount: number }>();
+    type DedRow = {
+      date: string;
+      count: number;
+      amount: number;
+      posName: string;
+      tierBreakdown?: { tierId: string; redemptionCount: number; rewardPerRedemption: number }[];
+    };
+    type TierMeta = { id: string; threshold: number; thresholdType?: "spend" | "qty"; thresholdQty?: number; rewardType: string; discountAmount?: number };
+    const byPromo = new Map<string, { promoName: string; rows: DedRow[]; total: number; totalCount: number; tiers?: TierMeta[] }>();
     for (const d of rows) {
       const promo = allPromotions.find((p) => p.id === d.promotionId);
       const promoName = promo?.name || "Unknown promotion";
       const posName = assignedPos.find((p: any) => p.id === d.counterId)?.storeName || "Unknown POS";
-      const entry = byPromo.get(d.promotionId) ?? { promoName, rows: [], total: 0, totalCount: 0 };
+      // Parse tier definition off the promo (if multi-tier) so the dashboard
+      // can render per-tier sub-rows below the daily total.
+      let tiers: TierMeta[] | undefined;
+      const rawTiers = (promo as any)?.spendGetTiers as string | null | undefined;
+      if (rawTiers) {
+        try { tiers = (JSON.parse(rawTiers) as TierMeta[]).filter(t => t.rewardType !== "gift"); } catch { /* ignore */ }
+      }
+      // Parse the per-day tier breakdown that the BA submitted.
+      let tierBreakdown: DedRow["tierBreakdown"];
+      const rawBreakdown = (d as any).tierBreakdown as string | null | undefined;
+      if (rawBreakdown) {
+        try { tierBreakdown = JSON.parse(rawBreakdown); } catch { /* ignore */ }
+      }
+      const entry = byPromo.get(d.promotionId) ?? { promoName, rows: [], total: 0, totalCount: 0, tiers };
       entry.rows.push({
         date: d.date,
         count: d.redemptionCount ?? 0,
         amount: d.totalDeduction ?? 0,
         posName,
+        tierBreakdown,
       });
       entry.total += d.totalDeduction ?? 0;
       entry.totalCount += d.redemptionCount ?? 0;
+      // Capture tier metadata at least once per promo group.
+      if (!entry.tiers && tiers) entry.tiers = tiers;
       byPromo.set(d.promotionId, entry);
     }
     // Sort each promo's rows by date desc
@@ -1106,12 +1130,33 @@ export default function BADashboard() {
                       </thead>
                       <tbody>
                         {p.rows.map((r, i) => (
-                          <tr key={`${r.date}-${r.posName}-${i}`} className="border-b last:border-0">
-                            <td className="px-3 py-1.5 whitespace-nowrap">{(() => { const [y,m,d] = r.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
-                            <td className="px-3 py-1.5">{r.posName}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums">{r.count}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(r.amount)}</td>
-                          </tr>
+                          <Fragment key={`${r.date}-${r.posName}-${i}`}>
+                            <tr className="border-b last:border-0">
+                              <td className="px-3 py-1.5 whitespace-nowrap">{(() => { const [y,m,d] = r.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
+                              <td className="px-3 py-1.5">{r.posName}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums">{r.count}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(r.amount)}</td>
+                            </tr>
+                            {/* Per-tier breakdown (multi-tier Spend & Get only). Indented
+                                muted rows so the daily totals stay visually dominant. */}
+                            {r.tierBreakdown && r.tierBreakdown.length > 0 && p.tiers && p.tiers.length > 0 && r.tierBreakdown.map((tb) => {
+                              const tierMeta = p.tiers!.find(t => t.id === tb.tierId);
+                              if (!tierMeta) return null;
+                              if ((tb.redemptionCount ?? 0) <= 0) return null;
+                              const label = tierMeta.thresholdType === "qty"
+                                ? `購買 ${tierMeta.thresholdQty ?? 0} 件 → 減 HK$${(tierMeta.discountAmount ?? 0).toLocaleString()}`
+                                : `消費 HK$${tierMeta.threshold.toLocaleString()} → 減 HK$${(tierMeta.discountAmount ?? 0).toLocaleString()}`;
+                              const tierSubtotal = tb.redemptionCount * (tb.rewardPerRedemption ?? 0);
+                              return (
+                                <tr key={`${r.date}-${r.posName}-${i}-${tb.tierId}`} className="border-b last:border-0 bg-muted/20 text-muted-foreground">
+                                  <td className="px-3 py-1"></td>
+                                  <td className="px-3 py-1 pl-6 text-[11px]">↳ {label}</td>
+                                  <td className="px-3 py-1 text-right tabular-nums text-[11px]">{tb.redemptionCount}</td>
+                                  <td className="px-3 py-1 text-right tabular-nums text-[11px]">−{fmtCurrency(tierSubtotal)}</td>
+                                </tr>
+                              );
+                            })}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>
