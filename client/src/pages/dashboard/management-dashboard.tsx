@@ -292,6 +292,18 @@ export default function ManagementDashboard() {
     return m;
   }, [posLocations]);
 
+  // Channel + store code per POS, used to render the Sales by Counter
+  // table as 'CHANNEL (CODE) StoreName' with a channel-specific color.
+  const posMetaMap = useMemo(() => {
+    const m = new Map<string, { channel: string; storeCode: string; storeName: string }>();
+    posLocations.forEach((p) => m.set(p.id, {
+      channel: p.salesChannel,
+      storeCode: p.storeCode,
+      storeName: p.storeName,
+    }));
+    return m;
+  }, [posLocations]);
+
   const brandMap = useMemo(() => {
     const m = new Map<string, string>();
     brands.forEach((b) => m.set(b.id, b.name));
