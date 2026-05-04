@@ -40,6 +40,36 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Yesterday in local time. Used as the default range end for the
+// Management dashboard — BAs typically record sales after close, so
+// today's row is empty during the day and skews the picture.
+function yesterdayStr() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Subtract one day from a YYYY-MM-DD string in local time. Used to derive
+// 'previous day' boundaries without tripping on toISOString() UTC offsets.
+function addDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, (m - 1), d);
+  dt.setDate(dt.getDate() + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+// Shift a YYYY-MM-DD by N months, clamping the day to the new month's
+// length so 31 May → 30 Apr (rather than 1 May).
+function shiftMonth(dateStr: string, monthsDelta: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const target = new Date(y, m - 1 + monthsDelta, 1);
+  const ty = target.getFullYear();
+  const tm = target.getMonth() + 1;
+  const lastDay = new Date(ty, tm, 0).getDate();
+  const td = Math.min(d, lastDay);
+  return `${ty}-${String(tm).padStart(2, "0")}-${String(td).padStart(2, "0")}`;
+}
+
 function monthStartStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
@@ -73,6 +103,19 @@ function daysInMonth(y: number, m: number) { return new Date(y, m, 0).getDate();
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// Channel color codes shared with the Promotion preview UI. Keeps each
+// retailer's brand identity consistent across the app.
+const CHANNEL_COLORS: Record<string, string> = {
+  LOGON: "text-emerald-600 dark:text-emerald-400",
+  AEON: "text-red-600 dark:text-red-400",
+  SOGO: "text-blue-600 dark:text-blue-400",
+  FACESSS: "text-pink-600 dark:text-pink-400",
+};
+function channelColorClass(channel?: string | null): string {
+  if (!channel) return "text-foreground";
+  return CHANNEL_COLORS[channel.toUpperCase()] ?? "text-foreground";
+}
+
 // ─── Component ──────────────────────────────────────
 
 export default function ManagementDashboard() {
@@ -83,8 +126,11 @@ export default function ManagementDashboard() {
   const [timeTab, setTimeTab] = useState<"daterange" | "monthly" | "yearly">("daterange");
 
   // Date Range tab
+  // Defaults: 1st of the current month → yesterday. Today is excluded
+  // because BAs record sales after close, so 'today' typically reads as
+  // 0 and would visually drag every comparison down.
   const [drStart, setDrStart] = useState(monthStartStr);
-  const [drEnd, setDrEnd] = useState(todayStr);
+  const [drEnd, setDrEnd] = useState(yesterdayStr);
 
   // Monthly tab
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
@@ -277,6 +323,20 @@ export default function ManagementDashboard() {
     };
   }, [timeTab, drStart, drEnd]);
 
+  // ── Same Period Last Month (SPLM) date range ─────
+  // Same calendar slot one month earlier, e.g. 1–3 May vs 1–3 Apr.
+  // Day numbers are clamped to the prior month's length via shiftMonth().
+  const { splmStart, splmEnd, splmLabel } = useMemo(() => {
+    if (timeTab !== "daterange") return { splmStart: "", splmEnd: "", splmLabel: "" };
+    const splmS = shiftMonth(drStart, -1);
+    const splmE = shiftMonth(drEnd, -1);
+    const fmt = (s: string) => {
+      const [y, m, d] = s.split("-").map(Number);
+      return `${d} ${MONTH_LABELS[m - 1]}`;
+    };
+    return { splmStart: splmS, splmEnd: splmE, splmLabel: `${fmt(splmS)} – ${fmt(splmE)}` };
+  }, [timeTab, drStart, drEnd]);
+
   // ── Last month date range (for projection comparison) ──
   const { lmStart, lmEnd, lmLabel } = useMemo(() => {
     if (timeTab !== "daterange") return { lmStart: "", lmEnd: "", lmLabel: "" };
@@ -318,6 +378,19 @@ export default function ManagementDashboard() {
   const { data: lmDeductionsRaw = [] } = useQuery<PromotionDeduction[]>({
     queryKey: ["/api/promotion-deductions", `?startDate=${lmStart}&endDate=${lmEnd}`],
     enabled: timeTab === "daterange" && !!lmStart,
+    staleTime: 30_000,
+  });
+
+  // SPLM — Same period one month earlier. Used by the second Sales by
+  // Counter table to compare against the equivalent slice of last month.
+  const { data: splmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${splmStart}&endDate=${splmEnd}`],
+    enabled: timeTab === "daterange" && !!splmStart,
+    staleTime: 30_000,
+  });
+  const { data: splmDeductionsRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${splmStart}&endDate=${splmEnd}`],
+    enabled: timeTab === "daterange" && !!splmStart,
     staleTime: 30_000,
   });
 
@@ -502,6 +575,26 @@ export default function ManagementDashboard() {
     return alloc.entries.map((e) => ({ ...(e as unknown as SalesEntry), amount: e.netAmount }));
   }, [salesView, lmRawSales, lmDeductionsRaw, activeCounterIds]);
 
+  // Same-Period-Last-Month filtered sales — matches selected channels +
+  // brands and respects gross/net toggle.
+  const splmRawSales = useMemo(
+    () => splmSalesRaw.filter((s) => activeCounterIds.has(s.counterId)),
+    [splmSalesRaw, activeCounterIds],
+  );
+  const splmFilteredSales = useMemo(() => {
+    if (salesView === "gross") return splmRawSales;
+    const ded = splmDeductionsRaw.filter((d) => activeCounterIds.has(d.counterId));
+    const alloc = allocateDeductions(splmRawSales, ded);
+    return alloc.entries.map((e) => ({ ...(e as unknown as SalesEntry), amount: e.netAmount }));
+  }, [salesView, splmRawSales, splmDeductionsRaw, activeCounterIds]);
+
+  // SPLM counter → sales lookup, mirrors ppCounterSalesMap.
+  const splmCounterSalesMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    splmFilteredSales.forEach((e) => { m[e.counterId] = (m[e.counterId] ?? 0) + e.amount; });
+    return m;
+  }, [splmFilteredSales]);
+
   // PP & last-month totals
   const ppTotalSales = useMemo(() => ppFilteredSales.reduce((s, e) => s + e.amount, 0), [ppFilteredSales]);
   const lmTotalSales = useMemo(() => lmFilteredSales.reduce((s, e) => s + e.amount, 0), [lmFilteredSales]);
@@ -528,17 +621,22 @@ export default function ManagementDashboard() {
       map[e.counterId].units += e.units;
     });
     return Object.entries(map)
-      .map(([id, d]) => ({
-        id,
-        name: posNameMap.get(id) ?? "Unknown",
-        sales: d.sales,
-        orders: d.orders,
-        units: d.units,
-        atv: d.orders > 0 ? d.sales / d.orders : null,
-        upt: d.orders > 0 ? d.units / d.orders : null,
-      }))
+      .map(([id, d]) => {
+        const meta = posMetaMap.get(id);
+        return {
+          id,
+          name: posNameMap.get(id) ?? "Unknown",
+          channel: meta?.channel ?? "",
+          storeCode: meta?.storeCode ?? "",
+          sales: d.sales,
+          orders: d.orders,
+          units: d.units,
+          atv: d.orders > 0 ? d.sales / d.orders : null,
+          upt: d.orders > 0 ? d.units / d.orders : null,
+        };
+      })
       .sort((a, b) => b.sales - a.sales);
-  }, [effectiveSales, posNameMap]);
+  }, [effectiveSales, posNameMap, posMetaMap]);
 
   // ── Brand table data ──────────────────────────
   // Two aggregations per brand: view-aware 'sales' (respects Gross/Net toggle)
@@ -1216,95 +1314,141 @@ export default function ManagementDashboard() {
         </Card>
       )}
 
-      {/* Sales by Counter (table) */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center justify-between">
-            <span>Sales by Counter</span>
-            {timeTab === "daterange" && ppLabel && (
-              <span className="text-xs font-normal text-muted-foreground">
-                vs PP: {ppLabel}
-              </span>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {counterTableData.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No data</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left">
-                    <th className="pb-2 font-medium text-left">Counter</th>
-                    <th className="pb-2 font-medium text-right w-[120px]">Sales</th>
-                    {timeTab === "daterange" && <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>}
-                    <th className="pb-2 font-medium text-right w-[70px]">Units</th>
-                    <th className="pb-2 font-medium text-right w-[90px]">ATV</th>
-                    <th className="pb-2 font-medium text-right w-[60px]">UPT</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {counterTableData.map((row) => {
-                    const ppSales = ppCounterSalesMap[row.id] ?? 0;
-                    const delta = row.sales - ppSales;
-                    const deltaPct = ppSales > 0 ? (delta / ppSales) * 100 : null;
-                    const isUp = delta >= 0;
-                    return (
-                      <tr key={row.name} className="border-b last:border-0">
-                        <td className="py-2 text-left">{row.name}</td>
-                        <td className="py-2 text-right font-medium w-[120px]">{fmtCurrency(row.sales)}</td>
-                        {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs w-[130px] ${ppSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                            {ppSales === 0 && row.sales === 0 ? "—" : ppSales === 0 ? (
-                              <span className="text-muted-foreground">New</span>
-                            ) : (
-                              <>
-                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
-                                <div className="text-[11px]">{deltaPct !== null ? `${isUp ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}</div>
-                              </>
+      {/* Sales by Counter — two parallel comparisons:
+            (1) vs Previous Period — same number of days immediately prior
+            (2) vs Same Period Last Month — the same calendar slice in the
+                month before (e.g. 1–3 May vs 1–3 Apr)
+          Both tables share an inline renderer so layout/format stay in sync. */}
+      {(() => {
+        // Renders one table comparing counterTableData against any 'prior'
+        // sales map. Used for both PP and SPLM views.
+        const renderCounterTable = (
+          title: string,
+          priorSalesMap: Record<string, number>,
+          priorLabel: string,
+          comparisonHeader: string,
+          showComparison: boolean,
+        ) => (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center justify-between">
+                <span>{title}</span>
+                {showComparison && priorLabel && (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {comparisonHeader}: {priorLabel}
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {counterTableData.length === 0 ? (
+                <p className="text-muted-foreground text-sm">No data</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-2 font-medium text-left">Counter</th>
+                        <th className="pb-2 font-medium text-right w-[120px]">Sales</th>
+                        {showComparison && (
+                          <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">{comparisonHeader}</th>
+                        )}
+                        <th className="pb-2 font-medium text-right w-[70px]">Units</th>
+                        <th className="pb-2 font-medium text-right w-[90px]">ATV</th>
+                        <th className="pb-2 font-medium text-right w-[60px]">UPT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {counterTableData.map((row) => {
+                        const priorSales = priorSalesMap[row.id] ?? 0;
+                        const delta = row.sales - priorSales;
+                        const deltaPct = priorSales > 0 ? (delta / priorSales) * 100 : null;
+                        const isUp = delta >= 0;
+                        // Counter cell: 'CHANNEL (CODE) StoreName' with channel
+                        // colored per CHANNEL_COLORS.
+                        const colorCls = channelColorClass(row.channel);
+                        const prefix = row.channel
+                          ? `${row.channel}${row.storeCode ? ` (${row.storeCode})` : ""}`
+                          : "";
+                        return (
+                          <tr key={row.id} className="border-b last:border-0">
+                            <td className="py-2 text-left">
+                              {prefix && (
+                                <span className={`font-semibold mr-1.5 ${colorCls}`}>{prefix}</span>
+                              )}
+                              <span className="text-foreground">{row.name}</span>
+                            </td>
+                            <td className="py-2 text-right font-medium w-[120px]">{fmtCurrency(row.sales)}</td>
+                            {showComparison && (
+                              <td className={`py-2 text-right text-xs w-[130px] ${priorSales === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                                {priorSales === 0 && row.sales === 0 ? "—" : priorSales === 0 ? (
+                                  <span className="text-muted-foreground">New</span>
+                                ) : (
+                                  <>
+                                    <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
+                                    <div className="text-[11px]">{deltaPct !== null ? `${isUp ? "+" : ""}${deltaPct.toFixed(1)}%` : "—"}</div>
+                                  </>
+                                )}
+                              </td>
                             )}
-                          </td>
-                        )}
-                        <td className="py-2 text-right w-[70px]">{row.units.toLocaleString()}</td>
-                        <td className="py-2 text-right w-[90px]">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
-                        <td className="py-2 text-right w-[60px]">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                  {/* Totals row */}
-                  {counterTableData.length > 1 && (() => {
-                    const totSales = counterTableData.reduce((s, r) => s + r.sales, 0);
-                    const totPP = Object.values(ppCounterSalesMap).reduce((s, v) => s + v, 0);
-                    const totDelta = totSales - totPP;
-                    const totPct = totPP > 0 ? (totDelta / totPP) * 100 : null;
-                    const isUp = totDelta >= 0;
-                    return (
-                      <tr className="border-t-2 font-semibold bg-muted/30">
-                        <td className="py-2 text-left">Total</td>
-                        <td className="py-2 text-right w-[120px]">{fmtCurrency(totSales)}</td>
-                        {timeTab === "daterange" && (
-                          <td className={`py-2 text-right text-xs w-[130px] ${totPP === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                            {totPP > 0 ? (
-                              <>
-                                <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
-                                <div className="text-[11px]">{totPct !== null ? `${isUp ? "+" : ""}${totPct.toFixed(1)}%` : "—"}</div>
-                              </>
-                            ) : "—"}
-                          </td>
-                        )}
-                        <td className="py-2 text-right w-[70px]">{counterTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
-                        <td className="py-2 text-right w-[90px]">—</td>
-                        <td className="py-2 text-right w-[60px]">—</td>
-                      </tr>
-                    );
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                            <td className="py-2 text-right w-[70px]">{row.units.toLocaleString()}</td>
+                            <td className="py-2 text-right w-[90px]">{row.atv !== null ? fmtCurrency(Math.round(row.atv)) : "—"}</td>
+                            <td className="py-2 text-right w-[60px]">{row.upt !== null ? row.upt.toFixed(1) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                      {counterTableData.length > 1 && (() => {
+                        const totSales = counterTableData.reduce((s, r) => s + r.sales, 0);
+                        const totPrior = Object.values(priorSalesMap).reduce((s, v) => s + v, 0);
+                        const totDelta = totSales - totPrior;
+                        const totPct = totPrior > 0 ? (totDelta / totPrior) * 100 : null;
+                        const isUp = totDelta >= 0;
+                        return (
+                          <tr className="border-t-2 font-semibold bg-muted/30">
+                            <td className="py-2 text-left">Total</td>
+                            <td className="py-2 text-right w-[120px]">{fmtCurrency(totSales)}</td>
+                            {showComparison && (
+                              <td className={`py-2 text-right text-xs w-[130px] ${totPrior === 0 ? "text-muted-foreground" : isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                                {totPrior > 0 ? (
+                                  <>
+                                    <div>{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(totDelta))}</div>
+                                    <div className="text-[11px]">{totPct !== null ? `${isUp ? "+" : ""}${totPct.toFixed(1)}%` : "—"}</div>
+                                  </>
+                                ) : "—"}
+                              </td>
+                            )}
+                            <td className="py-2 text-right w-[70px]">{counterTableData.reduce((s, r) => s + r.units, 0).toLocaleString()}</td>
+                            <td className="py-2 text-right w-[90px]">—</td>
+                            <td className="py-2 text-right w-[60px]">—</td>
+                          </tr>
+                        );
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+        return (
+          <>
+            {renderCounterTable(
+              "Sales by Counter (vs. Previous Period)",
+              ppCounterSalesMap,
+              ppLabel,
+              "vs Prev Period",
+              timeTab === "daterange",
+            )}
+            {timeTab === "daterange" && renderCounterTable(
+              "Sales by Counter (vs. same period last month)",
+              splmCounterSalesMap,
+              splmLabel,
+              "vs SPLM",
+              true,
+            )}
+          </>
+        );
+      })()}
 
       {/* Sales by Brand (table) */}
       <Card>
