@@ -965,48 +965,53 @@ export default function BAEntry() {
                           <span className="break-words">除外: {promo.exclusions}</span>
                         </p>
                       )}
-                      {((promo.trackable && (promo.type === "GWP" || promo.type === "PWP")) || (!promo.trackable && promo.type === "GWP" && promo.gwpItem)) && (
-                        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-2.5 py-2">
-                          <div className="text-[11px] font-medium text-amber-900 dark:text-amber-200 mb-1.5">今日記錄</div>
-                          {promo.trackable && promo.type === "GWP" && (
+                      {(() => {
+                        // Decide whether this promo needs a simple gift counter
+                        // (a single "how many were given" box). Three cases:
+                        //   1. Trackable GWP    — always.
+                        //   2. Trackable PWP    — always.
+                        //   3. Untracked GWP with a gwpItem set — record-only.
+                        //   4. Trackable Spend & Get whose reward is a GIFT
+                        //      rather than money (e.g. #374 "消費滿 $800
+                        //      免費獲贈 ..."). The simulator strips gift tiers from
+                        //      the push payload, so on the tracker side the
+                        //      promo has no monetary tier and no
+                        //      spendGetDiscountAmount — isDeductiblePromo()
+                        //      returns false. Without this branch the BA gets
+                        //      no input box at all.
+                        const isTrackableGwp = promo.trackable && promo.type === "GWP";
+                        const isTrackablePwp = promo.trackable && promo.type === "PWP";
+                        const isUntrackedGwpWithItem = !promo.trackable && promo.type === "GWP" && !!promo.gwpItem;
+                        const isTrackableSpendGetGift =
+                          promo.trackable && promo.type === "Spend & Get" && !isDeductiblePromo(promo);
+                        if (!isTrackableGwp && !isTrackablePwp && !isUntrackedGwpWithItem && !isTrackableSpendGetGift) {
+                          return null;
+                        }
+                        // Pick the input label. Spend & Get gift promos
+                        // typically describe a multi-item gift bundle in the
+                        // promo description, so a generic label is clearer
+                        // than truncating the bundle name.
+                        const label = isTrackablePwp
+                          ? (promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:")
+                          : isTrackableSpendGetGift
+                            ? "免費贈品送出數量:"
+                            : (promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:");
+                        return (
+                          <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-2.5 py-2">
+                            <div className="text-[11px] font-medium text-amber-900 dark:text-amber-200 mb-1.5">今日記錄</div>
                             <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap text-foreground">
-                                {promo.gwpItem ? `${promo.gwpItem} given:` : "GWP Given:"}
-                              </label>
+                              <label className="text-xs font-medium whitespace-nowrap text-foreground">{label}</label>
                               <Input
+                                data-testid={`input-gwp-${promo.id}`}
                                 type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
                                 value={promoData[promo.id]?.gwpGiven || ""}
                                 onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
                                 placeholder="0"
                               />
                             </div>
-                          )}
-                          {promo.trackable && promo.type === "PWP" && (
-                            <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap text-foreground">
-                                {promo.pwpItem ? `${promo.pwpItem} sold:` : "PWP Sold:"}
-                              </label>
-                              <Input
-                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
-                                value={promoData[promo.id]?.gwpGiven || ""}
-                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                                placeholder="0"
-                              />
-                            </div>
-                          )}
-                          {!promo.trackable && promo.type === "GWP" && promo.gwpItem && (
-                            <div className="flex gap-2 items-center">
-                              <label className="text-xs font-medium whitespace-nowrap text-foreground">{promo.gwpItem} given:</label>
-                              <Input
-                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
-                                value={promoData[promo.id]?.gwpGiven || ""}
-                                onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
-                                placeholder="0"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
