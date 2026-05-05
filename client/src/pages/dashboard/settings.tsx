@@ -1329,6 +1329,9 @@ export default function SettingsPage() {
                     Threshold {incForm.metric === "transaction_amount" ? "(min amount per transaction HK$)" : incForm.metric === "units" || incForm.metric === "gwp_given" ? "(minimum units)" : "(minimum HK$)"}
                   </Label>
                   <Input type="number" min={0} value={incForm.threshold ?? ""} onChange={e => setIncForm(f => ({ ...f, threshold: parseFloat(e.target.value) || 0 }))} />
+                  <p className="text-[11px] text-muted-foreground">
+                    Minimum the BA must reach for any incentive to be paid. Below this, payout = HK$0.
+                  </p>
                 </div>
 
                 <div className="space-y-1">
@@ -1450,13 +1453,16 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {/* Incentive Offset — start counting from Nth piece (PE) */}
+                {/* Incentive Offset — first N units don't count toward reward */}
                 {(incForm.rewardBasis === "per_unit" || incForm.rewardBasis === "per_transaction") && (
                   <div className="space-y-1">
-                    <Label className="text-sm font-medium">Offset <span className="text-xs text-muted-foreground font-normal">(start counting from Nth piece, e.g. 2 = from 3rd piece)</span></Label>
+                    <Label className="text-sm font-medium">Offset <span className="text-xs text-muted-foreground font-normal">(skip the first N units when calculating reward)</span></Label>
                     <Input type="number" min={0} className="w-32" value={incOffset ?? ""}
                       onChange={e => setIncOffset(e.target.value ? parseInt(e.target.value) : null)}
                       placeholder="0 (no offset)" />
+                    <p className="text-[11px] text-muted-foreground">
+                      Distinct from Threshold. Threshold gates eligibility (“did the BA qualify?”). Offset trims the first N units from the reward calculation once they qualify (e.g. Offset = 2 → BA earns from the 3rd unit onward).
+                    </p>
                   </div>
                 )}
 
@@ -1605,7 +1611,14 @@ export default function SettingsPage() {
                   const catLabel = catZh[incForm.category as string] || incForm.category;
                   let rewardLong = "";
                   if (incTiers.length > 0) {
-                    rewardLong = "階梯獎勵: " + incTiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ");
+                    // Append calc-mode suffix so the auto description
+                    // makes the difference clear to the BA reading it:
+                    //   marginal → 逕級計算 (each band paid at its own rate)
+                    //   flat     → 平均計算 (all units at the highest tier)
+                    const modeZh = incTierMode === "marginal"
+                      ? "（逕級計算：每階梯依本階獎勵計）"
+                      : "（平均計算：全部件數以最高階獎勵計）";
+                    rewardLong = "階梯獎勵: " + incTiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ") + modeZh;
                   } else if (incForm.rewardBasis === "per_unit") rewardLong = `每售出一件可獲HK$${incForm.rewardAmount || 0}`;
                   else if (incForm.rewardBasis === "per_amount") rewardLong = `每達HK$${(incForm.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${incForm.rewardAmount || 0}`;
                   else if (incForm.rewardBasis === "per_transaction") rewardLong = `每筆合資格交易可獲HK$${incForm.rewardAmount || 0}`;
