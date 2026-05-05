@@ -779,6 +779,19 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // Bulk per-store progress for ALL active schemes in a month. Used by
+  // the Incentive Earnings by Store summary table on the management
+  // dashboard. Returns { schemeId: { counterId: total, ... }, ... }.
+  // Gated to management because the table is a payroll-grade summary.
+  app.get("/api/incentive-progress-by-store-bulk", requireManagement, async (req, res) => {
+    try {
+      const month = req.query.month as string;
+      if (!month) return res.status(400).json({ error: "month required" });
+      const data = await storage.getIncentiveProgressByStoreBulk(month);
+      res.json(data);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   // === POS DAILY FIGURES ===
   app.get("/api/pos-daily-figures", requireAuth, async (req, res) => {
     try {

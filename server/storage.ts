@@ -109,6 +109,10 @@ export interface IStorage {
   getIncentiveEntry(schemeId: string, userId: string, date: string): Promise<number>;
   upsertIncentiveEntry(schemeId: string, userId: string, date: string, value: number, posId?: string): Promise<void>;
   getIncentiveProgressByStore(month: string, schemeId: string): Promise<Record<string, number>>;
+  // Aggregates per-store progress for EVERY active scheme in a month.
+  // Returns map: schemeId -> Record<counterId, total>. Used by the
+  // Incentive Earnings by Store summary table on the management dashboard.
+  getIncentiveProgressByStoreBulk(month: string): Promise<Record<string, Record<string, number>>>;
 
   // POS Daily Figures
   getPosDailyFigures(filters: { counterId?: string; startDate?: string; endDate?: string; date?: string }): Promise<PosDailyFigure[]>;
@@ -1433,6 +1437,31 @@ export class PgStorage implements IStorage {
     return result;
   }
 
+  async getIncentiveProgressByStoreBulk(month: string): Promise<Record<string, Record<string, number>>> {
+    // Pulls the per-store totals for every active scheme in `month` in
+    // one DB round-trip. Each scheme's metric (units vs amount) is
+    // applied via its own subquery to avoid multiple GROUP BYs.
+    const schemes = await this.getIncentiveSchemesByMonth(month);
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-31`;
+    const out: Record<string, Record<string, number>> = {};
+    for (const s of schemes) {
+      if (!s.isActive) continue;
+      const metric = (s.category === "brand_units" || s.category === "product_units") ? "units" : "amount";
+      const { rows } = await this.q(
+        `SELECT counter_id, COALESCE(SUM(${metric}), 0) as total
+         FROM sales_entries
+         WHERE brand_id = $1 AND date >= $2 AND date <= $3
+         GROUP BY counter_id`,
+        [s.targetId, monthStart, monthEnd]
+      );
+      const m: Record<string, number> = {};
+      for (const r of rows) m[r.counter_id] = Number(r.total);
+      out[s.id] = m;
+    }
+    return out;
+  }
+
   // POS Daily Figures
   async getPosDailyFigures(filters: { counterId?: string; startDate?: string; endDate?: string; date?: string }): Promise<PosDailyFigure[]> {
     let sql = `SELECT * FROM pos_daily_figures WHERE 1=1`;
@@ -1939,6 +1968,9 @@ export class MemStorage implements IStorage {
   }
 
   async getIncentiveProgressByStore(_month: string, _schemeId: string): Promise<Record<string, number>> {
+    return {};
+  }
+  async getIncentiveProgressByStoreBulk(_month: string): Promise<Record<string, Record<string, number>>> {
     return {};
   }
 

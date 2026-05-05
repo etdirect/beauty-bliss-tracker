@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -12,6 +13,8 @@ import {
 import type { IncentiveScheme, PosLocation, RewardTier, StoreThreshold, ComboBonus, TargetProduct, TierMode } from "@shared/schema";
 import { INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/App";
+import { Download } from "lucide-react";
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -406,9 +409,259 @@ function SchemeCard({
   );
 }
 
+// ─── Channel color codes (shared with Promotion preview UI) ──────
+const CHANNEL_COLORS: Record<string, string> = {
+  LOGON: "text-emerald-600 dark:text-emerald-400",
+  AEON: "text-red-600 dark:text-red-400",
+  SOGO: "text-blue-600 dark:text-blue-400",
+  FACESSS: "text-pink-600 dark:text-pink-400",
+};
+function channelColorClass(channel?: string | null): string {
+  if (!channel) return "text-foreground";
+  return CHANNEL_COLORS[channel.toUpperCase()] ?? "text-foreground";
+}
+
+// ─── Payout helper used by the Earnings by Store summary ───────
+// Mirrors the per-scheme card logic exactly so the summary always
+// reconciles against the per-scheme breakdowns.
+function computeStorePayoutForScheme(
+  scheme: IncentiveScheme,
+  posId: string,
+  rawProgress: number,
+): { payout: number; combo: number; qualified: boolean } {
+  const tiers: RewardTier[] | null = scheme.rewardTiers ? JSON.parse(scheme.rewardTiers) : null;
+  const storeThresholds: StoreThreshold[] | null = scheme.storeThresholds ? JSON.parse(scheme.storeThresholds) : null;
+  const combo: ComboBonus | null = scheme.comboBonus ? JSON.parse(scheme.comboBonus) : null;
+  const tierMode: TierMode = (scheme.tierMode as TierMode) === "marginal" ? "marginal" : "flat";
+  const offset = scheme.incentiveOffset ?? 0;
+  // Per-store override of the scheme threshold when present.
+  const perStore = storeThresholds?.find((s) => s.posId === posId);
+  const threshold = perStore ? perStore.threshold : scheme.threshold;
+  const qualified = rawProgress >= threshold && rawProgress > 0;
+  if (!qualified) return { payout: 0, combo: 0, qualified: false };
+
+  // Threshold doubles as the start-counting point for the reward.
+  const effectiveUnits = Math.max(rawProgress - threshold - offset, 0);
+
+  let base = 0;
+  if (tiers && tiers.length > 0) {
+    const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
+    if (effectiveUnits > 0) {
+      if (tierMode === "marginal") {
+        for (const t of sorted) {
+          if (effectiveUnits < t.minQty) break;
+          const bandEnd = t.maxQty != null ? Math.min(effectiveUnits, t.maxQty) : effectiveUnits;
+          const w = bandEnd - t.minQty + 1;
+          if (w > 0) base += w * t.rewardAmount;
+        }
+      } else {
+        let topRate = 0;
+        for (const t of sorted) if (effectiveUnits >= t.minQty) topRate = t.rewardAmount;
+        base = effectiveUnits * topRate;
+      }
+    }
+  } else if (scheme.rewardBasis === "per_unit") {
+    base = effectiveUnits * scheme.rewardAmount;
+  } else if (scheme.rewardBasis === "per_amount") {
+    base = Math.floor(rawProgress / (scheme.rewardPerAmountUnit ?? 1000)) * scheme.rewardAmount;
+  } else if (scheme.rewardBasis === "per_transaction") {
+    base = effectiveUnits * scheme.rewardAmount;
+  } else {
+    base = scheme.rewardAmount;
+  }
+
+  const comboAmt = combo ? combo.amount : 0;
+  return { payout: base + comboAmt, combo: comboAmt, qualified: true };
+}
+
+// ─── Earnings by Store summary table (management only) ──────────
+function EarningsByStoreCard({
+  selectedMonth,
+  schemes,
+  posLocations,
+}: {
+  selectedMonth: string;
+  schemes: IncentiveScheme[];
+  posLocations: PosLocation[];
+}) {
+  // Bulk per-store progress for ALL active schemes in the selected
+  // month, in one round-trip.
+  const { data: bulkProgress = {}, isLoading } = useQuery<Record<string, Record<string, number>>>({
+    queryKey: ["/api/incentive-progress-by-store-bulk", selectedMonth],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/incentive-progress-by-store-bulk?month=${encodeURIComponent(selectedMonth)}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  // Build per-store rows: one entry per POS that earned anything OR
+  // belongs to a store-thresholded scheme this month.
+  const rows = useMemo(() => {
+    type Row = {
+      posId: string;
+      channel: string;
+      storeCode: string;
+      storeName: string;
+      qualified: number;       // # schemes where this store qualified
+      total: number;            // payout total HK$
+      combo: number;            // sum of combo bonuses
+      topScheme: { name: string; amount: number } | null;
+    };
+    const map = new Map<string, Row>();
+
+    // Set of POS ids the schemes apply to (intersection of explicit
+    // posIds + storeThresholds.posId across schemes). If neither is set
+    // we fall back to all active POS.
+    const considered = new Set<string>();
+    for (const s of schemes.filter((x) => x.isActive)) {
+      const explicit: string[] = (s.posIds || "")
+        .split(",").map((x) => x.trim()).filter(Boolean);
+      const sts: StoreThreshold[] = s.storeThresholds ? JSON.parse(s.storeThresholds) : [];
+      const fromSts = sts.map((x) => x.posId);
+      const ids = [...explicit, ...fromSts];
+      if (ids.length === 0) {
+        // Scheme applies to all active POS — use bulkProgress keys for
+        // this scheme so the table stays scoped to actual sellers.
+        const sales = bulkProgress[s.id] || {};
+        for (const k of Object.keys(sales)) considered.add(k);
+      } else {
+        for (const id of ids) considered.add(id);
+      }
+    }
+
+    for (const posId of considered) {
+      const pos = posLocations.find((p) => p.id === posId);
+      if (!pos) continue;
+      const row: Row = {
+        posId,
+        channel: pos.salesChannel,
+        storeCode: pos.storeCode,
+        storeName: pos.storeName,
+        qualified: 0,
+        total: 0,
+        combo: 0,
+        topScheme: null,
+      };
+      for (const s of schemes.filter((x) => x.isActive)) {
+        const sales = bulkProgress[s.id] || {};
+        const raw = sales[posId] ?? 0;
+        const { payout, combo, qualified } = computeStorePayoutForScheme(s, posId, raw);
+        if (qualified && payout > 0) {
+          row.qualified += 1;
+          row.total += payout;
+          row.combo += combo;
+          if (!row.topScheme || payout > row.topScheme.amount) {
+            row.topScheme = { name: s.name, amount: payout };
+          }
+        }
+      }
+      if (row.total > 0) map.set(posId, row);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [bulkProgress, schemes, posLocations]);
+
+  const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+  const grandCombo = rows.reduce((s, r) => s + r.combo, 0);
+
+  // CSV export. Columns mirror the on-screen table.
+  const exportCsv = () => {
+    const header = ["Channel", "Store Code", "Store", "Qualified Schemes", "Combo Bonus (HK$)", "Total Payout (HK$)", "Top Earner"];
+    const lines = [header.join(",")];
+    for (const r of rows) {
+      const cells = [
+        r.channel, r.storeCode, r.storeName,
+        String(r.qualified),
+        String(Math.round(r.combo)),
+        String(Math.round(r.total)),
+        r.topScheme ? `\"${r.topScheme.name.replace(/"/g, "'")} — HK\$${Math.round(r.topScheme.amount)}\"` : "",
+      ];
+      lines.push(cells.join(","));
+    }
+    lines.push(["", "", "TOTAL", "", String(Math.round(grandCombo)), String(Math.round(grandTotal)), ""].join(","));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `incentive-earnings-by-store-${selectedMonth}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between">
+          <span>Incentive Earnings by Store — {selectedMonth}</span>
+          <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0} data-testid="button-export-earnings-by-store">
+            <Download className="w-4 h-4 mr-1.5" /> Export CSV
+          </Button>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Estimated cash earned by each store across all active incentive schemes. Reflects per-store thresholds and the Flat / Marginal calculation set on each scheme.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="text-muted-foreground text-sm">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No store has earned any incentive yet for {selectedMonth}.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="pb-2 font-medium">Store</th>
+                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]"># Schemes Qualified</th>
+                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]">Combo Bonus</th>
+                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]">Total Payout</th>
+                  <th className="pb-2 font-medium">Top Earner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.posId} className="border-b last:border-0">
+                    <td className="py-2">
+                      <span className={`font-semibold mr-1.5 ${channelColorClass(r.channel)}`}>
+                        {r.channel}{r.storeCode ? ` (${r.storeCode})` : ""}
+                      </span>
+                      <span className="text-foreground">{r.storeName}</span>
+                    </td>
+                    <td className="py-2 text-right tabular-nums">{r.qualified}</td>
+                    <td className="py-2 text-right tabular-nums">{r.combo > 0 ? fmtCurrency(r.combo) : "—"}</td>
+                    <td className="py-2 text-right tabular-nums font-semibold">{fmtCurrency(r.total)}</td>
+                    <td className="py-2 text-xs text-muted-foreground">
+                      {r.topScheme ? (
+                        <span title={r.topScheme.name}>
+                          {r.topScheme.name.length > 36 ? r.topScheme.name.slice(0, 33) + "…" : r.topScheme.name}
+                          <span className="ml-1.5">({fmtCurrency(r.topScheme.amount)})</span>
+                        </span>
+                      ) : "—"}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 font-semibold bg-muted/30">
+                  <td className="py-2">Total — {rows.length} store{rows.length === 1 ? "" : "s"} earning</td>
+                  <td className="py-2 text-right">—</td>
+                  <td className="py-2 text-right tabular-nums">{grandCombo > 0 ? fmtCurrency(grandCombo) : "—"}</td>
+                  <td className="py-2 text-right tabular-nums">{fmtCurrency(grandTotal)}</td>
+                  <td className="py-2">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Component ─────────────────────────────────
 
 export default function IncentiveTracking() {
+  const { user } = useAuth();
+  const isManagement = user?.role === "management";
   const d = new Date();
   const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
@@ -503,6 +756,16 @@ export default function IncentiveTracking() {
           </Select>
         </div>
       </div>
+
+      {/* Management-only summary table. Sits at the top of the page so
+          the headline number is visible before drilling into each scheme. */}
+      {isManagement && activeSchemes.length > 0 && (
+        <EarningsByStoreCard
+          selectedMonth={selectedMonth}
+          schemes={activeSchemes}
+          posLocations={posLocations}
+        />
+      )}
 
       {activeSchemes.length === 0 ? (
         <p className="text-muted-foreground">No active incentive schemes for {selectedMonth}.</p>
