@@ -653,30 +653,41 @@ export default function ManagementDashboard() {
   // ── Brand table data ──────────────────────────
   // Two aggregations per brand: view-aware 'sales' (respects Gross/Net toggle)
   // and raw gross+deduction (always available for the extra columns).
+  // Group by RESOLVED brand display name rather than raw brandId. This
+  // protects the table from stale/orphaned brand_id values in
+  // sales_entries (e.g. when a brand was renamed or reseeded with a new
+  // UUID after entries were already recorded). All unresolvable IDs
+  // collapse into a single 'Unknown' bucket instead of producing one
+  // ghost row per orphaned id.
   const brandTableData = useMemo(() => {
+    const nameOf = (id: string | null | undefined) =>
+      (id && brandMap.get(id)) || "Unknown";
+
     const map: Record<string, { sales: number; orders: number; units: number }> = {};
     effectiveSales.forEach((e) => {
-      if (!map[e.brandId]) map[e.brandId] = { sales: 0, orders: 0, units: 0 };
-      map[e.brandId].sales += e.amount;
-      map[e.brandId].orders += e.orders ?? 0;
-      map[e.brandId].units += e.units;
+      const key = nameOf(e.brandId);
+      if (!map[key]) map[key] = { sales: 0, orders: 0, units: 0 };
+      map[key].sales += e.amount;
+      map[key].orders += e.orders ?? 0;
+      map[key].units += e.units;
     });
+
     const dedMap: Record<string, { gross: number; deduction: number }> = {};
     for (const e of allocation.entries) {
-      const k = (e as any).brandId;
-      if (!k) continue;
-      if (!dedMap[k]) dedMap[k] = { gross: 0, deduction: 0 };
-      dedMap[k].gross += e.amount ?? 0;
-      dedMap[k].deduction += e.deduction ?? 0;
+      const key = nameOf((e as any).brandId);
+      if (!dedMap[key]) dedMap[key] = { gross: 0, deduction: 0 };
+      dedMap[key].gross += e.amount ?? 0;
+      dedMap[key].deduction += e.deduction ?? 0;
     }
+
     return Object.entries(map)
-      .map(([id, d]) => ({
-        id,
-        name: brandMap.get(id) ?? "Unknown",
+      .map(([name, d]) => ({
+        id: name,
+        name,
         sales: d.sales,
-        gross: dedMap[id]?.gross ?? d.sales,
-        deduction: dedMap[id]?.deduction ?? 0,
-        net: Math.max(0, (dedMap[id]?.gross ?? d.sales) - (dedMap[id]?.deduction ?? 0)),
+        gross: dedMap[name]?.gross ?? d.sales,
+        deduction: dedMap[name]?.deduction ?? 0,
+        net: Math.max(0, (dedMap[name]?.gross ?? d.sales) - (dedMap[name]?.deduction ?? 0)),
         orders: d.orders,
         units: d.units,
         atv: d.orders > 0 ? d.sales / d.orders : null,
