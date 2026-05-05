@@ -1274,7 +1274,10 @@ export default function BAEntry() {
                     : isUnits ? `${effectiveThreshold}件` : `HK$${effectiveThreshold.toLocaleString()}`;
                   let rewardZh = "";
                   if (tiers.length > 0) {
-                    rewardZh = "階梯獎勵: " + tiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ");
+                    const modeZh = (scheme.tierMode as TierMode) === "marginal"
+                      ? "（逕級計算：每階梯依本階獎勵計）"
+                      : "（平均計算：全部件數以最高階獎勵計）";
+                    rewardZh = "階梯獎勵: " + tiers.map(t => `${t.minQty}${t.maxQty ? `-${t.maxQty}` : "+"}件=$${t.rewardAmount}/件`).join(", ") + modeZh;
                   } else if (scheme.rewardBasis === "per_unit") rewardZh = `每售出一件可獲HK$${scheme.rewardAmount}`;
                   else if (scheme.rewardBasis === "per_amount") rewardZh = `每達HK$${(scheme.rewardPerAmountUnit || 1000).toLocaleString()}銷售額可獲HK$${scheme.rewardAmount}`;
                   else if (scheme.rewardBasis === "per_transaction") rewardZh = `每筆合資格交易可獲HK$${scheme.rewardAmount}`;

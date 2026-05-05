@@ -392,6 +392,7 @@ export class PgStorage implements IStorage {
       );
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS pos_ids TEXT;
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS reward_tiers TEXT;
+      ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS tier_mode TEXT;
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS store_thresholds TEXT;
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS incentive_offset REAL;
       ALTER TABLE incentive_schemes ADD COLUMN IF NOT EXISTS combo_bonus TEXT;
@@ -1170,6 +1171,7 @@ export class PgStorage implements IStorage {
       rewardPerAmountUnit: r.reward_per_amount_unit != null ? Number(r.reward_per_amount_unit) : null,
       isActive: r.is_active, createdBy: r.created_by, posIds: r.pos_ids, notes: r.notes,
       rewardTiers: r.reward_tiers ?? null,
+      tierMode: r.tier_mode ?? null,
       storeThresholds: r.store_thresholds ?? null,
       incentiveOffset: r.incentive_offset != null ? Number(r.incentive_offset) : null,
       comboBonus: r.combo_bonus ?? null,
@@ -1192,12 +1194,12 @@ export class PgStorage implements IStorage {
   async createIncentiveScheme(data: InsertIncentiveScheme): Promise<IncentiveScheme> {
     const id = randomUUID();
     await this.q(
-      `INSERT INTO incentive_schemes (id, name, month, category, target_id, target_name, metric, threshold, reward_basis, reward_amount, reward_per_amount_unit, is_active, created_by, pos_ids, notes, reward_tiers, store_thresholds, incentive_offset, combo_bonus, target_products)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      `INSERT INTO incentive_schemes (id, name, month, category, target_id, target_name, metric, threshold, reward_basis, reward_amount, reward_per_amount_unit, is_active, created_by, pos_ids, notes, reward_tiers, tier_mode, store_thresholds, incentive_offset, combo_bonus, target_products)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [id, data.name, data.month, data.category, data.targetId ?? null, data.targetName ?? null,
        data.metric, data.threshold ?? 0, data.rewardBasis ?? "fixed", data.rewardAmount ?? 0,
        data.rewardPerAmountUnit ?? null, data.isActive ?? true, data.createdBy ?? null, data.posIds ?? null, data.notes ?? null,
-       data.rewardTiers ?? null, data.storeThresholds ?? null, data.incentiveOffset ?? null, data.comboBonus ?? null, data.targetProducts ?? null]
+       data.rewardTiers ?? null, data.tierMode ?? null, data.storeThresholds ?? null, data.incentiveOffset ?? null, data.comboBonus ?? null, data.targetProducts ?? null]
     );
     return (await this.getIncentiveScheme(id))!;
   }
@@ -1208,7 +1210,7 @@ export class PgStorage implements IStorage {
       rewardBasis: "reward_basis", rewardAmount: "reward_amount",
       rewardPerAmountUnit: "reward_per_amount_unit", isActive: "is_active",
       createdBy: "created_by", posIds: "pos_ids", notes: "notes",
-      rewardTiers: "reward_tiers", storeThresholds: "store_thresholds",
+      rewardTiers: "reward_tiers", tierMode: "tier_mode", storeThresholds: "store_thresholds",
       incentiveOffset: "incentive_offset", comboBonus: "combo_bonus",
       targetProducts: "target_products",
     };

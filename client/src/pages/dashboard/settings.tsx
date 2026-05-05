@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory, RewardTier, StoreThreshold, ComboBonus, TargetProduct } from "@shared/schema";
+import type { Counter, Brand, CounterBrand, PosLocation, BrandPosAvailability, Category, Promotion, IncentiveScheme, InsertIncentiveScheme, IncentiveCategory, RewardTier, StoreThreshold, ComboBonus, TargetProduct, TierMode } from "@shared/schema";
 import { incentiveCategories, incentiveRewardBases, INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -148,7 +148,8 @@ export default function SettingsPage() {
     // Show tiered info if present
     const tiers: RewardTier[] = s.rewardTiers ? JSON.parse(s.rewardTiers) : [];
     if (tiers.length > 0) {
-      return tiers.map(t => `$${t.rewardAmount}/${t.minQty}+`).join(", ");
+      const mode = (s.tierMode as TierMode) === "marginal" ? " (graduated)" : " (flat)";
+      return tiers.map(t => `$${t.rewardAmount}/${t.minQty}+`).join(", ") + mode;
     }
     if (s.rewardBasis === "per_unit") return `HK$${s.rewardAmount} / unit`;
     if (s.rewardBasis === "per_amount") return `HK$${s.rewardAmount} / HK$${(s.rewardPerAmountUnit || 1000).toLocaleString()}`;
@@ -158,6 +159,9 @@ export default function SettingsPage() {
 
   // Local state for tiers/store-thresholds/combo parsed from JSON
   const [incTiers, setIncTiers] = useState<RewardTier[]>([]);
+  // Defaults to "flat" so existing schemes keep their previous payout
+  // behavior; admins can switch to "marginal" (graduated bands) per scheme.
+  const [incTierMode, setIncTierMode] = useState<TierMode>("flat");
   const [incStoreThresholds, setIncStoreThresholds] = useState<StoreThreshold[]>([]);
   const [incOffset, setIncOffset] = useState<number | null>(null);
   const [incCombo, setIncCombo] = useState<ComboBonus | null>(null);
@@ -168,6 +172,7 @@ export default function SettingsPage() {
       setIncForm({ name: s.name, month: s.month, category: s.category as IncentiveCategory, targetId: s.targetId ?? undefined, targetName: s.targetName ?? undefined, metric: s.metric, threshold: s.threshold, rewardBasis: s.rewardBasis as any, rewardAmount: s.rewardAmount, rewardPerAmountUnit: s.rewardPerAmountUnit ?? undefined, notes: s.notes ?? undefined });
       // Parse JSON fields
       setIncTiers(s.rewardTiers ? JSON.parse(s.rewardTiers) : []);
+      setIncTierMode((s.tierMode as TierMode) === "marginal" ? "marginal" : "flat");
       setIncStoreThresholds(s.storeThresholds ? JSON.parse(s.storeThresholds) : []);
       setIncOffset(s.incentiveOffset ?? null);
       setIncCombo(s.comboBonus ? JSON.parse(s.comboBonus) : null);
@@ -187,6 +192,7 @@ export default function SettingsPage() {
       setIncForm({ month: incentiveFilterMonth || new Date().toISOString().substring(0, 7), rewardBasis: "fixed", metric: "units", threshold: 0, rewardAmount: 0 });
       setIncProductName("");
       setIncTiers([]);
+      setIncTierMode("flat");
       setIncStoreThresholds([]);
       setIncOffset(null);
       setIncCombo(null);
@@ -201,6 +207,8 @@ export default function SettingsPage() {
         ...incForm,
         metric: metricForCategory(incForm.category || ""),
         rewardTiers: incTiers.length > 0 ? JSON.stringify(incTiers) : null,
+        // Only persist tierMode when tiers are configured — otherwise it's irrelevant.
+        tierMode: incTiers.length > 0 ? incTierMode : null,
         storeThresholds: incStoreThresholds.length > 0 ? JSON.stringify(incStoreThresholds) : null,
         incentiveOffset: incOffset,
         comboBonus: incCombo ? JSON.stringify(incCombo) : null,
@@ -1357,6 +1365,67 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                     {incTiers.length > 0 && (
+                      <>
+                        {/* Calculation method toggle. Drives how payout is
+                            computed once the BA crosses a tier:
+                              flat     — every unit at the rate of the
+                                         highest tier reached
+                                         (55 × $9 = $495 for 35–49 / 50–64 / 65+).
+                              marginal — graduated bands
+                                         ((49−35)×$7 + (55−50)×$9 = $143).
+                            The example string is recomputed live so the
+                            admin sees the dollar consequence as they tweak
+                            the tier values. */}
+                        <div className="flex items-center gap-2 text-xs">
+                          <Label className="font-medium">Calculation:</Label>
+                          <div className="inline-flex rounded-md border overflow-hidden">
+                            <button
+                              type="button"
+                              data-testid="button-tier-mode-flat"
+                              className={`px-2.5 py-1 text-xs ${incTierMode === "flat" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                              onClick={() => setIncTierMode("flat")}
+                            >Flat (top tier rate × all units)</button>
+                            <button
+                              type="button"
+                              data-testid="button-tier-mode-marginal"
+                              className={`px-2.5 py-1 text-xs border-l ${incTierMode === "marginal" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                              onClick={() => setIncTierMode("marginal")}
+                            >Marginal (graduated bands)</button>
+                          </div>
+                        </div>
+                        {(() => {
+                          // Show a worked example using the currently
+                          // configured tiers so admins see exactly which
+                          // calculation path their choice maps to.
+                          if (incTiers.length < 2) return null;
+                          const sorted = [...incTiers].sort((a, b) => a.minQty - b.minQty);
+                          const example = sorted[1].minQty + Math.max(1, Math.round(((sorted[1].maxQty ?? sorted[1].minQty + 5) - sorted[1].minQty) / 3));
+                          if (incTierMode === "marginal") {
+                            const parts: string[] = [];
+                            let payout = 0;
+                            for (const t of sorted) {
+                              if (example < t.minQty) break;
+                              const bandEnd = t.maxQty != null ? Math.min(example, t.maxQty) : example;
+                              const w = bandEnd - t.minQty + 1;
+                              if (w > 0) {
+                                parts.push(`(${bandEnd}−${t.minQty}+1)×$${t.rewardAmount}`);
+                                payout += w * t.rewardAmount;
+                              }
+                            }
+                            return (
+                              <p className="text-[11px] text-muted-foreground italic">
+                                e.g. {example} pcs → {parts.join(" + ")} = HK${payout}
+                              </p>
+                            );
+                          }
+                          let topRate = 0;
+                          for (const t of sorted) if (example >= t.minQty) topRate = t.rewardAmount;
+                          return (
+                            <p className="text-[11px] text-muted-foreground italic">
+                              e.g. {example} pcs → {example}×${"$"}{topRate} = HK${example * topRate}
+                            </p>
+                          );
+                        })()}
                       <div className="space-y-1.5">
                         {incTiers.map((tier, i) => (
                           <div key={i} className="flex items-center gap-2">
@@ -1376,6 +1445,7 @@ export default function SettingsPage() {
                           </div>
                         ))}
                       </div>
+                      </>
                     )}
                   </div>
                 )}

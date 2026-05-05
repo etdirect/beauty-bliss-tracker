@@ -9,7 +9,7 @@ import {
 import {
   Trophy, Store, Gift,
 } from "lucide-react";
-import type { IncentiveScheme, PosLocation, RewardTier, StoreThreshold, ComboBonus, TargetProduct } from "@shared/schema";
+import type { IncentiveScheme, PosLocation, RewardTier, StoreThreshold, ComboBonus, TargetProduct, TierMode } from "@shared/schema";
 import { INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -24,15 +24,47 @@ function parseJSON<T>(raw: string | null | undefined): T | null {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-/** Compute tiered payout: all units paid at the rate of the HIGHEST qualifying tier */
-function computeTieredPayout(units: number, tiers: RewardTier[]): { rate: number; payout: number } {
+/**
+ * Compute tiered payout under one of two modes:
+ *   "flat"     — every qualifying unit pays at the rate of the highest
+ *                tier the BA has reached. Default / legacy behavior.
+ *   "marginal" — each band pays its own rate (graduated, like income
+ *                tax). Example for $7/35-49 + $9/50-64 + $12/65+ at 55
+ *                units: (49-35)*7 + (55-50)*9 = $143.
+ *
+ * `units` is the qualifying count (already net of offset). Returns the
+ * applied rate to display alongside the payout, and the payout itself.
+ */
+function computeTieredPayout(
+  units: number,
+  tiers: RewardTier[],
+  mode: TierMode = "flat",
+): { rate: number; payout: number } {
   if (!tiers.length || units <= 0) return { rate: 0, payout: 0 };
   const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
-  let appliedTier = sorted[0];
-  for (const t of sorted) {
-    if (units >= t.minQty) appliedTier = t;
+
+  // Find the topmost tier the BA has reached — used for the displayed
+  // rate label in both modes.
+  let topTier = sorted[0];
+  for (const t of sorted) if (units >= t.minQty) topTier = t;
+
+  if (mode === "marginal") {
+    let payout = 0;
+    for (const t of sorted) {
+      if (units < t.minQty) break;
+      // Upper boundary of this band, capped at the BA's count.
+      // If the band has no maxQty, it stretches to infinity — use units.
+      const bandEnd = t.maxQty != null ? Math.min(units, t.maxQty) : units;
+      // Band starts at minQty; subtract -1 because tiers are conventionally
+      // inclusive ranges (35–49 means 35,36,...,49 → 15 pieces).
+      // Width of the band the BA actually filled:
+      const bandWidth = bandEnd - t.minQty + 1;
+      if (bandWidth > 0) payout += bandWidth * t.rewardAmount;
+    }
+    return { rate: topTier.rewardAmount, payout };
   }
-  return { rate: appliedTier.rewardAmount, payout: units * appliedTier.rewardAmount };
+  // flat
+  return { rate: topTier.rewardAmount, payout: units * topTier.rewardAmount };
 }
 
 /** "$7/35+, $9/50+, $12/80+" */
@@ -65,6 +97,7 @@ function SchemeCard({
   const combo = parseJSON<ComboBonus>(scheme.comboBonus);
   const targetProducts = parseJSON<TargetProduct[]>(scheme.targetProducts);
   const hasTiers = tiers && tiers.length > 0;
+  const tierMode: TierMode = (scheme.tierMode as TierMode) === "marginal" ? "marginal" : "flat";
   const hasStoreThresholds = storeThresholds && storeThresholds.length > 0;
   const offset = scheme.incentiveOffset ?? 0;
   const isAmount = scheme.metric === "amount" || scheme.metric === "transaction_amount";
@@ -103,6 +136,9 @@ function SchemeCard({
               {hasTiers && (
                 <Badge variant="secondary" className="text-xs font-mono">
                   {tierDescription(tiers!)}
+                  <span className="ml-1.5 text-[10px] uppercase tracking-wider opacity-75 font-sans">
+                    {tierMode === "marginal" ? "graduated" : "flat"}
+                  </span>
                 </Badge>
               )}
               {combo && (
@@ -165,10 +201,11 @@ function SchemeCard({
           )}
           {hasTiers && (() => {
             const effectiveUnits = Math.max(overallCurrent - offset, 0);
-            const { rate, payout } = computeTieredPayout(effectiveUnits, tiers!);
+            const { rate, payout } = computeTieredPayout(effectiveUnits, tiers!, tierMode);
             return (
               <div className="text-xs text-muted-foreground mt-1">
                 Current tier rate: HK${rate}/unit
+                <span className="ml-1">({tierMode === "marginal" ? "graduated bands" : "flat — all units at top tier"})</span>
                 {" · "}
                 Estimated payout: {fmtCurrency(payout)}
                 {combo ? ` + combo bonus pool` : ""}
@@ -210,16 +247,21 @@ function SchemeCard({
 
                   let payoutAmt = 0;
                   let rateLabel = "";
+                  // Stores below the scheme's threshold (the offset value
+                  // is the 'minimum BA must achieve before incentive is
+                  // earned') receive zero payout, regardless of tier mode.
+                  const meetsThreshold = currentUnits >= scheme.threshold;
                   if (hasTiers) {
-                    const { rate, payout } = computeTieredPayout(effectiveUnits, tiers!);
-                    payoutAmt = payout;
+                    const { rate, payout } = computeTieredPayout(effectiveUnits, tiers!, tierMode);
+                    payoutAmt = meetsThreshold ? payout : 0;
                     rateLabel = `$${rate}`;
                   } else {
-                    payoutAmt = scheme.rewardBasis === "per_unit"
+                    const base = scheme.rewardBasis === "per_unit"
                       ? effectiveUnits * scheme.rewardAmount
                       : scheme.rewardBasis === "per_amount"
                       ? Math.floor(currentUnits / (scheme.rewardPerAmountUnit ?? 1000)) * scheme.rewardAmount
                       : scheme.rewardAmount;
+                    payoutAmt = meetsThreshold ? base : 0;
                   }
 
                   return (
@@ -266,8 +308,10 @@ function SchemeCard({
                     const curr = storeProgress[st.posId] ?? 0;
                     totalCurrent += curr;
                     const eff = Math.max(curr - offset, 0);
+                    const meetsThreshold = curr >= scheme.threshold;
+                    if (!meetsThreshold) continue;
                     if (hasTiers) {
-                      totalPayout += computeTieredPayout(eff, tiers!).payout;
+                      totalPayout += computeTieredPayout(eff, tiers!, tierMode).payout;
                     } else {
                       totalPayout += scheme.rewardBasis === "per_unit"
                         ? eff * scheme.rewardAmount
@@ -315,10 +359,14 @@ function SchemeCard({
                   .map(([posId, val]) => {
                     const posInfo = posMap.get(posId);
                     const effectiveVal = Math.max(val - offset, 0);
+                    // Same threshold gate as the per-store-thresholds
+                    // path: nothing pays out until the store hits the
+                    // scheme's minimum.
+                    const meetsThreshold = val >= scheme.threshold;
                     let payoutAmt = 0;
                     if (hasTiers) {
-                      payoutAmt = computeTieredPayout(effectiveVal, tiers!).payout;
-                    } else {
+                      payoutAmt = meetsThreshold ? computeTieredPayout(effectiveVal, tiers!, tierMode).payout : 0;
+                    } else if (meetsThreshold) {
                       payoutAmt = scheme.rewardBasis === "per_unit"
                         ? effectiveVal * scheme.rewardAmount
                         : scheme.rewardBasis === "per_amount"

@@ -305,6 +305,13 @@ export const incentiveSchemes = pgTable("incentive_schemes", {
   notes: text("notes"),
   // New fields for April 2026 incentive program
   rewardTiers: text("reward_tiers"),            // JSON: [{minQty, maxQty?, rewardAmount}] for tiered per-unit rates (TA/LA)
+  // How a tiered scheme calculates payout once the BA crosses a tier:
+  //   "flat"     — every qualifying unit pays at the rate of the highest
+  //               tier reached (default; previous behavior).
+  //   "marginal" — each band pays at its own rate (graduated, like income
+  //               tax). 55 units across $7/35-49 + $9/50-64 →
+  //               (49-35)*7 + (55-50)*9 = $143.
+  tierMode: text("tier_mode"),                  // "flat" | "marginal" (null treated as "flat")
   storeThresholds: text("store_thresholds"),    // JSON: [{posId, posName, threshold}] per-store minimum targets (AD)
   incentiveOffset: real("incentive_offset"),     // start counting from Nth piece (PE: offset=2 means from 3rd piece)
   comboBonus: text("combo_bonus"),              // JSON: {description, amount, products?[]} combo/set bonus (TA device+serum $30)
@@ -313,6 +320,7 @@ export const incentiveSchemes = pgTable("incentive_schemes", {
 
 // Reward tier type for tiered incentive rates
 export type RewardTier = { minQty: number; maxQty?: number; rewardAmount: number };
+export type TierMode = "flat" | "marginal";
 export type StoreThreshold = { posId: string; posName: string; threshold: number };
 export type ComboBonus = { description: string; amount: number; products?: string[] };
 export type TargetProduct = { sgCode: string; nameEng: string; nameChi?: string; volume?: string };
