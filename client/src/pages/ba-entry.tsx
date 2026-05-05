@@ -1251,6 +1251,14 @@ export default function BAEntry() {
                   // Determine effective threshold (per-store or global)
                   const storeThreshold = storeThresholds.find(st => st.posId === selectedCounter);
                   const effectiveThreshold = storeThreshold ? storeThreshold.threshold : scheme.threshold;
+                  // The threshold is also the start-counting point ONLY
+                  // when it's a per-store override (user's mental model:
+                  // 'sell past the store's minimum to earn'). Scheme-level
+                  // thresholds are pure eligibility gates — tier minQtys
+                  // and the scheme Offset already encode the count start,
+                  // so subtracting the scheme threshold there would
+                  // double-count and zero out small tiers.
+                  const startFrom = storeThreshold ? effectiveThreshold : 0;
 
                   const pct = effectiveThreshold > 0 ? Math.min(100, (totalProgress / effectiveThreshold) * 100) : 0;
                   // 'Achieved' requires BOTH (a) total progress ≥ threshold AND
@@ -1315,7 +1323,7 @@ export default function BAEntry() {
                     //   flat     : all qualifying units at the highest reached tier rate
                     //   marginal : graduated bands (each band at its own rate)
                     const tierMode: TierMode = (scheme.tierMode as TierMode) === "marginal" ? "marginal" : "flat";
-                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
+                    const countable = Math.max(0, totalProgress - startFrom - offset);
                     if (countable > 0 && totalProgress >= effectiveThreshold) {
                       const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
                       if (tierMode === "marginal") {
@@ -1332,7 +1340,7 @@ export default function BAEntry() {
                       }
                     }
                   } else if (achieved || scheme.rewardBasis !== "fixed") {
-                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
+                    const countable = Math.max(0, totalProgress - startFrom - offset);
                     if (scheme.rewardBasis === "per_unit") earned = countable * scheme.rewardAmount;
                     else if (scheme.rewardBasis === "per_amount") earned = (totalProgress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
                     else earned = scheme.rewardAmount;
@@ -1347,7 +1355,7 @@ export default function BAEntry() {
                     // Use the same threshold-as-offset rule for the
                     // 'current tier' hint so the next-tier countdown
                     // matches the actual reward calculation.
-                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
+                    const countable = Math.max(0, totalProgress - startFrom - offset);
                     for (const t of tiers) {
                       if (countable >= t.minQty && (!t.maxQty || countable <= t.maxQty)) {
                         currentTierLabel = `當前: $${t.rewardAmount}/件`;

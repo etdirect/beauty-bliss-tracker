@@ -440,8 +440,16 @@ function computeStorePayoutForScheme(
   const qualified = rawProgress >= threshold && rawProgress > 0;
   if (!qualified) return { payout: 0, combo: 0, qualified: false };
 
-  // Threshold doubles as the start-counting point for the reward.
-  const effectiveUnits = Math.max(rawProgress - threshold - offset, 0);
+  // Counting model:
+  //   - A PER-STORE threshold is both the eligibility gate AND the
+  //     start-counting point (user's mental model: “sell past the
+  //     store's minimum to earn”). We subtract it from the count.
+  //   - The SCHEME-level threshold is only an eligibility gate. Tiers
+  //     and incentiveOffset handle the actual counting — subtracting
+  //     the scheme threshold here would double-offset a tiered scheme
+  //     whose tier minQtys already encode the starting point.
+  const startFrom = perStore ? threshold : 0;
+  const effectiveUnits = Math.max(rawProgress - startFrom - offset, 0);
 
   let base = 0;
   if (tiers && tiers.length > 0) {
