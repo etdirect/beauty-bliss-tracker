@@ -130,6 +130,14 @@ function SchemeCard({
               <Badge variant="outline" className="text-xs">
                 {INCENTIVE_CATEGORY_LABELS[scheme.category as keyof typeof INCENTIVE_CATEGORY_LABELS] || scheme.category}
               </Badge>
+              {/* Month tag — makes it obvious which month each card is
+                  tied to. Also acts as a visual cross-check against the
+                  filter dropdown so a card whose month doesn't match
+                  the filter (which shouldn't happen, but did once) is
+                  immediately visible. */}
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+                {scheme.month}
+              </Badge>
               {scheme.targetName && (
                 <span className="text-xs text-muted-foreground">{scheme.targetName}</span>
               )}
@@ -412,13 +420,27 @@ export default function IncentiveTracking() {
     return opts;
   }, []);
 
-  const { data: schemes = [] } = useQuery<IncentiveScheme[]>({
-    queryKey: ["/api/incentive-schemes/month/" + selectedMonth],
+  // Schemes for the selected month. Pass selectedMonth as its own array
+  // segment so React Query treats month switches as distinct cache keys
+  // (previously the URL string was concatenated, which still works but
+  // is harder to invalidate selectively). Defensive client-side filter
+  // ensures we never render a stale scheme whose month doesn't match the
+  // current selection — covers any case where the API returns extra rows.
+  const { data: schemesRaw = [] } = useQuery<IncentiveScheme[]>({
+    queryKey: ["/api/incentive-schemes/month", selectedMonth],
     staleTime: 30_000,
   });
+  const schemes = useMemo(
+    () => schemesRaw.filter((s) => s.month === selectedMonth),
+    [schemesRaw, selectedMonth],
+  );
 
   const { data: progress = {} } = useQuery<Record<string, number>>({
-    queryKey: ["/api/incentive-progress", `?month=${selectedMonth}`],
+    queryKey: ["/api/incentive-progress", selectedMonth],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/incentive-progress?month=${selectedMonth}`);
+      return res.json();
+    },
     staleTime: 30_000,
   });
 
