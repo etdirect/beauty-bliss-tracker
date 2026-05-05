@@ -1300,31 +1300,39 @@ export default function BAEntry() {
                       ? `${Math.round(totalProgress)} / ${Math.round(effectiveThreshold)}件`
                       : `HK$${totalProgress.toLocaleString()} / HK$${effectiveThreshold.toLocaleString()}`;
 
-                  // Calculate earned reward
+                  // Calculate earned reward.
+                  // The (per-store or scheme) threshold acts as BOTH the
+                  // eligibility gate AND the start-counting point. e.g.
+                  // SOGO Causeway Bay threshold = 48 → BA earns from unit
+                  // 49 onward (100 sold → 52 paid units). The scheme-level
+                  // Offset is subtracted on top of that.
                   let earned = 0;
                   if (isTxn) {
                     // per_transaction: reward per qualifying transaction
                     earned = totalProgress * scheme.rewardAmount;
                   } else if (tiers.length > 0) {
-                    // Tiered reward calculation
-                    const countable = Math.max(0, totalProgress - offset);
+                    // Tiered reward calculation — supports two modes:
+                    //   flat     : all qualifying units at the highest reached tier rate
+                    //   marginal : graduated bands (each band at its own rate)
+                    const tierMode: TierMode = (scheme.tierMode as TierMode) === "marginal" ? "marginal" : "flat";
+                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
                     if (countable > 0 && totalProgress >= effectiveThreshold) {
-                      // Find the applicable tier for total qty
-                      let tierRate = 0;
-                      for (const t of tiers) {
-                        if (countable >= t.minQty && (!t.maxQty || countable <= t.maxQty)) {
-                          tierRate = t.rewardAmount;
+                      const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
+                      if (tierMode === "marginal") {
+                        for (const t of sorted) {
+                          if (countable < t.minQty) break;
+                          const bandEnd = t.maxQty != null ? Math.min(countable, t.maxQty) : countable;
+                          const bandWidth = bandEnd - t.minQty + 1;
+                          if (bandWidth > 0) earned += bandWidth * t.rewardAmount;
                         }
+                      } else {
+                        let topRate = 0;
+                        for (const t of sorted) if (countable >= t.minQty) topRate = t.rewardAmount;
+                        earned = countable * topRate;
                       }
-                      // If countable exceeds all defined tiers, use the last tier
-                      if (tierRate === 0 && tiers.length > 0) {
-                        const lastTier = tiers[tiers.length - 1];
-                        if (countable >= lastTier.minQty) tierRate = lastTier.rewardAmount;
-                      }
-                      earned = countable * tierRate;
                     }
                   } else if (achieved || scheme.rewardBasis !== "fixed") {
-                    const countable = Math.max(0, totalProgress - offset);
+                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
                     if (scheme.rewardBasis === "per_unit") earned = countable * scheme.rewardAmount;
                     else if (scheme.rewardBasis === "per_amount") earned = (totalProgress / (scheme.rewardPerAmountUnit || 1000)) * scheme.rewardAmount;
                     else earned = scheme.rewardAmount;
@@ -1336,7 +1344,10 @@ export default function BAEntry() {
                   // Determine current tier for display
                   let currentTierLabel = "";
                   if (tiers.length > 0 && totalProgress >= effectiveThreshold) {
-                    const countable = Math.max(0, totalProgress - offset);
+                    // Use the same threshold-as-offset rule for the
+                    // 'current tier' hint so the next-tier countdown
+                    // matches the actual reward calculation.
+                    const countable = Math.max(0, totalProgress - effectiveThreshold - offset);
                     for (const t of tiers) {
                       if (countable >= t.minQty && (!t.maxQty || countable <= t.maxQty)) {
                         currentTierLabel = `當前: $${t.rewardAmount}/件`;

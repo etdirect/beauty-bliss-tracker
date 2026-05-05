@@ -247,7 +247,16 @@ function SchemeCard({
                   const posInfo = posMap.get(st.posId);
                   const posName = st.posName || posInfo?.storeName || st.posId;
                   const currentUnits = storeProgress[st.posId] ?? 0;
-                  const effectiveUnits = Math.max(currentUnits - offset, 0);
+                  // Per-store threshold acts as BOTH the eligibility gate
+                  // AND the start-counting point for the reward. e.g. if
+                  // SOGO Causeway Bay's threshold is 48 and the BA sells
+                  // 100, payout is calculated on (100 − 48) = 52 units,
+                  // not 100. The scheme-level Offset is added on top so
+                  // 'first N pcs don't count' still works.
+                  const meetsThreshold = currentUnits >= st.threshold;
+                  const effectiveUnits = meetsThreshold
+                    ? Math.max(currentUnits - st.threshold - offset, 0)
+                    : 0;
                   const pct = st.threshold > 0
                     ? Math.min((currentUnits / st.threshold) * 100, 100)
                     : 0;
@@ -255,10 +264,6 @@ function SchemeCard({
 
                   let payoutAmt = 0;
                   let rateLabel = "";
-                  // Stores below the scheme's threshold (the offset value
-                  // is the 'minimum BA must achieve before incentive is
-                  // earned') receive zero payout, regardless of tier mode.
-                  const meetsThreshold = currentUnits >= scheme.threshold;
                   if (hasTiers) {
                     const { rate, payout } = computeTieredPayout(effectiveUnits, tiers!, tierMode);
                     payoutAmt = meetsThreshold ? payout : 0;
@@ -315,9 +320,10 @@ function SchemeCard({
                   for (const st of storesToShow) {
                     const curr = storeProgress[st.posId] ?? 0;
                     totalCurrent += curr;
-                    const eff = Math.max(curr - offset, 0);
-                    const meetsThreshold = curr >= scheme.threshold;
+                    const meetsThreshold = curr >= st.threshold;
                     if (!meetsThreshold) continue;
+                    // Same store-threshold-as-offset logic as the rows above.
+                    const eff = Math.max(curr - st.threshold - offset, 0);
                     if (hasTiers) {
                       totalPayout += computeTieredPayout(eff, tiers!, tierMode).payout;
                     } else {
