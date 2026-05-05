@@ -473,7 +473,15 @@ function computeStorePayoutForScheme(
   } else if (scheme.rewardBasis === "per_amount") {
     base = Math.floor(rawProgress / (scheme.rewardPerAmountUnit ?? 1000)) * scheme.rewardAmount;
   } else if (scheme.rewardBasis === "per_transaction") {
-    base = effectiveUnits * scheme.rewardAmount;
+    // Per-transaction schemes reward HK\$X per qualifying transaction,
+    // e.g. 'HK\$10 per transaction over HK\$530'. The
+    // progress-by-store aggregate is a SUM(amount), not a transaction
+    // count, so we can't compute payout here without a separate
+    // COUNT query. Match the per-scheme dashboard's fallback table
+    // (which already returns 0 for this case) until a dedicated
+    // transaction-count endpoint is added. This prevents the summary
+    // from inflating per-transaction payouts by sales-dollars × reward.
+    base = 0;
   } else {
     base = scheme.rewardAmount;
   }
@@ -597,6 +605,14 @@ function EarningsByStoreCard({
     URL.revokeObjectURL(url);
   };
 
+  // Per-transaction schemes can't be evaluated from a SUM(amount)
+  // aggregate. Surface them in a small footer so it's clear why their
+  // payouts are excluded from the totals.
+  const perTxnExcluded = useMemo(
+    () => schemes.filter((s) => s.isActive && s.rewardBasis === "per_transaction"),
+    [schemes],
+  );
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -609,6 +625,11 @@ function EarningsByStoreCard({
         <p className="text-xs text-muted-foreground">
           Estimated cash earned by each store across all active incentive schemes. Reflects per-store thresholds and the Flat / Marginal calculation set on each scheme.
         </p>
+        {perTxnExcluded.length > 0 && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+            Per-transaction scheme{perTxnExcluded.length === 1 ? "" : "s"} excluded from totals (need transaction counts, not aggregated sales): {perTxnExcluded.map((s) => s.name).join(", ")}
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
