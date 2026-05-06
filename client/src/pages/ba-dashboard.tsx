@@ -466,6 +466,90 @@ export default function BADashboard() {
       .sort((a, b) => b.sales - a.sales);
   }, [effectiveSales, brandMap]);
 
+  // ── PP / SPLM ranges ────────────────────────
+  // PP   — same number of days immediately before the selected range.
+  // SPLM — same calendar slice one month earlier (day-clamped).
+  // Only meaningful on the daterange tab; otherwise blank + queries off.
+  const { ppStart, ppEnd, splmStart, splmEnd } = useMemo(() => {
+    if (timeTab !== "daterange") return { ppStart: "", ppEnd: "", splmStart: "", splmEnd: "" };
+    const s = new Date(drStart + "T00:00:00");
+    const e = new Date(drEnd + "T00:00:00");
+    const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+    const ppE = new Date(s); ppE.setDate(ppE.getDate() - 1);
+    const ppS = new Date(ppE); ppS.setDate(ppS.getDate() - (days - 1));
+    const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const shiftMonth = (dStr: string, m: number) => {
+      const [y, mo, day] = dStr.split("-").map(Number);
+      const target = new Date(y, mo - 1 + m, 1);
+      const tY = target.getFullYear();
+      const tM = target.getMonth() + 1;
+      const last = new Date(tY, tM, 0).getDate();
+      const tD = Math.min(day, last);
+      return `${tY}-${String(tM).padStart(2, "0")}-${String(tD).padStart(2, "0")}`;
+    };
+    return {
+      ppStart: toISO(ppS),
+      ppEnd: toISO(ppE),
+      splmStart: shiftMonth(drStart, -1),
+      splmEnd: shiftMonth(drEnd, -1),
+    };
+  }, [timeTab, drStart, drEnd]);
+
+  const compareEligible = timeTab === "daterange" && !isRestricted;
+
+  // PP / SPLM sales + deductions queries (gated on date-range tab).
+  const { data: ppSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${ppStart}&endDate=${ppEnd}`],
+    enabled: compareEligible && !!ppStart,
+    staleTime: 30_000,
+  });
+  const { data: ppDedRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${ppStart}&endDate=${ppEnd}`],
+    enabled: compareEligible && !!ppStart,
+    staleTime: 30_000,
+  });
+  const { data: splmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${splmStart}&endDate=${splmEnd}`],
+    enabled: compareEligible && !!splmStart,
+    staleTime: 30_000,
+  });
+  const { data: splmDedRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${splmStart}&endDate=${splmEnd}`],
+    enabled: compareEligible && !!splmStart,
+    staleTime: 30_000,
+  });
+
+  // Brand-name -> sales scoped to the BA's POS, using the same Net/Gross
+  // rule as effectiveSales so each comparison is apples-to-apples.
+  const buildBrandSalesMap = (rawSales: SalesEntry[], rawDed: PromotionDeduction[]) => {
+    const scoped = rawSales.filter((s) => activeCounterIds.has(s.counterId));
+    let entries: { brandId: string; amount: number }[];
+    if (salesView === "gross") {
+      entries = scoped.map((e) => ({ brandId: e.brandId, amount: e.amount }));
+    } else {
+      const ded = rawDed.filter((d) => activeCounterIds.has(d.counterId));
+      const alloc = allocateDeductions(scoped, ded);
+      entries = alloc.entries.map((e) => ({ brandId: (e as any).brandId, amount: e.netAmount ?? e.amount }));
+    }
+    const m: Record<string, number> = {};
+    for (const e of entries) {
+      const b = brandMap.get(e.brandId);
+      const name = b?.name ?? "Unknown";
+      m[name] = (m[name] ?? 0) + e.amount;
+    }
+    return m;
+  };
+  const ppBrandSales = useMemo(
+    () => (compareEligible ? buildBrandSalesMap(ppSalesRaw, ppDedRaw) : {}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareEligible, ppSalesRaw, ppDedRaw, activeCounterIds, salesView, brandMap],
+  );
+  const splmBrandSales = useMemo(
+    () => (compareEligible ? buildBrandSalesMap(splmSalesRaw, splmDedRaw) : {}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareEligible, splmSalesRaw, splmDedRaw, activeCounterIds, salesView, brandMap],
+  );
+
   // ── Promotion performance table ────────────────
   const { promoStart, promoEnd } = useMemo(() => {
     if (isRestricted) {
@@ -1068,39 +1152,90 @@ export default function BADashboard() {
         <CardContent>
           {brandTableData.length === 0 ? (
             <p className="text-muted-foreground text-sm">No sales data for this period.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left">
-                    <th className="pb-2 font-medium">Brand</th>
-                    <th className="pb-2 font-medium text-right">Sales</th>
-                    <th className="pb-2 font-medium text-right">Units</th>
-                    <th className="pb-2 font-medium text-right">ATV</th>
-                    <th className="pb-2 font-medium text-right">UPT</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {brandTableData.map((row) => (
-                    <tr key={row.name} className="border-b last:border-0">
-                      <td className="py-2">{row.name}</td>
-                      <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
-                      <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                      <td className="py-2 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
-                      <td className="py-2 text-right">{fmtRatio(row.units, row.orders)}</td>
+          ) : (() => {
+            // Renders a compact 'vs prior' cell with up/down arrow,
+            // dollar delta, and signed percentage — matching the
+            // Management dashboard style. Used twice per row: vs
+            // Previous Period and vs Same Period Last Month.
+            const renderDelta = (current: number, prior: number) => {
+              if (!compareEligible) return <span className="text-muted-foreground">—</span>;
+              if (prior === 0 && current === 0) return <span className="text-muted-foreground">—</span>;
+              if (prior === 0) return <span className="text-muted-foreground text-xs">New</span>;
+              const delta = current - prior;
+              const pct = (delta / prior) * 100;
+              const isUp = delta >= 0;
+              return (
+                <div className={isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                  <div className="text-xs">{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
+                  <div className="text-[11px]">{isUp ? "+" : ""}{pct.toFixed(1)}%</div>
+                </div>
+              );
+            };
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="pb-2 font-medium">Brand</th>
+                      <th className="pb-2 font-medium text-right">Sales</th>
+                      {compareEligible && (
+                        <>
+                          <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>
+                          <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Same Period Last Month</th>
+                        </>
+                      )}
+                      <th className="pb-2 font-medium text-right">Units</th>
+                      <th className="pb-2 font-medium text-right">ATV</th>
+                      <th className="pb-2 font-medium text-right">UPT</th>
                     </tr>
-                  ))}
-                  <tr className="border-t-2 font-semibold">
-                    <td className="py-2">Total</td>
-                    <td className="py-2 text-right">{fmtCurrency(totalSales)}</td>
-                    <td className="py-2 text-right">{totalUnits.toLocaleString()}</td>
-                    <td className="py-2 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
-                    <td className="py-2 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {brandTableData.map((row) => {
+                      const ppVal = ppBrandSales[row.name] ?? 0;
+                      const splmVal = splmBrandSales[row.name] ?? 0;
+                      return (
+                        <tr key={row.name} className="border-b last:border-0">
+                          <td className="py-2">{row.name}</td>
+                          <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
+                          {compareEligible && (
+                            <>
+                              <td className="py-2 text-right w-[130px]">{renderDelta(row.sales, ppVal)}</td>
+                              <td className="py-2 text-right w-[130px]">{renderDelta(row.sales, splmVal)}</td>
+                            </>
+                          )}
+                          <td className="py-2 text-right">{row.units.toLocaleString()}</td>
+                          <td className="py-2 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
+                          <td className="py-2 text-right">{fmtRatio(row.units, row.orders)}</td>
+                        </tr>
+                      );
+                    })}
+                    {/* Totals row — sums the comparison columns across
+                        all brands so the user sees overall PP / SPLM
+                        movement at a glance. */}
+                    {(() => {
+                      const totalPP = Object.values(ppBrandSales).reduce((s, v) => s + v, 0);
+                      const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
+                      return (
+                        <tr className="border-t-2 font-semibold">
+                          <td className="py-2">Total</td>
+                          <td className="py-2 text-right">{fmtCurrency(totalSales)}</td>
+                          {compareEligible && (
+                            <>
+                              <td className="py-2 text-right w-[130px]">{renderDelta(totalSales, totalPP)}</td>
+                              <td className="py-2 text-right w-[130px]">{renderDelta(totalSales, totalSPLM)}</td>
+                            </>
+                          )}
+                          <td className="py-2 text-right">{totalUnits.toLocaleString()}</td>
+                          <td className="py-2 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
+                          <td className="py-2 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
