@@ -16,7 +16,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown,
+  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown, CalendarDays,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -39,6 +39,14 @@ function todayStr() { return new Date().toISOString().split("T")[0]; }
 
 function yearStartStr() {
   return `2026-01-01`;
+}
+
+// 1st of the current month in local time (e.g. '2026-05-01').
+// Used as the default start of the BA dashboard date range so BAs
+// open straight onto the month-to-date view they usually want.
+function monthStartStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
 function daysInMonth(y: number, m: number) { return new Date(y, m, 0).getDate(); }
@@ -83,7 +91,9 @@ export default function BADashboard() {
 
   // ── BA time tab state ────────────────────────────
   const [timeTab, setTimeTab] = useState<"daterange" | "monthly" | "yearly">("daterange");
-  const [drStart, setDrStart] = useState(yearStartStr);
+  // Default range: 1st of the current month → today. This matches the BA
+  // mental model (“how am I doing this month?”). Users can still widen it.
+  const [drStart, setDrStart] = useState(monthStartStr);
   const [drEnd, setDrEnd] = useState(todayStr);
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
   const [monthlyMonth, setMonthlyMonth] = useState("all");
@@ -269,6 +279,64 @@ export default function BADashboard() {
   const totalSales = useMemo(() => effectiveSales.reduce((s, e) => s + e.amount, 0), [effectiveSales]);
   const totalOrders = useMemo(() => effectiveSales.reduce((s, e) => s + (e.orders ?? 0), 0), [effectiveSales]);
   const totalUnits = useMemo(() => effectiveSales.reduce((s, e) => s + (e.units ?? 0), 0), [effectiveSales]);
+
+  // ── Monthly Projection (BA-scoped, daterange tab only) ────────
+  // BA equivalent of the Management dashboard's projection card. Runs
+  // only when (a) the user is a full BA (not part-time, not
+  // history-restricted) and (b) the selected range sits within a
+  // single month, so 'days elapsed' is meaningful.
+  // Last-month figures are the same calendar month one month back, used
+  // to compare projected vs prior actual.
+  const isProjectionEligible = !isRestricted && timeTab === "daterange" && user?.role === "ba";
+
+  const lmRange = useMemo(() => {
+    if (!isProjectionEligible) return { start: "", end: "", label: "" };
+    const s = new Date(drStart + "T00:00:00");
+    if (Number.isNaN(s.getTime())) return { start: "", end: "", label: "" };
+    const lmY = s.getMonth() === 0 ? s.getFullYear() - 1 : s.getFullYear();
+    const lmM = s.getMonth() === 0 ? 12 : s.getMonth();
+    const last = daysInMonth(lmY, lmM);
+    const startStr = `${lmY}-${String(lmM).padStart(2, "0")}-01`;
+    const endStr = `${lmY}-${String(lmM).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+    return { start: startStr, end: endStr, label: `${MONTH_LABELS[lmM - 1]} ${lmY}` };
+  }, [isProjectionEligible, drStart]);
+
+  // Last-month sales for the BA's POS, raw + deductions, run through the
+  // same allocator so the comparison matches the Net/Gross toggle.
+  const { data: lmSalesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${lmRange.start}&endDate=${lmRange.end}`],
+    enabled: isProjectionEligible && !!lmRange.start,
+    staleTime: 30_000,
+  });
+  const { data: lmDeductionsRaw = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${lmRange.start}&endDate=${lmRange.end}`],
+    enabled: isProjectionEligible && !!lmRange.start,
+    staleTime: 30_000,
+  });
+  const lmTotalSales = useMemo(() => {
+    if (!isProjectionEligible) return 0;
+    const scoped = lmSalesRaw.filter((s) => activeCounterIds.has(s.counterId));
+    if (salesView === "gross") return scoped.reduce((s, e) => s + e.amount, 0);
+    const ded = lmDeductionsRaw.filter((d) => activeCounterIds.has(d.counterId));
+    const alloc = allocateDeductions(scoped, ded);
+    return alloc.entries.reduce((s, e) => s + (e.netAmount ?? e.amount), 0);
+  }, [isProjectionEligible, lmSalesRaw, lmDeductionsRaw, activeCounterIds, salesView]);
+
+  const projection = useMemo(() => {
+    if (!isProjectionEligible) return null;
+    const s = new Date(drStart + "T00:00:00");
+    const e = new Date(drEnd + "T00:00:00");
+    if (s.getFullYear() !== e.getFullYear() || s.getMonth() !== e.getMonth()) return null;
+    const year = s.getFullYear();
+    const month = s.getMonth() + 1;
+    const daysElapsed = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+    const monthDays = daysInMonth(year, month);
+    const dailyRate = daysElapsed > 0 ? totalSales / daysElapsed : 0;
+    const projected = Math.round(dailyRate * monthDays);
+    const vsLM = lmTotalSales > 0 ? projected - lmTotalSales : null;
+    const vsLMPct = lmTotalSales > 0 ? ((projected - lmTotalSales) / lmTotalSales) * 100 : null;
+    return { year, month, daysElapsed, monthDays, dailyRate, projected, vsLM, vsLMPct, lmTotalSales };
+  }, [isProjectionEligible, drStart, drEnd, totalSales, lmTotalSales]);
 
   // ── Attribution (BA only) ──────────────────────
   const attribution = useMemo(() => {
@@ -775,6 +843,59 @@ export default function BADashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* ── Monthly Projection (BA only; full BAs, daterange within one month) ── */}
+      {projection && (
+        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <CalendarDays className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
+                Monthly Projection — {MONTH_LABELS[projection.month - 1]} {projection.year}
+              </span>
+              <span className="text-xs text-muted-foreground ml-1">
+                (based on {projection.daysElapsed} of {projection.monthDays} days)
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {/* Current period total sales — same number as the Total
+                  Sales KPI below, includes My + Part-time + imports. */}
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  {drStart.slice(8)} – {drEnd.slice(8)} {MONTH_LABELS[projection.month - 1]}
+                </p>
+                <p className="text-lg font-bold">{fmtCurrency(totalSales)}</p>
+              </div>
+              {/* Average dollars earned per day in the selected window. */}
+              <div>
+                <p className="text-xs text-muted-foreground">Daily Run Rate</p>
+                <p className="text-lg font-bold">{fmtCurrency(Math.round(projection.dailyRate))}</p>
+              </div>
+              {/* Run rate extrapolated across the whole month. */}
+              <div>
+                <p className="text-xs text-muted-foreground">Projected Full Month</p>
+                <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{fmtCurrency(projection.projected)}</p>
+              </div>
+              {/* Comparison vs same calendar month one year back's actual. */}
+              <div>
+                <p className="text-xs text-muted-foreground">vs {lmRange.label} Actual</p>
+                {projection.vsLM !== null ? (
+                  <div className={projection.vsLM >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                    <p className="text-lg font-bold">
+                      {projection.vsLM >= 0 ? "▲" : "▼"} {fmtCurrency(Math.abs(projection.vsLM))}
+                    </p>
+                    <p className="text-xs font-medium">
+                      {projection.vsLMPct! >= 0 ? "+" : ""}{projection.vsLMPct!.toFixed(1)}% vs {fmtCurrency(projection.lmTotalSales)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No {lmRange.label} data</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* KPI Cards */}
