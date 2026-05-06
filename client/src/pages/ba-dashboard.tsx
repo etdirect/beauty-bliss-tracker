@@ -470,14 +470,17 @@ export default function BADashboard() {
   // PP   — same number of days immediately before the selected range.
   // SPLM — same calendar slice one month earlier (day-clamped).
   // Only meaningful on the daterange tab; otherwise blank + queries off.
-  const { ppStart, ppEnd, splmStart, splmEnd } = useMemo(() => {
-    if (timeTab !== "daterange") return { ppStart: "", ppEnd: "", splmStart: "", splmEnd: "" };
+  const { ppStart, ppEnd, splmStart, splmEnd, ppLabel, splmLabel } = useMemo(() => {
+    if (timeTab !== "daterange") {
+      return { ppStart: "", ppEnd: "", splmStart: "", splmEnd: "", ppLabel: "", splmLabel: "" };
+    }
     const s = new Date(drStart + "T00:00:00");
     const e = new Date(drEnd + "T00:00:00");
     const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
     const ppE = new Date(s); ppE.setDate(ppE.getDate() - 1);
     const ppS = new Date(ppE); ppS.setDate(ppS.getDate() - (days - 1));
     const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const fmtShort = (d: Date) => `${d.getDate()} ${MONTH_LABELS[d.getMonth()]}`;
     const shiftMonth = (dStr: string, m: number) => {
       const [y, mo, day] = dStr.split("-").map(Number);
       const target = new Date(y, mo - 1 + m, 1);
@@ -487,11 +490,19 @@ export default function BADashboard() {
       const tD = Math.min(day, last);
       return `${tY}-${String(tM).padStart(2, "0")}-${String(tD).padStart(2, "0")}`;
     };
+    const splmS = shiftMonth(drStart, -1);
+    const splmE = shiftMonth(drEnd, -1);
+    const splmFmt = (str: string) => {
+      const [y, m, d] = str.split("-").map(Number);
+      return `${d} ${MONTH_LABELS[m - 1]}`;
+    };
     return {
       ppStart: toISO(ppS),
       ppEnd: toISO(ppE),
-      splmStart: shiftMonth(drStart, -1),
-      splmEnd: shiftMonth(drEnd, -1),
+      splmStart: splmS,
+      splmEnd: splmE,
+      ppLabel: `${fmtShort(ppS)} – ${fmtShort(ppE)}`,
+      splmLabel: `${splmFmt(splmS)} – ${splmFmt(splmE)}`,
     };
   }, [timeTab, drStart, drEnd]);
 
@@ -1176,17 +1187,23 @@ export default function BADashboard() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left">
-                      <th className="pb-2 font-medium">Brand</th>
-                      <th className="pb-2 font-medium text-right">Sales</th>
+                      <th className="pb-2 pr-6 font-medium">Brand</th>
+                      <th className="pb-2 px-6 font-medium text-right">Sales</th>
                       {compareEligible && (
                         <>
-                          <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Prev Period</th>
-                          <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px]">vs Same Period Last Month</th>
+                          <th className="pb-2 px-6 font-medium text-right whitespace-nowrap w-[150px] align-bottom">
+                            <div>vs Prev Period</div>
+                            <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{ppLabel}</div>
+                          </th>
+                          <th className="pb-2 px-6 font-medium text-right whitespace-nowrap w-[170px] align-bottom">
+                            <div>vs Same Period Last Month</div>
+                            <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{splmLabel}</div>
+                          </th>
                         </>
                       )}
-                      <th className="pb-2 font-medium text-right">Units</th>
-                      <th className="pb-2 font-medium text-right">ATV</th>
-                      <th className="pb-2 font-medium text-right">UPT</th>
+                      <th className="pb-2 px-6 font-medium text-right">Units</th>
+                      <th className="pb-2 px-6 font-medium text-right">ATV</th>
+                      <th className="pb-2 pl-6 font-medium text-right">UPT</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1195,17 +1212,17 @@ export default function BADashboard() {
                       const splmVal = splmBrandSales[row.name] ?? 0;
                       return (
                         <tr key={row.name} className="border-b last:border-0">
-                          <td className="py-2">{row.name}</td>
-                          <td className="py-2 text-right">{fmtCurrency(row.sales)}</td>
+                          <td className="py-2 pr-6">{row.name}</td>
+                          <td className="py-2 px-6 text-right">{fmtCurrency(row.sales)}</td>
                           {compareEligible && (
                             <>
-                              <td className="py-2 text-right w-[130px]">{renderDelta(row.sales, ppVal)}</td>
-                              <td className="py-2 text-right w-[130px]">{renderDelta(row.sales, splmVal)}</td>
+                              <td className="py-2 px-6 text-right w-[150px]">{renderDelta(row.sales, ppVal)}</td>
+                              <td className="py-2 px-6 text-right w-[170px]">{renderDelta(row.sales, splmVal)}</td>
                             </>
                           )}
-                          <td className="py-2 text-right">{row.units.toLocaleString()}</td>
-                          <td className="py-2 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
-                          <td className="py-2 text-right">{fmtRatio(row.units, row.orders)}</td>
+                          <td className="py-2 px-6 text-right">{row.units.toLocaleString()}</td>
+                          <td className="py-2 px-6 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
+                          <td className="py-2 pl-6 text-right">{fmtRatio(row.units, row.orders)}</td>
                         </tr>
                       );
                     })}
@@ -1217,17 +1234,17 @@ export default function BADashboard() {
                       const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
                       return (
                         <tr className="border-t-2 font-semibold">
-                          <td className="py-2">Total</td>
-                          <td className="py-2 text-right">{fmtCurrency(totalSales)}</td>
+                          <td className="py-2 pr-6">Total</td>
+                          <td className="py-2 px-6 text-right">{fmtCurrency(totalSales)}</td>
                           {compareEligible && (
                             <>
-                              <td className="py-2 text-right w-[130px]">{renderDelta(totalSales, totalPP)}</td>
-                              <td className="py-2 text-right w-[130px]">{renderDelta(totalSales, totalSPLM)}</td>
+                              <td className="py-2 px-6 text-right w-[150px]">{renderDelta(totalSales, totalPP)}</td>
+                              <td className="py-2 px-6 text-right w-[170px]">{renderDelta(totalSales, totalSPLM)}</td>
                             </>
                           )}
-                          <td className="py-2 text-right">{totalUnits.toLocaleString()}</td>
-                          <td className="py-2 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
-                          <td className="py-2 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
+                          <td className="py-2 px-6 text-right">{totalUnits.toLocaleString()}</td>
+                          <td className="py-2 px-6 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
+                          <td className="py-2 pl-6 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
                         </tr>
                       );
                     })()}
