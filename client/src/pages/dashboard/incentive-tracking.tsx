@@ -10,7 +10,8 @@ import {
 import {
   Trophy, Store, Gift,
 } from "lucide-react";
-import type { IncentiveScheme, PosLocation, RewardTier, StoreThreshold, ComboBonus, TargetProduct, TierMode } from "@shared/schema";
+import type { IncentiveScheme, PosLocation, RewardTier, StoreThreshold, ComboBonus, TargetProduct, TierMode, SalesEntry, PromotionDeduction } from "@shared/schema";
+import { allocateDeductions } from "@shared/deductionAllocation";
 import { INCENTIVE_CATEGORY_LABELS } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/App";
@@ -511,6 +512,29 @@ function EarningsByStoreCard({
     staleTime: 30_000,
   });
 
+  // Net sales per store for the same month — used for the
+  // payout-as-%-of-net-sales column. We fetch raw sales + promotion
+  // deductions and run them through the same allocateDeductions helper
+  // the management dashboard uses, so the denominator is identical.
+  const monthStart = `${selectedMonth}-01`;
+  const monthEnd = `${selectedMonth}-31`;
+  const { data: salesRaw = [] } = useQuery<SalesEntry[]>({
+    queryKey: ["/api/sales", `?startDate=${monthStart}&endDate=${monthEnd}`],
+    staleTime: 30_000,
+  });
+  const { data: deductions = [] } = useQuery<PromotionDeduction[]>({
+    queryKey: ["/api/promotion-deductions", `?startDate=${monthStart}&endDate=${monthEnd}`],
+    staleTime: 30_000,
+  });
+  const netSalesByCounter = useMemo(() => {
+    const allocated = allocateDeductions(salesRaw, deductions);
+    const m: Record<string, number> = {};
+    for (const e of allocated.entries) {
+      m[e.counterId] = (m[e.counterId] ?? 0) + (e.netAmount ?? e.amount);
+    }
+    return m;
+  }, [salesRaw, deductions]);
+
   // Build per-store rows: one entry per POS that earned anything OR
   // belongs to a store-thresholded scheme this month.
   const rows = useMemo(() => {
@@ -522,6 +546,7 @@ function EarningsByStoreCard({
       qualified: number;       // # schemes where this store qualified
       total: number;            // payout total HK$
       combo: number;            // sum of combo bonuses
+      netSales: number;         // store net sales for the month
       topScheme: { name: string; amount: number } | null;
     };
     const map = new Map<string, Row>();
@@ -557,6 +582,7 @@ function EarningsByStoreCard({
         qualified: 0,
         total: 0,
         combo: 0,
+        netSales: netSalesByCounter[posId] ?? 0,
         topScheme: null,
       };
       for (const s of schemes.filter((x) => x.isActive)) {
@@ -576,26 +602,31 @@ function EarningsByStoreCard({
     }
 
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
-  }, [bulkProgress, schemes, posLocations]);
+  }, [bulkProgress, schemes, posLocations, netSalesByCounter]);
 
   const grandTotal = rows.reduce((s, r) => s + r.total, 0);
   const grandCombo = rows.reduce((s, r) => s + r.combo, 0);
+  const grandNetSales = rows.reduce((s, r) => s + r.netSales, 0);
+  const grandPct = grandNetSales > 0 ? (grandTotal / grandNetSales) * 100 : null;
 
   // CSV export. Columns mirror the on-screen table.
   const exportCsv = () => {
-    const header = ["Channel", "Store Code", "Store", "Qualified Schemes", "Combo Bonus (HK$)", "Total Payout (HK$)", "Top Earner"];
+    const header = ["Channel", "Store Code", "Store", "Qualified Schemes", "Combo Bonus (HK$)", "Total Payout (HK$)", "Payout % of Net Sales", "Net Sales (HK$)", "Top Earner"];
     const lines = [header.join(",")];
     for (const r of rows) {
+      const pct = r.netSales > 0 ? (r.total / r.netSales) * 100 : null;
       const cells = [
         r.channel, r.storeCode, r.storeName,
         String(r.qualified),
         String(Math.round(r.combo)),
         String(Math.round(r.total)),
+        pct !== null ? pct.toFixed(2) + "%" : "—",
+        String(Math.round(r.netSales)),
         r.topScheme ? `\"${r.topScheme.name.replace(/"/g, "'")} — HK\$${Math.round(r.topScheme.amount)}\"` : "",
       ];
       lines.push(cells.join(","));
     }
-    lines.push(["", "", "TOTAL", "", String(Math.round(grandCombo)), String(Math.round(grandTotal)), ""].join(","));
+    lines.push(["", "", "TOTAL", "", String(Math.round(grandCombo)), String(Math.round(grandTotal)), grandPct !== null ? grandPct.toFixed(2) + "%" : "—", String(Math.round(grandNetSales)), ""].join(","));
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -644,12 +675,19 @@ function EarningsByStoreCard({
                   <th className="pb-2 font-medium">Store</th>
                   <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]"># Schemes Qualified</th>
                   <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]">Combo Bonus</th>
-                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px]">Total Payout</th>
-                  <th className="pb-2 font-medium">Top Earner</th>
+                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[180px]">Total Payout</th>
+                  <th className="pb-2 font-medium text-right whitespace-nowrap w-[150px]">Net Sales</th>
+                  <th className="pb-2 font-medium pl-8">Top Earner</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  // Payout as a % of the store's net sales for the
+                  // month. Renders alongside the dollar payout so
+                  // management can sanity-check the cost of incentives
+                  // against the revenue they drove.
+                  const pct = r.netSales > 0 ? (r.total / r.netSales) * 100 : null;
+                  return (
                   <tr key={r.posId} className="border-b last:border-0">
                     <td className="py-2">
                       <span className={`font-semibold mr-1.5 ${channelColorClass(r.channel)}`}>
@@ -659,8 +697,16 @@ function EarningsByStoreCard({
                     </td>
                     <td className="py-2 text-right tabular-nums">{r.qualified}</td>
                     <td className="py-2 text-right tabular-nums">{r.combo > 0 ? fmtCurrency(r.combo) : "—"}</td>
-                    <td className="py-2 text-right tabular-nums font-semibold">{fmtCurrency(r.total)}</td>
-                    <td className="py-2 text-xs text-muted-foreground">
+                    <td className="py-2 text-right tabular-nums font-semibold">
+                      {fmtCurrency(r.total)}
+                      {pct !== null && (
+                        <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                          ({pct.toFixed(2)}%)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right tabular-nums">{r.netSales > 0 ? fmtCurrency(r.netSales) : "—"}</td>
+                    <td className="py-2 pl-8 text-xs text-muted-foreground">
                       {r.topScheme ? (
                         <span title={r.topScheme.name}>
                           {r.topScheme.name.length > 36 ? r.topScheme.name.slice(0, 33) + "…" : r.topScheme.name}
@@ -669,13 +715,22 @@ function EarningsByStoreCard({
                       ) : "—"}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr className="border-t-2 font-semibold bg-muted/30">
                   <td className="py-2">Total — {rows.length} store{rows.length === 1 ? "" : "s"} earning</td>
                   <td className="py-2 text-right">—</td>
                   <td className="py-2 text-right tabular-nums">{grandCombo > 0 ? fmtCurrency(grandCombo) : "—"}</td>
-                  <td className="py-2 text-right tabular-nums">{fmtCurrency(grandTotal)}</td>
-                  <td className="py-2">—</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {fmtCurrency(grandTotal)}
+                    {grandPct !== null && (
+                      <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                        ({grandPct.toFixed(2)}%)
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right tabular-nums">{grandNetSales > 0 ? fmtCurrency(grandNetSales) : "—"}</td>
+                  <td className="py-2 pl-8">—</td>
                 </tr>
               </tbody>
             </table>
