@@ -724,9 +724,13 @@ export default function BADashboard() {
       const results = myResults.filter((r) => r.promotionId === promo.id);
       const totalGwp = results.reduce((s, r) => s + r.gwpGiven, 0);
       const brandName = brandNameMap.get(promo.brandId ?? "") ?? "All Brands";
+      const description = (promo.descriptionZh || promo.name || "").trim();
+      const mechanics = (promo.mechanicsZh || promo.mechanics || "").trim();
       return {
         id: promo.id,
         name: promo.name,
+        description,
+        mechanics: mechanics && mechanics !== description ? mechanics : "",
         brand: brandName,
         type: promo.type,
         startDate: promo.startDate,
@@ -1709,51 +1713,57 @@ export default function BADashboard() {
             <>
               <div className="space-y-2 sm:hidden">
                 {promoTableData.map((row) => (
-                  <div key={row.id} className="p-2.5 rounded-lg border bg-card/60 space-y-1 shadow-2xs">
+                  <div key={row.id} className="p-2.5 rounded-lg border bg-card/60 space-y-1.5 shadow-2xs">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold">{row.name}</div>
-                        <div className="text-[11px] text-muted-foreground">{row.brand} · {row.type}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-semibold leading-snug break-words">{row.description}</div>
+                        {row.mechanics ? (
+                          <p className="text-[11px] text-muted-foreground leading-snug break-words mt-0.5">{row.mechanics}</p>
+                        ) : null}
+                        <div className="text-[10px] text-muted-foreground mt-1">{row.brand} · {row.type}</div>
                       </div>
-                      <div className="text-xs font-semibold tabular-nums shrink-0">
+                      <div className="text-[11px] font-semibold tabular-nums shrink-0">
                         {row.trackable ? `${row.gwpGiven} GWP` : "—"}
                       </div>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">{fmtShortDate(row.startDate)} – {fmtShortDate(row.endDate)}</div>
+                    <div className="text-[10px] text-muted-foreground">{fmtShortDate(row.startDate)} – {fmtShortDate(row.endDate)}</div>
                   </div>
                 ))}
               </div>
-              <div className="hidden sm:block overflow-x-auto">
-                <table className="w-full text-sm min-w-[620px]">
+              <div className="hidden sm:block">
+                <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2.5 pl-1 font-medium">Promotion</th>
-                      <th className="pb-2.5 font-medium">Brand</th>
-                      <th className="pb-2.5 font-medium">Type</th>
-                      <th className="pb-2.5 font-medium">Period</th>
-                      <th className="pb-2.5 pr-1 font-medium text-right">GWP Given</th>
+                      <th className="pb-2 pl-1 font-medium">Promotion</th>
+                      <th className="pb-2 font-medium whitespace-nowrap">Brand</th>
+                      <th className="pb-2 font-medium">Type</th>
+                      <th className="pb-2 font-medium whitespace-nowrap">Period</th>
+                      <th className="pb-2 pr-1 font-medium text-right whitespace-nowrap">GWP Given</th>
                     </tr>
                   </thead>
                   <tbody>
                     {promoTableData.map((row) => (
-                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                        <td className="py-2.5 pl-1 pr-3 font-medium max-w-[280px]">
-                          <span className="block truncate">{row.name}</span>
+                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors align-top">
+                        <td className="py-2 pl-1 pr-3">
+                          <div className="text-xs font-medium leading-snug break-words">{row.description}</div>
+                          {row.mechanics ? (
+                            <p className="text-[11px] text-muted-foreground leading-snug break-words mt-0.5">{row.mechanics}</p>
+                          ) : null}
                         </td>
-                        <td className="py-2.5 text-muted-foreground whitespace-nowrap">{row.brand}</td>
-                        <td className="py-2.5">
+                        <td className="py-2 text-muted-foreground whitespace-nowrap">{row.brand}</td>
+                        <td className="py-2">
                           <Badge variant="outline" className="text-[10px] font-normal py-0">
                             {row.type}
                           </Badge>
                         </td>
-                        <td className="py-2.5 text-muted-foreground whitespace-nowrap tabular-nums">
+                        <td className="py-2 text-muted-foreground whitespace-nowrap tabular-nums">
                           {fmtShortDate(row.startDate)} – {fmtShortDate(row.endDate)}
                         </td>
-                        <td className="py-2.5 pr-1 text-right">
+                        <td className="py-2 pr-1 text-right">
                           {row.trackable ? (
                             <span className="font-semibold tabular-nums">{row.gwpGiven.toLocaleString()}</span>
                           ) : (
-                            <span className="text-xs text-muted-foreground">Not tracked</span>
+                            <span className="text-[11px] text-muted-foreground">Not tracked</span>
                           )}
                         </td>
                       </tr>
