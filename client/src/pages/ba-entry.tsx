@@ -10,7 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard, MapPin, Tag, Package, LogOut, Pencil, AlertCircle, Trophy, ChevronDown, ChevronUp, Search, Filter, X, KeyRound } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import {
+  CheckCircle, Gift, ShoppingBag, Calendar, Store, LayoutDashboard,
+  Tag, LogOut, Pencil, AlertCircle, Trophy, ChevronDown, ChevronUp,
+  Filter, X, KeyRound,
+} from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Link } from "wouter";
 
@@ -86,7 +92,7 @@ export default function BAEntry() {
   });
 
   // Fetch POS locations (all active)
-  const { data: posLocations = [] } = useQuery<PosLocation[]>({
+  const { data: posLocations = [], isLoading: posLoading } = useQuery<PosLocation[]>({
     queryKey: ["/api/pos-locations"],
   });
 
@@ -96,7 +102,7 @@ export default function BAEntry() {
     enabled: !!user,
   });
 
-  const { data: brands = [] } = useQuery<Brand[]>({
+  const { data: brands = [], isLoading: brandsLoading } = useQuery<Brand[]>({
     queryKey: ["/api/brands"],
   });
 
@@ -549,18 +555,39 @@ export default function BAEntry() {
   const totalUnits = Object.values(salesData).reduce((sum, d) => sum + (d.units || 0), 0);
   const totalAmount = Object.values(salesData).reduce((sum, d) => sum + (d.amount || 0), 0);
 
+  const isPageLoading = assignmentsLoading || posLoading;
+  const filledBrandCount = availableBrands.filter((b) => {
+    const row = salesData[b.id];
+    return !!row && ((row.orders || 0) > 0 || (row.units || 0) > 0 || (row.amount || 0) > 0);
+  }).length;
+
+  const brandsByCategoryList = [
+    ...categoryOrder.map((cat) => ({
+      category: cat,
+      brands: (brandsByCategory[cat] ?? []),
+    })),
+    {
+      category: "Other",
+      brands: availableBrands.filter((b) => !categoryOrder.includes(b.category)),
+    },
+  ].filter((g) => g.brands.length > 0);
+
   // No assigned POS for BA users
-  if (!isManagement && availablePos.length === 0 && !submitted && !assignmentsLoading) {
+  if (!isManagement && availablePos.length === 0 && !submitted && !isPageLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md text-center">
+        <Card className="w-full max-w-md rounded-xl border border-border/80 shadow-2xs text-center">
           <CardContent className="pt-8 pb-8 space-y-4">
-            <Store className="w-10 h-10 mx-auto text-muted-foreground opacity-50" />
-            <h2 className="text-lg font-semibold">No POS Locations Assigned</h2>
-            <p className="text-sm text-muted-foreground">
-              Contact management to get POS locations assigned to your account.
-            </p>
-            <Button variant="outline" onClick={logout}>
+            <div className="mx-auto w-12 h-12 rounded-xl bg-muted/60 flex items-center justify-center">
+              <Store className="w-6 h-6 text-muted-foreground" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold">No POS Locations Assigned</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Contact management to get POS locations assigned to your account.
+              </p>
+            </div>
+            <Button variant="outline" onClick={logout} className="h-10">
               <LogOut className="w-4 h-4 mr-2" /> Sign Out
             </Button>
           </CardContent>
@@ -572,22 +599,38 @@ export default function BAEntry() {
   if (submitted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md text-center">
+        <Card className="w-full max-w-md rounded-xl border border-border/80 shadow-2xs text-center">
           <CardContent className="pt-8 pb-8 space-y-4">
-            <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-              <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
+            <div className="mx-auto w-14 h-14 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+              <CheckCircle className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
             </div>
-            <h2 className="text-xl font-semibold">Sales Submitted</h2>
-            <p className="text-muted-foreground text-sm">
-              {totalOrders} orders / {totalUnits} units / HK${totalAmount.toLocaleString()} recorded for {selectedDate}
-            </p>
-            <div className="flex flex-col gap-2 mt-4">
-              <Button onClick={handleReset}>
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight">Sales Submitted</h1>
+              <p className="text-muted-foreground text-sm mt-1">
+                Recorded for {selectedDate}
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-muted/50 p-2">
+                <div className="text-[10px] text-muted-foreground">Orders</div>
+                <div className="text-sm font-bold tabular-nums">{totalOrders}</div>
+              </div>
+              <div className="rounded-lg bg-muted/50 p-2">
+                <div className="text-[10px] text-muted-foreground">Units</div>
+                <div className="text-sm font-bold tabular-nums">{totalUnits}</div>
+              </div>
+              <div className="rounded-lg bg-muted/50 p-2">
+                <div className="text-[10px] text-muted-foreground">Sales</div>
+                <div className="text-sm font-bold tabular-nums">HK${totalAmount.toLocaleString()}</div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 mt-1">
+              <Button onClick={handleReset} className="h-11 font-semibold">
                 Enter More Sales
               </Button>
               {!isManagement && (
                 <Link href="/my-dashboard">
-                  <Button variant="outline" className="w-full">
+                  <Button variant="outline" className="w-full h-10">
                     Visit My Dashboard
                   </Button>
                 </Link>
@@ -601,43 +644,57 @@ export default function BAEntry() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <div className="sticky top-0 z-10 bg-background border-b px-4 py-3">
-        <div className="max-w-lg mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+      <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border/80 px-3 sm:px-4 py-2.5">
+        <div className="max-w-lg mx-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
               <ShoppingBag className="w-4 h-4 text-primary-foreground" />
             </div>
-            <div>
-              <h1 className="text-base font-semibold leading-tight">Counter Sales Tracker</h1>
-              <p className="text-xs text-muted-foreground">Daily Sales Entry — {user?.name}</p>
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-base font-semibold leading-tight truncate">Daily Sales Entry</h1>
+              <p className="text-[11px] text-muted-foreground truncate">{user?.name}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0.5 shrink-0">
             {!isManagement && (
               <Link href="/my-dashboard">
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-my-dashboard">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  aria-label="My Dashboard"
+                  data-testid="link-my-dashboard"
+                >
                   <LayoutDashboard className="w-3.5 h-3.5" />
-                  My Dashboard
-                </span>
+                  <span className="hidden sm:inline ml-1">Dashboard</span>
+                </Button>
               </Link>
             )}
             {isManagement && (
               <Link href="/dashboard">
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer px-3 py-2 rounded-md hover:bg-accent" data-testid="link-dashboard">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  aria-label="Dashboard"
+                  data-testid="link-dashboard"
+                >
                   <LayoutDashboard className="w-3.5 h-3.5" />
-                  Dashboard
-                </span>
+                  <span className="hidden sm:inline ml-1">Dashboard</span>
+                </Button>
               </Link>
             )}
             <Dialog open={pinDialogOpen} onOpenChange={(open) => { setPinDialogOpen(open); if (!open) { setCurrentPin(""); setNewPin(""); setConfirmPin(""); } }}>
               <DialogTrigger asChild>
-                <button
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-2 rounded-md hover:bg-accent"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                  aria-label="Change PIN"
                   data-testid="button-change-pin"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
-                </button>
+                </Button>
               </DialogTrigger>
               <DialogContent className="max-w-xs">
                 <DialogHeader>
@@ -645,8 +702,9 @@ export default function BAEntry() {
                 </DialogHeader>
                 <div className="space-y-3 pt-1">
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">Current PIN</label>
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="current-pin">Current PIN</label>
                     <Input
+                      id="current-pin"
                       type="password"
                       value={currentPin} onChange={e => setCurrentPin(e.target.value)}
                       placeholder="Enter current PIN"
@@ -654,8 +712,9 @@ export default function BAEntry() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">New PIN</label>
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="new-pin">New PIN</label>
                     <Input
+                      id="new-pin"
                       type="password"
                       value={newPin} onChange={e => setNewPin(e.target.value)}
                       placeholder="At least 4 characters"
@@ -663,8 +722,9 @@ export default function BAEntry() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">Confirm New PIN</label>
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="confirm-pin">Confirm New PIN</label>
                     <Input
+                      id="confirm-pin"
                       type="password"
                       value={confirmPin} onChange={e => setConfirmPin(e.target.value)}
                       placeholder="Re-enter new PIN"
@@ -672,7 +732,7 @@ export default function BAEntry() {
                     />
                   </div>
                   <Button
-                    className="w-full"
+                    className="w-full h-10"
                     onClick={() => changePinMutation.mutate()}
                     disabled={changePinMutation.isPending || !currentPin || !newPin || !confirmPin}
                     data-testid="button-save-pin"
@@ -682,78 +742,86 @@ export default function BAEntry() {
                 </div>
               </DialogContent>
             </Dialog>
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={logout}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors px-2 py-2 rounded-md hover:bg-accent"
+              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+              aria-label="Sign out"
               data-testid="button-logout"
             >
               <LogOut className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="max-w-lg mx-auto p-4 space-y-4 pb-32">
-        {/* Counter & Date Selection */}
-        <Card>
-          <CardContent className="pt-4 space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium flex items-center gap-1.5">
-                <Store className="w-3.5 h-3.5" /> POS Location
-              </label>
-              <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); setTierDeductionData({}); setIncentiveInputs({}); }}>
-                <SelectTrigger data-testid="select-counter">
-                  <SelectValue placeholder="Select your POS location" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePos.map(pos => (
-                    <SelectItem key={pos.id} value={pos.id}>{pos.salesChannel} — {pos.storeName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5" /> Date
-              </label>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => {
-                  // Changing the date resets all in-progress inputs so we
-                  // don't accidentally carry over the previous day's values.
-                  // Any previously-saved data for the new date is only
-                  // loaded when the BA clicks "Load & Edit".
-                  setSelectedDate(e.target.value);
-                  setSalesData({});
-                  setPromoData({});
-                  setDeductionData({});
-                  setTierDeductionData({});
-                  setIncentiveInputs({});
-                }}
-                data-testid="input-date"
-              />
+      <div className="max-w-lg mx-auto p-3 sm:p-4 space-y-3.5 pb-36">
+        <Card className="rounded-xl border border-border/80 shadow-2xs">
+          <CardContent className="p-3 sm:p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5" htmlFor="pos-location">
+                  <Store className="w-3.5 h-3.5" /> POS Location
+                </label>
+                {isPageLoading ? (
+                  <Skeleton className="h-10 w-full" />
+                ) : (
+                  <Select value={selectedCounter} onValueChange={(v) => { setSelectedCounter(v); setSalesData({}); setPromoData({}); setDeductionData({}); setTierDeductionData({}); setIncentiveInputs({}); }}>
+                    <SelectTrigger id="pos-location" className="h-10" data-testid="select-counter">
+                      <SelectValue placeholder="Select your POS location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availablePos.map(pos => (
+                        <SelectItem key={pos.id} value={pos.id}>{pos.salesChannel} — {pos.storeName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5" htmlFor="entry-date">
+                  <Calendar className="w-3.5 h-3.5" /> Date
+                </label>
+                <Input
+                  id="entry-date"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setSalesData({});
+                    setPromoData({});
+                    setDeductionData({});
+                    setTierDeductionData({});
+                    setIncentiveInputs({});
+                  }}
+                  className="h-10"
+                  data-testid="input-date"
+                />
+              </div>
             </div>
             {selectedCounter && (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium flex items-center gap-1.5 text-muted-foreground">
-                  <Store className="w-3.5 h-3.5" /> POS System Sales (optional)
+              <div className="space-y-1.5 pt-1 border-t border-border/50">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="pos-figure">
+                  POS System Sales (optional)
                 </label>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">HK$</span>
+                  <span className="text-xs text-muted-foreground shrink-0">HK$</span>
                   <Input
+                    id="pos-figure"
                     type="number"
                     min={0}
                     step="0.01"
-                    placeholder="Enter POS figure"
+                    inputMode="decimal"
+                    placeholder="0"
                     value={posFigure}
                     onChange={(e) => setPosFigure(e.target.value)}
-                    className="h-9"
+                    className="h-10 tabular-nums"
                     data-testid="input-pos-figure"
                   />
                 </div>
-                <p className="text-[10px] text-muted-foreground leading-tight">
-                  對數紙金額 — POS system sales figure from the sales channel
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  對數紙金額 — sales figure from the channel POS
                 </p>
               </div>
             )}
@@ -780,19 +848,21 @@ export default function BAEntry() {
             parts.push(`${incentiveRecordedCount} incentive target${incentiveRecordedCount !== 1 ? "s" : ""} logged`);
           }
           return (
-          <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
-            <CardContent className="pt-3 pb-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+          <Card className="rounded-xl border border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20 shadow-2xs">
+            <CardContent className="p-3">
+              <div className="flex items-start gap-2.5">
+                <div className="w-7 h-7 rounded-md bg-amber-500/10 flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                  <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
                     Existing entries for this date
                   </p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">{parts.join(" · ")}</p>
+                  <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">{parts.join(" · ")}</p>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="mt-2 text-xs h-7 border-amber-300 text-amber-700 hover:bg-amber-100"
+                    className="mt-2 text-xs h-8 border-amber-300 text-amber-800 hover:bg-amber-100 dark:text-amber-200"
                     onClick={loadExistingData}
                   >
                     <Pencil className="w-3 h-3 mr-1" /> Load & Edit
@@ -807,36 +877,37 @@ export default function BAEntry() {
         {/* Promotion Filter Bar + Collapse/Expand */}
         {selectedCounter && posFilteredPromotions.length > 0 && (
           <div className="space-y-2">
-            {/* Toggle row: filter button + collapse/expand */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Button
                 variant={showFilters ? "secondary" : "outline"}
                 size="sm"
-                className="h-7 text-xs gap-1.5"
+                className="h-8 text-xs gap-1.5 relative"
                 onClick={() => setShowFilters(!showFilters)}
+                aria-expanded={showFilters}
               >
                 <Filter className="w-3 h-3" />
                 {showFilters ? "Hide Filters" : "Filters"}
                 {hasActiveFilters && (
-                  <span className="ml-1 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center">
+                  <span className="ml-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center">
                     {(filterBrand !== "__all__" ? 1 : 0) + (filterType !== "__all__" ? 1 : 0) + (filterStartDate ? 1 : 0) + (filterEndDate ? 1 : 0)}
                   </span>
                 )}
               </Button>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={expandAll}>
-                  <ChevronDown className="w-3 h-3 mr-1" /> Expand All
+              <div className="flex items-center gap-0.5">
+                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={expandAll} aria-label="Expand all sections">
+                  <ChevronDown className="w-3 h-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Expand</span>
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={collapseAll}>
-                  <ChevronUp className="w-3 h-3 mr-1" /> Collapse All
+                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={collapseAll} aria-label="Collapse all sections">
+                  <ChevronUp className="w-3 h-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Collapse</span>
                 </Button>
               </div>
             </div>
 
-            {/* Filter panel */}
             {showFilters && (
-              <Card className="border-dashed">
-                <CardContent className="pt-3 pb-3 space-y-2">
+              <Card className="rounded-xl border border-dashed border-border/80 shadow-2xs">
+                <CardContent className="p-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-muted-foreground">Brand</label>
@@ -901,16 +972,20 @@ export default function BAEntry() {
         {/* Active Promotions — Layer 1 (Brand) */}
         {selectedCounter && filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length > 0 && (
           <Collapsible open={promoL1Open} onOpenChange={setPromoL1Open}>
-          <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="pt-3 pb-3">
+          <Card className="rounded-xl border border-primary/25 bg-primary/5 shadow-2xs">
+            <CardContent className="p-3">
               <CollapsibleTrigger asChild>
-                <button className="flex items-center justify-between w-full text-left">
-                  <div className="flex items-center gap-2">
-                    <Gift className="w-4 h-4 text-primary" />
+                <button type="button" className="flex items-center justify-between w-full text-left" aria-expanded={promoL1Open}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                      <Gift className="w-3.5 h-3.5 text-primary" />
+                    </div>
                     <span className="text-sm font-semibold">Active Promotions</span>
-                    <span className="text-xs text-muted-foreground">({filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length})</span>
+                    <Badge variant="outline" className="text-[10px] font-normal py-0">
+                      {filteredPromotions.filter(p => p.promotionLayer !== "counter" && p.promotionLayer !== "channel").length}
+                    </Badge>
                   </div>
-                  {promoL1Open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  {promoL1Open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -935,7 +1010,7 @@ export default function BAEntry() {
                   //   Inputs: wrapped in their own sub-card so BAs can spot
                   //           "where do I type" without scanning past prose.
                   return (
-                    <div key={promo.id} className="bg-background/60 rounded-md p-3 space-y-2">
+                    <div key={promo.id} className="bg-background/80 rounded-lg border border-border/60 p-3 space-y-2">
                       <div className="font-semibold text-foreground break-words">{promo.descriptionZh || promo.name}</div>
                       <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                         {promoNum != null && (
@@ -1003,7 +1078,7 @@ export default function BAEntry() {
                               <label className="text-xs font-medium whitespace-nowrap text-foreground">{label}</label>
                               <Input
                                 data-testid={`input-gwp-${promo.id}`}
-                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
+                                type="number" min={0} inputMode="numeric" className="h-10 w-20 text-sm tabular-nums"
                                 value={promoData[promo.id]?.gwpGiven || ""}
                                 onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
                                 placeholder="0"
@@ -1025,16 +1100,20 @@ export default function BAEntry() {
         {/* Active Promotions — Layer 2 (Counter/Shop) in blue */}
         {selectedCounter && filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length > 0 && (
           <Collapsible open={promoL2Open} onOpenChange={setPromoL2Open}>
-          <Card className="border-blue-300/50 dark:border-blue-700/50 bg-blue-50/60 dark:bg-blue-950/30">
-            <CardContent className="pt-3 pb-3">
+          <Card className="rounded-xl border border-blue-300/50 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs">
+            <CardContent className="p-3">
               <CollapsibleTrigger asChild>
-                <button className="flex items-center justify-between w-full text-left">
-                  <div className="flex items-center gap-2">
-                    <Gift className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    <span className="text-sm font-semibold text-blue-800 dark:text-blue-200">Counter / Shop Promotions</span>
-                    <span className="text-xs text-muted-foreground">({filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length})</span>
+                <button type="button" className="flex items-center justify-between w-full text-left" aria-expanded={promoL2Open}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-md bg-blue-600/10 flex items-center justify-center shrink-0">
+                      <Gift className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <span className="text-sm font-semibold text-blue-800 dark:text-blue-200 truncate">Counter / Shop Promotions</span>
+                    <Badge variant="outline" className="text-[10px] font-normal py-0 shrink-0">
+                      {filteredPromotions.filter(p => p.promotionLayer === "counter" || p.promotionLayer === "channel").length}
+                    </Badge>
                   </div>
-                  {promoL2Open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  {promoL2Open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -1059,7 +1138,7 @@ export default function BAEntry() {
                     layerTag = promo.type === "PWP" ? "專櫃加購" : "專櫃優惠";
                   }
                   return (
-                    <div key={promo.id} className="bg-white/60 dark:bg-blue-900/30 rounded-md p-3 space-y-2">
+                    <div key={promo.id} className="bg-background/80 dark:bg-blue-950/40 rounded-lg border border-blue-200/60 dark:border-blue-800/60 p-3 space-y-2">
                       {/* Title-first: large dark line, then a small muted meta row. */}
                       <div className="font-semibold text-foreground break-words">{descBody}</div>
                       <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
@@ -1104,7 +1183,7 @@ export default function BAEntry() {
                                       <Input
                                         data-testid={`input-deduction-tier-${promo.id}-${t.id}`}
                                         type="number" min={0} step={1} inputMode="numeric"
-                                        className="h-7 w-20 text-sm tabular-nums"
+                                        className="h-10 w-20 text-sm tabular-nums"
                                         value={tCount > 0 ? String(tCount) : ""}
                                         onChange={(e) => {
                                           const n = e.target.value === "" ? 0 : Math.max(0, Math.floor(Number(e.target.value)));
@@ -1146,7 +1225,7 @@ export default function BAEntry() {
                                 id={`ded-${promo.id}`}
                                 data-testid={`input-deduction-${promo.id}`}
                                 type="number" min={0} step={1} inputMode="numeric"
-                                className="h-7 w-20 text-sm tabular-nums"
+                                className="h-10 w-20 text-sm tabular-nums"
                                 value={count > 0 ? String(count) : ""}
                                 onChange={(e) => {
                                   const n = e.target.value === "" ? 0 : Math.max(0, Math.floor(Number(e.target.value)));
@@ -1194,7 +1273,7 @@ export default function BAEntry() {
                               <label className="text-xs font-medium whitespace-nowrap text-foreground">{label}</label>
                               <Input
                                 data-testid={`input-gwp-l2-${promo.id}`}
-                                type="number" min={0} className="h-7 w-20 text-sm tabular-nums"
+                                type="number" min={0} inputMode="numeric" className="h-10 w-20 text-sm tabular-nums"
                                 value={promoData[promo.id]?.gwpGiven || ""}
                                 onChange={(e) => updatePromo(promo.id, "gwpGiven", parseInt(e.target.value) || 0)}
                                 placeholder="0"
@@ -1225,16 +1304,18 @@ export default function BAEntry() {
           if (filteredIncentives.length === 0) return null;
           return (
           <Collapsible open={incentivesOpen} onOpenChange={setIncentivesOpen}>
-          <Card className="border-amber-300/50 dark:border-amber-700/50 bg-amber-50/50 dark:bg-amber-950/20">
-            <CardContent className="pt-3 pb-3">
+          <Card className="rounded-xl border border-amber-300/50 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 shadow-2xs">
+            <CardContent className="p-3">
               <CollapsibleTrigger asChild>
-                <button className="flex items-center justify-between w-full text-left">
-                  <div className="flex items-center gap-2">
-                    <Trophy className="w-4 h-4 text-amber-600" />
-                    <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">Monthly Incentives — {currentMonth}</span>
-                    <span className="text-xs text-muted-foreground">({filteredIncentives.length})</span>
+                <button type="button" className="flex items-center justify-between w-full text-left" aria-expanded={incentivesOpen}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-md bg-amber-500/15 flex items-center justify-center shrink-0">
+                      <Trophy className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
+                    </div>
+                    <span className="text-sm font-semibold text-amber-900 dark:text-amber-200 truncate">Monthly Incentives — {currentMonth}</span>
+                    <Badge variant="outline" className="text-[10px] font-normal py-0 shrink-0">{filteredIncentives.length}</Badge>
                   </div>
-                  {incentivesOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  {incentivesOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -1369,10 +1450,15 @@ export default function BAEntry() {
                   }
 
                   return (
-                    <div key={scheme.id} className={`rounded-md p-2.5 space-y-2 ${achieved ? "bg-green-50 dark:bg-green-900/20 border border-green-300/50" : "bg-background/60"}`}>
+                    <div key={scheme.id} className={cn(
+                      "rounded-lg p-2.5 space-y-2 border",
+                      achieved
+                        ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300/50"
+                        : "bg-background/80 border-border/60",
+                    )}>
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-sm">{scheme.name}</span>
-                        {achieved && <span className="text-xs font-semibold text-green-700 dark:text-green-400">✓ 已達標</span>}
+                        {achieved && <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">✓ 已達標</span>}
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">{descZh}</p>
                       {targetProducts.length > 0 && (
@@ -1390,8 +1476,8 @@ export default function BAEntry() {
                       {/* 今日達成 — BA input */}
                       <div className="flex items-center gap-2 pt-1 border-t border-dashed">
                         <label className="text-xs font-medium whitespace-nowrap">今日達成:</label>
-                        <Input
-                          type="number" min={0} className="h-7 w-24 text-sm"
+                          <Input
+                          type="number" min={0} inputMode="decimal" className="h-10 w-24 text-sm tabular-nums"
                           value={incentiveInputs[scheme.id] ?? ""}
                           onChange={e => setIncentiveInputs(prev => ({ ...prev, [scheme.id]: e.target.value }))}
                           onBlur={async () => {
@@ -1414,13 +1500,20 @@ export default function BAEntry() {
 
                       {!isTxn && (
                         <div className="w-full bg-muted rounded-full h-2">
-                          <div className={`h-2 rounded-full transition-all ${achieved ? "bg-green-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
+                          <div
+                            className={cn("h-2 rounded-full transition-all", achieved ? "bg-emerald-500" : "bg-amber-500")}
+                            style={{ width: `${pct}%` }}
+                            role="progressbar"
+                            aria-valuenow={Math.round(pct)}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          />
                         </div>
                       )}
                       <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                         <span className="text-muted-foreground">累計達成: <span className="font-medium text-foreground">{progressText}</span></span>
                         {currentTierLabel && <span className="text-blue-600 dark:text-blue-400 text-[10px]">{currentTierLabel}</span>}
-                        {earned > 0 && <span className={`font-semibold ${achieved ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
+                        {earned > 0 && <span className={cn("font-semibold", achieved ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>已賺: HK${Math.round(earned).toLocaleString()}</span>}
                       </div>
                     </div>
                   );
@@ -1433,85 +1526,132 @@ export default function BAEntry() {
           );
         })()}
 
-        {/* Sales Entry by Brand (alphabetical) */}
-        {selectedCounter && availableBrands.length > 0 && (
+        {selectedCounter && (brandsLoading || availableBrands.length > 0) && (
           <div className="space-y-2">
-            {availableBrands.map(brand => {
-              const hasActivePromo = activePromotions.some(p => p.brandId === brand.id);
-              return (
-                  <Card key={brand.id} className={hasActivePromo ? "border-primary/20" : ""}>
-                    <CardContent className="pt-3 pb-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">{brand.name}</span>
-                        {hasActivePromo && (
-                          <Badge variant="outline" className="text-xs border-primary/40 text-primary">
-                            <Gift className="w-3 h-3 mr-1" /> Promo
-                          </Badge>
+            <div className="flex items-center justify-between px-0.5">
+              <h2 className="text-xs sm:text-sm font-semibold">Sales by Brand</h2>
+              {filledBrandCount > 0 && (
+                <span className="text-[11px] text-muted-foreground">{filledBrandCount} brand{filledBrandCount !== 1 ? "s" : ""} entered</span>
+              )}
+            </div>
+            {brandsLoading ? (
+              <div className="space-y-2" aria-busy="true" aria-label="Loading brands">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-[88px] w-full rounded-xl" />
+                ))}
+              </div>
+            ) : (
+              brandsByCategoryList.map((group) => (
+                <div key={group.category} className="space-y-2">
+                  {brandsByCategoryList.length > 1 && (
+                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-0.5 pt-1">
+                      {group.category}
+                    </p>
+                  )}
+                  {group.brands.map((brand) => {
+                    const hasActivePromo = activePromotions.some((p) => p.brandId === brand.id);
+                    const row = salesData[brand.id];
+                    const hasValue = !!row && ((row.orders || 0) > 0 || (row.units || 0) > 0 || (row.amount || 0) > 0);
+                    return (
+                      <Card
+                        key={brand.id}
+                        className={cn(
+                          "rounded-xl border shadow-2xs",
+                          hasValue ? "border-primary/30 bg-primary/[0.03]" : "border-border/80",
+                          hasActivePromo && !hasValue && "border-primary/20",
                         )}
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">Orders</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            className="h-9 tabular-nums"
-                            value={salesData[brand.id]?.orders || ""}
-                            onChange={(e) => updateSales(brand.id, "orders", parseInt(e.target.value) || 0)}
-                            placeholder="0"
-                            data-testid={`input-orders-${brand.id}`}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">Units</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            className="h-9 tabular-nums"
-                            value={salesData[brand.id]?.units || ""}
-                            onChange={(e) => updateSales(brand.id, "units", parseInt(e.target.value) || 0)}
-                            placeholder="0"
-                            data-testid={`input-units-${brand.id}`}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">Amount (HK$)</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            className="h-9 tabular-nums"
-                            value={salesData[brand.id]?.amount || ""}
-                            onChange={(e) => updateSales(brand.id, "amount", parseFloat(e.target.value) || 0)}
-                            placeholder="0"
-                            data-testid={`input-amount-${brand.id}`}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-              );
-            })}
+                      >
+                        <CardContent className="p-3">
+                          <div className="flex items-center justify-between mb-2 gap-2">
+                            <span className="text-sm font-semibold truncate">{brand.name}</span>
+                            {hasActivePromo && (
+                              <Badge variant="outline" className="text-[10px] py-0 border-primary/40 text-primary shrink-0">
+                                <Gift className="w-3 h-3 mr-1" /> Promo
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[11px] text-muted-foreground" htmlFor={`orders-${brand.id}`}>Orders</label>
+                              <Input
+                                id={`orders-${brand.id}`}
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                className="h-11 tabular-nums text-base sm:text-sm"
+                                value={row?.orders || ""}
+                                onChange={(e) => updateSales(brand.id, "orders", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                                data-testid={`input-orders-${brand.id}`}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[11px] text-muted-foreground" htmlFor={`units-${brand.id}`}>Units</label>
+                              <Input
+                                id={`units-${brand.id}`}
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                className="h-11 tabular-nums text-base sm:text-sm"
+                                value={row?.units || ""}
+                                onChange={(e) => updateSales(brand.id, "units", parseInt(e.target.value) || 0)}
+                                placeholder="0"
+                                data-testid={`input-units-${brand.id}`}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[11px] text-muted-foreground" htmlFor={`amount-${brand.id}`}>HK$</label>
+                              <Input
+                                id={`amount-${brand.id}`}
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                inputMode="decimal"
+                                className="h-11 tabular-nums text-base sm:text-sm"
+                                value={row?.amount || ""}
+                                onChange={(e) => updateSales(brand.id, "amount", parseFloat(e.target.value) || 0)}
+                                placeholder="0"
+                                data-testid={`input-amount-${brand.id}`}
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ))
+            )}
           </div>
         )}
 
-        {!selectedCounter && (
-          <div className="text-center py-12 text-muted-foreground">
-            <Store className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">Select your POS location to begin</p>
+        {!selectedCounter && !isPageLoading && (
+          <div className="text-center py-12 text-muted-foreground" role="status">
+            <div className="mx-auto w-12 h-12 rounded-xl bg-muted/50 flex items-center justify-center mb-3">
+              <Store className="w-6 h-6 opacity-70" />
+            </div>
+            <p className="text-sm font-medium text-foreground">Select your POS location</p>
+            <p className="text-xs mt-1">Choose a counter above to start today's entry.</p>
           </div>
         )}
       </div>
 
-      {/* Sticky Submit Footer */}
       {selectedCounter && (
-        <div className="fixed bottom-0 left-0 right-0 bg-background border-t p-4">
-          <div className="max-w-lg mx-auto">
-            <div className="flex items-center justify-between mb-2 text-sm tabular-nums">
-              <span className="text-muted-foreground">
-                {totalOrders} order{totalOrders !== 1 ? "s" : ""} / {totalUnits} unit{totalUnits !== 1 ? "s" : ""} / HK${totalAmount.toLocaleString()}
-              </span>
-              <span className="text-xs text-muted-foreground">{selectedDate}</span>
+        <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur border-t border-border/80 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="max-w-lg mx-auto space-y-2">
+            <div className="grid grid-cols-3 gap-1.5 text-center">
+              <div className="rounded-md bg-muted/50 px-1.5 py-1">
+                <div className="text-[10px] text-muted-foreground">Orders</div>
+                <div className="text-xs font-bold tabular-nums">{totalOrders}</div>
+              </div>
+              <div className="rounded-md bg-muted/50 px-1.5 py-1">
+                <div className="text-[10px] text-muted-foreground">Units</div>
+                <div className="text-xs font-bold tabular-nums">{totalUnits}</div>
+              </div>
+              <div className="rounded-md bg-muted/50 px-1.5 py-1">
+                <div className="text-[10px] text-muted-foreground">Sales</div>
+                <div className="text-xs font-bold tabular-nums truncate">HK${totalAmount.toLocaleString()}</div>
+              </div>
             </div>
             <Button
               className="w-full h-12 text-base font-semibold"
