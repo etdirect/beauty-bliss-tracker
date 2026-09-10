@@ -1,0 +1,180 @@
+# Beauty Bliss Sales Tracker — Cursor Project Rules
+
+Daily sales-entry app for beauty-counter Beauty Advisors (BAs), plus a management dashboard. BAs submit units + amount per brand per POS per day, plus GWP (Gift-With-Purchase) counts tied to active promotions. Management views trends, promotion performance, incentives, and POS/brand breakdowns.
+
+---
+
+## CRITICAL (read first)
+
+1. **`shared/schema.ts` is the single source of truth.** Define every entity as a Drizzle table there, derive the Zod insert schema with `createInsertSchema`, and export inferred `Insert*` / `Select*` types. Client and server both import from `@shared/schema` — never redefine a shape locally. When adding a field: update `shared/schema.ts` first, then `npm run db:push`, then UI/API.
+2. **API error shape is `{ status: number, error: string, details?: unknown }`.** Send it with the matching HTTP status. Success responses return the resource JSON directly.
+3. **`package.json` and `package-lock.json` must stay in sync.** After any dependency change, run `npm install` locally and commit the lock file. Railway uses `npm ci` and will fail on drift.
+4. **Auth is already implemented.** PIN login + `express-session`. Roles: `ba`, `part_time`, `management`. Do not remove auth or make BA entry / dashboard public again. Protect routes with `requireAuth` / `requireManagement`. Exception: a few server-to-server promotion endpoints stay unauthenticated (see Guardrails).
+5. **Do not swap the router, ORM, or UI library** without a written proposal. Do not add Redux / Zustand / Jotai.
+
+---
+
+## Stack
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Runtime | Node.js 22.x | Railway default |
+| Language | TypeScript 5.x | Strict mode, ESM (`"type": "module"`) |
+| Backend | Express 5.x | Routes in `server/routes.ts` under `/api/*` |
+| Frontend | React 18.3 | Functional components only |
+| Routing | wouter 3.x | Hash-based (`useHashLocation`). Do **not** add react-router |
+| Build | Vite (client) + `script/build.ts` (esbuild server → `dist/index.cjs`) | |
+| Styling | Tailwind 3.x + `tailwindcss-animate` + `tw-animate-css` | Rose accent `340 65% 47%` |
+| UI | shadcn/ui on Radix | Do **not** hand-edit `client/src/components/ui/` |
+| Data fetching | TanStack Query 5.x | Server state only |
+| Forms | react-hook-form + `@hookform/resolvers` + Zod | Bind to `@shared/schema` Zod schemas |
+| Validation | Zod 3.24 + `drizzle-zod` + `zod-validation-error` | |
+| ORM | Drizzle ORM 0.39 | |
+| Database | PostgreSQL 15+ via `pg` | `PgStorage` when `DATABASE_URL` is set |
+| Fallback storage | In-memory `MemStorage` | Dev / no-DB only |
+| Session | `express-session` + `connect-pg-simple` (prod) / MemoryStore (dev) | Set up in `server/index.ts` after storage init |
+| Auth | PIN hashed with `bcryptjs`; session cookie | |
+| CSV | `csv-parse/sync` 6.x | `relax_column_count: true` |
+| Charts | Recharts 2.x | |
+| Icons | lucide-react | |
+| Deploy | Railway | `npm ci` → `npm run build` → `npm start` |
+
+**Scripts:** `npm run dev` (tsx watch), `npm run build` (client + server bundle), `npm start` (production), `npm run check` (tsc), `npm run db:push` (drizzle-kit).
+
+---
+
+## Structure
+
+```
+beauty-bliss-tracker/
+├── client/                     # Vite React SPA
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx            # Entry: App, QueryClient, Toaster
+│       ├── App.tsx             # AuthProvider + wouter hash routes
+│       ├── index.css           # Tailwind + CSS variables (rose accent)
+│       ├── pages/
+│       │   ├── login.tsx       # PIN login
+│       │   ├── ba-entry.tsx    # Daily sales entry
+│       │   ├── ba-dashboard.tsx
+│       │   ├── dashboard.tsx   # Management shell/nav
+│       │   ├── dashboard/      # management-dashboard, brand-dashboard,
+│       │   │                   # promotions, incentive-tracking,
+│       │   │                   # pos-reconciliation, settings
+│       │   └── not-found.tsx
+│       ├── components/
+│       │   ├── ui/             # shadcn primitives — regenerate via CLI only
+│       │   └── *.tsx           # App-specific components
+│       ├── hooks/
+│       └── lib/                # queryClient, utils (cn), export helpers
+├── server/
+│   ├── index.ts                # Bootstrap; PORT from env; session; Vite or static
+│   ├── routes.ts               # ALL API routes under /api/*
+│   ├── storage.ts              # IStorage + PgStorage + MemStorage; `storage` singleton
+│   ├── vite.ts                 # Dev Vite middleware
+│   └── static.ts               # Prod static from dist/public
+├── shared/
+│   ├── schema.ts               # SINGLE SOURCE OF TRUTH (Drizzle + Zod + types)
+│   └── deductionAllocation.ts
+├── script/build.ts
+├── drizzle.config.ts
+├── tailwind.config.ts
+├── vite.config.ts
+└── tsconfig.json
+```
+
+**Path aliases (client and server):**
+- `@/*` → `client/src/*`
+- `@shared/*` → `shared/*`
+- `@assets` → `attached_assets`
+
+**Routing (after login):**
+- `ba` / `part_time` → `/` (BA entry), `/my-dashboard`. Redirect `/dashboard/*` to `/`.
+- `management` → `/` plus `/dashboard` and sub-pages.
+
+---
+
+## Conventions
+
+### TypeScript
+- Strict mode always on. No `any` unless annotated with `// eslint-disable` and a reason.
+- Prefer `type` for props/DTOs; `interface` only for extendable contracts (`IStorage`).
+- Use `import type { ... }` for type-only imports.
+- ESM only (`import`/`export`). No CommonJS `require` in source files.
+- TypeScript only in `client/src` and `server/` — no `.jsx` / `.js`.
+
+### Schema & types
+- Both sides import from `@shared/schema`. Never copy-paste entity shapes.
+- Legacy `counters` / `counterBrands` stay for backward compatibility. New work uses `posLocations`, `users`, `userPosAssignments`, `brandPosAvailability`.
+
+### React (client)
+- Functional components only. Pages: named function + default export, e.g. `export default function BAEntry() { ... }`.
+- Server state → TanStack Query (`useQuery`, `useMutation`). Local UI state → `useState`. Do not put server data in extra Context except the existing `AuthContext` in `App.tsx`.
+- Query keys: array form starting with the resource path, e.g. `['/api/sales', { date }]`. Reuse the same shape for invalidation.
+- Forms: `react-hook-form` + `zodResolver` bound to the matching `@shared/schema` Zod schema.
+- Routing: wouter (`useLocation`, `Link`, `Route`, `Switch`, `Redirect`, hash location). Never add react-router.
+- Never mutate props or query cache data in place. Return new objects; update via `queryClient.setQueryData` / `invalidateQueries`.
+- No `useEffect` for data fetching — use TanStack Query. Auth session check on mount in `AuthProvider` is the existing exception.
+- No `window` / `document` access outside components; wrap in `useEffect` when unavoidable.
+- Use `useAuth()` from `App.tsx` for the current user. Do not invent a second auth store.
+- API calls must send `credentials: "same-origin"` so the session cookie is included (already set in `queryClient.ts`).
+
+### UI & styling
+- Use existing shadcn/ui from `client/src/components/ui/` before building new ones.
+- **Do not hand-edit `components/ui/`** — regenerate via the shadcn CLI.
+- Tailwind utilities only. Compose classes with `cn()` from `@/lib/utils`.
+- Keep the rose/blush accent (`340 65% 47%`) on a warm white theme. Do not add new accent colors without approval.
+- Accessible defaults: keyboard-navigable, WCAG AA contrast, `aria-*` where Radix does not cover it.
+- No `alert()` / `confirm()` — use shadcn `Dialog` / `AlertDialog` and `useToast`.
+
+### Server / API
+- Register every route in `server/routes.ts` under `/api/*`.
+- Validate every request body with the matching Zod schema from `@shared/schema`. Reject with 400 on failure.
+- Use the exported `storage` singleton for all data access. Do not touch Maps / SQL from routes.
+- Never hardcode a port — `process.env.PORT` with a dev fallback. Never call `app.listen` outside `server/index.ts`.
+- Keep handlers thin: parse → validate → auth check → delegate to `storage` → respond. Multi-entity logic belongs in `storage.ts`.
+- Session middleware is wired in `server/index.ts` **after** storage init (so the `session` table exists for `connect-pg-simple`).
+
+### Auth (current behavior)
+- Login: `POST /api/auth/login` (username + PIN). Logout: `POST /api/auth/logout`. Session: `GET /api/auth/me`. PIN change: `POST /api/auth/change-pin`.
+- `requireAuth`: session must have `userId`.
+- `requireManagement`: session role must be `management`.
+- Default: GET routes → `requireAuth`; mutating routes → `requireManagement`, unless a BA must write (e.g. their own sales entry).
+- Hash PINs with `bcryptjs` before storing. Never return the PIN hash to the client.
+- BA / part-time users only see assigned POS locations. Brands are filtered by `brandPosAvailability` for the selected POS.
+
+### Storage
+- `IStorage` is the contract. Add new methods to the interface first, then implement on **both** `PgStorage` and `MemStorage`.
+- `storage` is `PgStorage` when `DATABASE_URL` is set, otherwise `MemStorage`.
+- Do not leak Mem-specific behavior (sync returns) into callers. Every storage method returns a `Promise`.
+
+### CSV / external data
+- Parse with `csv-parse/sync` using `columns: true, skip_empty_lines: true, relax_column_count: true, trim: true`.
+- Map external brand codes through `BRAND_CODE_MAP` in `server/routes.ts`. Do not scatter magic strings.
+- Sync endpoints must be idempotent: upsert on a stable natural key (e.g. `PromotionID`), never blind-insert.
+
+### Naming
+- Components: `PascalCase.tsx`. Hooks: `use-kebab-case.ts`. Utilities: `kebab-case.ts`.
+- One default-exported component per page file; co-locate small helpers.
+
+### Git / deploy
+- Do not commit `node_modules/`, `dist/`, `.env`, or `*.db-shm` / `*.db-wal`.
+- Railway sets `NODE_ENV=production`. Do not set `PORT` manually in Railway variables.
+- Client output: `dist/public/`. Server output: `dist/index.cjs`. Both from `npm run build`.
+- Run `npm run check` (tsc) before every commit — zero TypeScript errors is the merge bar.
+
+### Testing (when adding checks)
+- Any new API route needs at least one happy-path and one validation-failure check.
+
+---
+
+## Guardrails
+
+- Do not remove login or open `/` and `/dashboard/*` to the public.
+- Do not protect these server-to-server promotion endpoints unless asked: `POST /api/promotions/push` and the related no-auth promotion lookup/delete-by-source-id routes already in `routes.ts`.
+- Do not introduce a new state manager. TanStack Query + local state + existing `AuthContext` is enough.
+- Do not hardcode counter names, brand names, POS names, or promotion types — they are user-editable data in `storage`.
+- No global mutable singletons other than `storage` and `queryClient`.
+- Never mutate global state directly — go through setters, mutations, or `storage` methods.
+- Keep `counters` / `counterBrands` working if you touch them; prefer POS location APIs for new features.
+- After dependency changes: `npm install` and commit the updated `package-lock.json`.
