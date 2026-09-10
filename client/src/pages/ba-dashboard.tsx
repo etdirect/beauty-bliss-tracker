@@ -21,7 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown,
-  CalendarDays, SlidersHorizontal, Table as TableIcon, LayoutGrid, AlertCircle, RefreshCw,
+  CalendarDays, SlidersHorizontal, Table as TableIcon, LayoutGrid, AlertCircle, RefreshCw, Gift,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -86,6 +86,38 @@ function VsPrev({ pct, show }: { pct: number | null; show: boolean }) {
     >
       {up ? "▲ +" : "▼ "}{Math.abs(pct).toFixed(1)}%
       <span className="text-muted-foreground font-normal text-[9px] sm:text-[10px]">vs prev</span>
+    </div>
+  );
+}
+
+function fmtShortDate(iso: string) {
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}`;
+}
+
+function DeltaCell({ current, prior, show }: { current: number; prior: number; show: boolean }) {
+  if (!show) return <span className="text-muted-foreground">—</span>;
+  if (prior === 0 && current === 0) return <span className="text-muted-foreground">—</span>;
+  if (prior === 0) return <span className="text-xs text-muted-foreground">New</span>;
+  const delta = current - prior;
+  const pct = (delta / prior) * 100;
+  const up = delta >= 0;
+  return (
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <span
+        className={cn(
+          "inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold",
+          up
+            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+            : "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400",
+        )}
+      >
+        {up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
+      </span>
+      <span className="text-[10px] text-muted-foreground tabular-nums">
+        {up ? "+" : "−"}{fmtCurrency(Math.abs(delta))}
+      </span>
     </div>
   );
 }
@@ -1465,11 +1497,32 @@ export default function BADashboard() {
 
       <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
         <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-xs sm:text-sm font-semibold">Sales by Brand</CardTitle>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-xs sm:text-sm font-semibold">Sales by Brand</CardTitle>
+                {brandTableData.length > 0 && (
+                  <Badge variant="outline" className="text-[10px] font-normal py-0 hidden sm:inline-flex">
+                    {brandTableData.length} brand{brandTableData.length !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+              </div>
+              {compareEligible && (ppLabel || splmLabel) && (
+                <div className="hidden sm:flex items-center gap-1.5 mt-1.5 flex-wrap">
+                  {ppLabel && (
+                    <span className="text-[11px] text-muted-foreground rounded-md bg-muted/60 px-1.5 py-0.5">
+                      vs prev {ppLabel}
+                    </span>
+                  )}
+                  {splmLabel && (
+                    <span className="text-[11px] text-muted-foreground rounded-md bg-muted/60 px-1.5 py-0.5">
+                      vs last month {splmLabel}
+                    </span>
+                  )}
+                </div>
+              )}
               {compareEligible && ppLabel && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">vs PP: {ppLabel}</p>
+                <p className="sm:hidden text-[11px] text-muted-foreground mt-0.5">vs PP: {ppLabel}</p>
               )}
             </div>
             <div className="flex sm:hidden items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg text-xs">
@@ -1502,28 +1555,19 @@ export default function BADashboard() {
         </CardHeader>
         <CardContent className="p-2 sm:p-4 pt-3">
           {brandTableData.length === 0 ? (
-            <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">No sales data for this period.</p>
+            <div className="py-8 text-center" role="status">
+              <p className="text-sm font-medium text-foreground">No sales data for this period</p>
+              <p className="text-xs text-muted-foreground mt-1">Try another date range or counter filter.</p>
+            </div>
           ) : (() => {
-            const renderDelta = (current: number, prior: number) => {
-              if (!compareEligible) return <span className="text-muted-foreground">—</span>;
-              if (prior === 0 && current === 0) return <span className="text-muted-foreground">—</span>;
-              if (prior === 0) return <span className="text-muted-foreground text-xs">New</span>;
-              const delta = current - prior;
-              const pct = (delta / prior) * 100;
-              const isUp = delta >= 0;
-              return (
-                <div className={isUp ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>
-                  <div className="text-xs">{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
-                  <div className="text-[10px]">{isUp ? "+" : ""}{pct.toFixed(1)}%</div>
-                </div>
-              );
-            };
             const deltaPctText = (current: number, prior: number) => {
               if (prior === 0 && current === 0) return "—";
               if (prior === 0) return "New";
               const pct = ((current - prior) / prior) * 100;
               return `${pct >= 0 ? "▲ +" : "▼ "}${Math.abs(pct).toFixed(1)}%`;
             };
+            const totalPP = Object.values(ppBrandSales).reduce((s, v) => s + v, 0);
+            const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
             return (
               <>
                 <div className={cn("space-y-2", brandViewMode === "table" ? "hidden" : "sm:hidden")}>
@@ -1572,67 +1616,66 @@ export default function BADashboard() {
                   })}
                 </div>
                 <div className={cn("overflow-x-auto -mx-2 sm:mx-0", brandViewMode === "cards" ? "hidden sm:block" : "")}>
-                  <table className="w-full text-xs sm:text-sm min-w-[520px]">
+                  <table className="w-full text-sm min-w-[640px]">
                     <thead>
-                      <tr className="border-b text-left">
-                        <th className="pb-2 pl-2 sm:pl-0 font-medium sticky left-0 z-10 bg-card pr-2">Brand</th>
-                        <th className="pb-2 font-medium text-right w-[110px]">Sales</th>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="pb-2.5 pl-2 sm:pl-1 font-medium sticky left-0 z-10 bg-card pr-3">Brand</th>
+                        <th className="pb-2.5 font-medium text-right w-[128px]">Sales</th>
                         {compareEligible && (
                           <>
-                            <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px] align-bottom">
-                              <div>vs Prev Period</div>
-                              <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{ppLabel}</div>
-                            </th>
-                            <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px] align-bottom">
-                              <div>vs Last Month</div>
-                              <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{splmLabel}</div>
-                            </th>
+                            <th className="pb-2.5 font-medium text-right whitespace-nowrap w-[120px]">vs Prev</th>
+                            <th className="pb-2.5 font-medium text-right whitespace-nowrap w-[128px]">vs Last Month</th>
                           </>
                         )}
-                        <th className="pb-2 font-medium text-right w-[65px]">Units</th>
-                        <th className="pb-2 font-medium text-right w-[85px]">ATV</th>
-                        <th className="pb-2 pr-2 sm:pr-0 font-medium text-right w-[55px]">UPT</th>
+                        <th className="pb-2.5 font-medium text-right w-[72px]">Units</th>
+                        <th className="pb-2.5 font-medium text-right w-[96px]">ATV</th>
+                        <th className="pb-2.5 pr-2 sm:pr-1 font-medium text-right w-[56px]">UPT</th>
                       </tr>
                     </thead>
                     <tbody>
                       {brandTableData.map((row) => {
                         const ppVal = ppBrandSales[row.name] ?? 0;
                         const splmVal = splmBrandSales[row.name] ?? 0;
+                        const share = totalSales > 0 ? (row.sales / totalSales) * 100 : 0;
                         return (
                           <tr key={row.name} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                            <td className="py-2 pl-2 sm:pl-0 sticky left-0 z-10 bg-card pr-2">{row.name}</td>
-                            <td className="py-2 text-right font-medium w-[110px] tabular-nums">{fmtCurrency(row.sales)}</td>
+                            <td className="py-2.5 pl-2 sm:pl-1 sticky left-0 z-10 bg-card pr-3">
+                              <div className="min-w-[160px] max-w-[280px]">
+                                <div className="font-medium text-foreground truncate">{row.name}</div>
+                                <div className="hidden md:flex items-center gap-1.5 mt-1">
+                                  <div className="h-1.5 flex-1 bg-muted rounded-full overflow-hidden" aria-hidden>
+                                    <div className="h-full bg-primary/70 rounded-full" style={{ width: `${Math.min(100, share)}%` }} />
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground w-8 text-right tabular-nums">{share.toFixed(0)}%</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 text-right font-semibold tabular-nums w-[128px]">{fmtCurrency(row.sales)}</td>
                             {compareEligible && (
                               <>
-                                <td className="py-2 text-right w-[130px] tabular-nums">{renderDelta(row.sales, ppVal)}</td>
-                                <td className="py-2 text-right w-[140px] tabular-nums">{renderDelta(row.sales, splmVal)}</td>
+                                <td className="py-2.5 text-right w-[120px]"><DeltaCell current={row.sales} prior={ppVal} show /></td>
+                                <td className="py-2.5 text-right w-[128px]"><DeltaCell current={row.sales} prior={splmVal} show /></td>
                               </>
                             )}
-                            <td className="py-2 text-right w-[65px] tabular-nums">{row.units.toLocaleString()}</td>
-                            <td className="py-2 text-right w-[85px] tabular-nums">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
-                            <td className="py-2 pr-2 sm:pr-0 text-right w-[55px] tabular-nums">{fmtRatio(row.units, row.orders)}</td>
+                            <td className="py-2.5 text-right tabular-nums text-muted-foreground w-[72px]">{row.units.toLocaleString()}</td>
+                            <td className="py-2.5 text-right tabular-nums text-muted-foreground w-[96px]">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
+                            <td className="py-2.5 pr-2 sm:pr-1 text-right tabular-nums text-muted-foreground w-[56px]">{fmtRatio(row.units, row.orders)}</td>
                           </tr>
                         );
                       })}
-                      {(() => {
-                        const totalPP = Object.values(ppBrandSales).reduce((s, v) => s + v, 0);
-                        const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
-                        return (
-                          <tr className="border-t-2 font-semibold bg-muted/40">
-                            <td className="py-2 pl-2 sm:pl-0 sticky left-0 z-10 bg-card pr-2">Total</td>
-                            <td className="py-2 text-right w-[110px] tabular-nums">{fmtCurrency(totalSales)}</td>
-                            {compareEligible && (
-                              <>
-                                <td className="py-2 text-right w-[130px] tabular-nums">{renderDelta(totalSales, totalPP)}</td>
-                                <td className="py-2 text-right w-[140px] tabular-nums">{renderDelta(totalSales, totalSPLM)}</td>
-                              </>
-                            )}
-                            <td className="py-2 text-right w-[65px] tabular-nums">{totalUnits.toLocaleString()}</td>
-                            <td className="py-2 text-right w-[85px] tabular-nums">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
-                            <td className="py-2 pr-2 sm:pr-0 text-right w-[55px] tabular-nums">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
-                          </tr>
-                        );
-                      })()}
+                      <tr className="border-t-2 font-semibold bg-muted/40">
+                        <td className="py-2.5 pl-2 sm:pl-1 sticky left-0 z-10 bg-muted/40 pr-3">Total</td>
+                        <td className="py-2.5 text-right tabular-nums w-[128px]">{fmtCurrency(totalSales)}</td>
+                        {compareEligible && (
+                          <>
+                            <td className="py-2.5 text-right w-[120px]"><DeltaCell current={totalSales} prior={totalPP} show /></td>
+                            <td className="py-2.5 text-right w-[128px]"><DeltaCell current={totalSales} prior={totalSPLM} show /></td>
+                          </>
+                        )}
+                        <td className="py-2.5 text-right tabular-nums w-[72px]">{totalUnits.toLocaleString()}</td>
+                        <td className="py-2.5 text-right tabular-nums w-[96px]">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
+                        <td className="py-2.5 pr-2 sm:pr-1 text-right tabular-nums w-[56px]">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
@@ -1644,11 +1687,24 @@ export default function BADashboard() {
 
       <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
         <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
-          <CardTitle className="text-xs sm:text-sm font-semibold">Promotion Performance</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <CardTitle className="text-xs sm:text-sm font-semibold">Promotion Performance</CardTitle>
+              {promoTableData.length > 0 && (
+                <Badge variant="outline" className="text-[10px] font-normal py-0 hidden sm:inline-flex">
+                  {promoTableData.length} active
+                </Badge>
+              )}
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-2 sm:p-4 pt-3">
           {promoTableData.length === 0 ? (
-            <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">No active promotions for this period.</p>
+            <div className="py-8 text-center" role="status">
+              <Gift className="w-6 h-6 mx-auto text-muted-foreground/70 mb-2" />
+              <p className="text-sm font-medium text-foreground">No active promotions</p>
+              <p className="text-xs text-muted-foreground mt-1">Nothing overlaps this date range for your counters.</p>
+            </div>
           ) : (
             <>
               <div className="space-y-2 sm:hidden">
@@ -1663,29 +1719,43 @@ export default function BADashboard() {
                         {row.trackable ? `${row.gwpGiven} GWP` : "—"}
                       </div>
                     </div>
-                    <div className="text-[11px] text-muted-foreground">{row.startDate} – {row.endDate}</div>
+                    <div className="text-[11px] text-muted-foreground">{fmtShortDate(row.startDate)} – {fmtShortDate(row.endDate)}</div>
                   </div>
                 ))}
               </div>
               <div className="hidden sm:block overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm min-w-[620px]">
                   <thead>
-                    <tr className="border-b text-left">
-                      <th className="pb-2 font-medium sticky left-0 z-10 bg-card pr-2">Promotion</th>
-                      <th className="pb-2 font-medium">Brand</th>
-                      <th className="pb-2 font-medium">Type</th>
-                      <th className="pb-2 font-medium">Period</th>
-                      <th className="pb-2 font-medium text-right">GWP Given</th>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2.5 pl-1 font-medium">Promotion</th>
+                      <th className="pb-2.5 font-medium">Brand</th>
+                      <th className="pb-2.5 font-medium">Type</th>
+                      <th className="pb-2.5 font-medium">Period</th>
+                      <th className="pb-2.5 pr-1 font-medium text-right">GWP Given</th>
                     </tr>
                   </thead>
                   <tbody>
                     {promoTableData.map((row) => (
-                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30">
-                        <td className="py-2 sticky left-0 z-10 bg-card pr-2">{row.name}</td>
-                        <td className="py-2">{row.brand}</td>
-                        <td className="py-2">{row.type}</td>
-                        <td className="py-2 whitespace-nowrap">{row.startDate} – {row.endDate}</td>
-                        <td className="py-2 text-right tabular-nums">{row.trackable ? row.gwpGiven : "—"}</td>
+                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                        <td className="py-2.5 pl-1 pr-3 font-medium max-w-[280px]">
+                          <span className="block truncate">{row.name}</span>
+                        </td>
+                        <td className="py-2.5 text-muted-foreground whitespace-nowrap">{row.brand}</td>
+                        <td className="py-2.5">
+                          <Badge variant="outline" className="text-[10px] font-normal py-0">
+                            {row.type}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 text-muted-foreground whitespace-nowrap tabular-nums">
+                          {fmtShortDate(row.startDate)} – {fmtShortDate(row.endDate)}
+                        </td>
+                        <td className="py-2.5 pr-1 text-right">
+                          {row.trackable ? (
+                            <span className="font-semibold tabular-nums">{row.gwpGiven.toLocaleString()}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Not tracked</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
