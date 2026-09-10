@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -16,7 +15,13 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown, CalendarDays,
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import {
+  DollarSign, ShoppingCart, TrendingUp, Package, ArrowLeft, Filter, ChevronDown,
+  CalendarDays, SlidersHorizontal, Table as TableIcon, LayoutGrid, AlertCircle, RefreshCw,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -35,10 +40,15 @@ function fmtRatio(num: number, denom: number, decimals = 1): string {
   return denom === 0 ? "—" : (num / denom).toFixed(decimals);
 }
 
-function todayStr() { return new Date().toISOString().split("T")[0]; }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
-function yearStartStr() {
-  return `2026-01-01`;
+function daysAgoStr(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // 1st of the current month in local time (e.g. '2026-05-01').
@@ -56,10 +66,28 @@ function dateRange(start: string, end: string): string[] {
   const d = new Date(start + "T00:00:00");
   const last = new Date(end + "T00:00:00");
   while (d <= last) {
-    dates.push(d.toISOString().split("T")[0]);
+    dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     d.setDate(d.getDate() + 1);
   }
   return dates;
+}
+
+type QuickPreset = "7d" | "14d" | "30d" | "mtd" | "custom";
+
+function VsPrev({ pct, show }: { pct: number | null; show: boolean }) {
+  if (!show || pct === null) return null;
+  const up = pct >= 0;
+  return (
+    <div
+      className={cn(
+        "text-[10px] sm:text-[11px] font-semibold mt-0.5 flex items-center gap-0.5 truncate",
+        up ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+      )}
+    >
+      {up ? "▲ +" : "▼ "}{Math.abs(pct).toFixed(1)}%
+      <span className="text-muted-foreground font-normal text-[9px] sm:text-[10px]">vs prev</span>
+    </div>
+  );
 }
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -95,12 +123,35 @@ export default function BADashboard() {
   // mental model (“how am I doing this month?”). Users can still widen it.
   const [drStart, setDrStart] = useState(monthStartStr);
   const [drEnd, setDrEnd] = useState(todayStr);
+  const [quickPreset, setQuickPreset] = useState<QuickPreset>("mtd");
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const [brandViewMode, setBrandViewMode] = useState<"table" | "cards">("cards");
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
   const [monthlyMonth, setMonthlyMonth] = useState("all");
   const [selectedYears, setSelectedYears] = useState<Set<string>>(new Set([String(currentYear)]));
 
   // ── BA counter filter ────────────────────────────
   const [selectedCounters, setSelectedCounters] = useState<Set<string> | null>(null);
+
+  function handleSelectPreset(preset: Exclude<QuickPreset, "custom">) {
+    setTimeTab("daterange");
+    setQuickPreset(preset);
+    const end = todayStr();
+    let start = monthStartStr();
+    if (preset === "7d") start = daysAgoStr(6);
+    else if (preset === "14d") start = daysAgoStr(13);
+    else if (preset === "30d") start = daysAgoStr(29);
+    else if (preset === "mtd") {
+      start = monthStartStr();
+      if (start > end) {
+        setDrStart(start);
+        setDrEnd(start);
+        return;
+      }
+    }
+    setDrStart(start);
+    setDrEnd(end);
+  }
 
   // Gross / Net toggle — defaults to 'net' per the business rule. Hidden
   // entirely when there are no deductions in the filtered window so BAs
@@ -139,11 +190,16 @@ export default function BADashboard() {
   }, [isRestricted, timeTab, drStart, drEnd, monthlyYear, selectedYears, currentYear, now]);
 
   // ── Queries ──────────────────────────────────────
-  const { data: sales = [] } = useQuery<SalesEntry[]>({
+  const {
+    data: sales = [],
+    isLoading: isLoadingSales,
+    isError: isErrorSales,
+    refetch: refetchSales,
+  } = useQuery<SalesEntry[]>({
     queryKey: ["/api/sales", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
 
-  const { data: allBrands = [] } = useQuery<Brand[]>({
+  const { data: allBrands = [], isLoading: isLoadingBrands } = useQuery<Brand[]>({
     queryKey: ["/api/brands"],
   });
 
@@ -157,9 +213,11 @@ export default function BADashboard() {
 
   // Promo deductions over the same date window as sales — used to show BAs
   // exactly how much was deducted per day from coupon redemptions.
-  const { data: allDeductions = [] } = useQuery<PromotionDeduction[]>({
+  const { data: allDeductions = [], isLoading: isLoadingDeductions } = useQuery<PromotionDeduction[]>({
     queryKey: ["/api/promotion-deductions", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
+
+  const isDataLoading = isLoadingSales || isLoadingDeductions || isLoadingBrands;
 
   // ── Derive available years from sales data ───────
   const availableYears = useMemo(() => {
@@ -561,6 +619,38 @@ export default function BADashboard() {
     [compareEligible, splmSalesRaw, splmDedRaw, activeCounterIds, salesView, brandMap],
   );
 
+  const ppKpi = useMemo(() => {
+    if (!compareEligible) return { sales: 0, orders: 0, units: 0 };
+    const scoped = ppSalesRaw.filter((s) => activeCounterIds.has(s.counterId));
+    let entries: { amount: number; orders: number; units: number }[];
+    if (salesView === "gross") {
+      entries = scoped.map((e) => ({ amount: e.amount, orders: e.orders ?? 0, units: e.units ?? 0 }));
+    } else {
+      const ded = ppDedRaw.filter((d) => activeCounterIds.has(d.counterId));
+      const alloc = allocateDeductions(scoped, ded);
+      entries = alloc.entries.map((e) => ({
+        amount: e.netAmount ?? e.amount,
+        orders: (e as { orders?: number }).orders ?? 0,
+        units: (e as { units?: number }).units ?? 0,
+      }));
+    }
+    return {
+      sales: entries.reduce((s, e) => s + e.amount, 0),
+      orders: entries.reduce((s, e) => s + e.orders, 0),
+      units: entries.reduce((s, e) => s + e.units, 0),
+    };
+  }, [compareEligible, ppSalesRaw, ppDedRaw, activeCounterIds, salesView]);
+
+  const atv = totalOrders > 0 ? totalSales / totalOrders : null;
+  const upt = totalOrders > 0 ? totalUnits / totalOrders : null;
+  const ppAtv = ppKpi.orders > 0 ? ppKpi.sales / ppKpi.orders : null;
+  const ppUpt = ppKpi.orders > 0 ? ppKpi.units / ppKpi.orders : null;
+  const salesDeltaPct = ppKpi.sales > 0 ? ((totalSales - ppKpi.sales) / ppKpi.sales) * 100 : null;
+  const ordersDeltaPct = ppKpi.orders > 0 ? ((totalOrders - ppKpi.orders) / ppKpi.orders) * 100 : null;
+  const atvDeltaPct = atv !== null && ppAtv !== null && ppAtv > 0 ? ((atv - ppAtv) / ppAtv) * 100 : null;
+  const uptDeltaPct = upt !== null && ppUpt !== null && ppUpt > 0 ? ((upt - ppUpt) / ppUpt) * 100 : null;
+  const showKpiDelta = compareEligible && !isDataLoading;
+
   // ── Promotion performance table ────────────────
   const { promoStart, promoEnd } = useMemo(() => {
     if (isRestricted) {
@@ -707,49 +797,80 @@ export default function BADashboard() {
       .sort((a, b) => b.deduction - a.deduction);
   }, [allocation, brandNameMap, totalDeductionAmount]);
 
+  const counterFilterLabel = selectedCounters === null
+    ? "All"
+    : String(selectedCounters.size);
+
   // ── No POS assigned guard ──────────────────────
   if (posIds.length === 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Card className="max-w-md">
+      <div className="flex items-center justify-center min-h-[60vh] p-4">
+        <Card className="max-w-md rounded-xl border border-border/80 shadow-2xs">
           <CardHeader>
-            <CardTitle>No POS Assigned</CardTitle>
+            <CardTitle className="text-base">No POS Assigned</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-muted-foreground">
-              You don't have any POS locations assigned yet. Please contact your manager to get access.
+            <p className="text-sm text-muted-foreground">
+              You don&apos;t have any POS locations assigned yet. Please contact your manager to get access.
             </p>
+            <Link href="/">
+              <Button variant="outline" size="sm" className="mt-4 gap-1.5">
+                <ArrowLeft className="w-4 h-4" />
+                Back to sales entry
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  const chartTitle = isRestricted
+    ? "Daily Sales"
+    : timeTab === "yearly" && selectedYears.size > 1
+      ? "Sales Trend (Year Overlay)"
+      : timeTab === "monthly" && monthlyMonth === "all"
+        ? "Monthly Sales"
+        : "Daily Sales";
+
   // ── Render ─────────────────────────────────────
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-5 md:p-6 space-y-3.5 sm:space-y-5 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Link href="/">
-              <span className="text-muted-foreground hover:text-foreground cursor-pointer"><ArrowLeft className="w-5 h-5" /></span>
-            </Link>
-            <h1 className="text-xl md:text-2xl font-bold">My Dashboard</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {assignedPos.map((p: any) => p.storeName ?? p.name).join(", ")}
+      <div className="flex items-start gap-2">
+        <Link href="/" aria-label="Back to sales entry">
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 mt-0.5 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+        </Link>
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">My Dashboard</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground truncate">
+            {assignedPos.map((p) => p.storeName).join(", ")}
           </p>
         </div>
       </div>
 
+      {isErrorSales && (
+        <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive flex items-center justify-between gap-3 text-xs" role="alert">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>Failed to load sales data. Check your network connection.</span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => refetchSales()} className="h-7 text-xs gap-1 shrink-0">
+            <RefreshCw className="w-3 h-3" /> Retry
+          </Button>
+        </div>
+      )}
+
       {/* ── Part-Time Filter Bar ─────────────────── */}
       {isRestricted && (
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="flex flex-wrap items-end gap-4">
+        <Card className="rounded-xl border border-border/80 shadow-2xs">
+          <CardContent className="p-3 sm:p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Month</span>
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger className="w-[200px]">
+                <SelectTrigger className="w-[200px] h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -759,171 +880,275 @@ export default function BADashboard() {
                 </SelectContent>
               </Select>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Showing only your submitted sales entries.
+            </p>
           </CardContent>
         </Card>
       )}
 
       {/* ── BA Filter Bar ────────────────────────── */}
       {!isRestricted && (
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="flex flex-wrap items-end gap-4">
-              {/* Time period tabs */}
-              <div className="flex rounded-md border">
-                {(["daterange", "monthly", "yearly"] as const).map((tab) => (
-                  <Button
-                    key={tab}
-                    variant={timeTab === tab ? "default" : "ghost"}
-                    size="sm"
-                    className="rounded-none first:rounded-l-md last:rounded-r-md"
-                    onClick={() => setTimeTab(tab)}
+        <Card className="rounded-xl border border-border/80 shadow-2xs">
+          <CardContent className="p-3 sm:p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="inline-flex rounded-lg border bg-muted/60 p-0.5" role="group" aria-label="Time period">
+                {([["daterange", "Date Range"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setTimeTab(key)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                      timeTab === key
+                        ? "bg-background text-foreground shadow-2xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
                   >
-                    {tab === "daterange" ? "Date Range" : tab === "monthly" ? "Monthly" : "Yearly"}
-                  </Button>
+                    {label}
+                  </button>
                 ))}
               </div>
 
-              {/* Date Range controls */}
-              {timeTab === "daterange" && (
-                <div className="flex items-end gap-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">From</Label>
-                    <Input type="date" value={drStart} onChange={(e) => setDrStart(e.target.value)} className="w-[130px] md:w-[150px]" />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">To</Label>
-                    <Input type="date" value={drEnd} onChange={(e) => setDrEnd(e.target.value)} className="w-[130px] md:w-[150px]" />
-                  </div>
-                </div>
-              )}
-
-              {/* Monthly controls */}
-              {timeTab === "monthly" && (
-                <div className="flex items-end gap-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Year</Label>
-                    <Select value={monthlyYear} onValueChange={setMonthlyYear}>
-                      <SelectTrigger className="w-[100px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {yearOptions.map((y) => (
-                          <SelectItem key={y} value={y}>{y}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Month</Label>
-                    <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
-                      <SelectTrigger className="w-[120px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Months</SelectItem>
-                        {MONTH_LABELS.map((label, i) => (
-                          <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>{label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-
-              {/* Yearly controls */}
-              {timeTab === "yearly" && (
-                <div className="flex flex-wrap gap-3">
-                  {availableYears.map((yr) => (
-                    <label key={yr} className="flex items-center gap-1.5 text-sm">
-                      <Checkbox
-                        checked={selectedYears.has(yr)}
-                        onCheckedChange={(checked) => {
-                          const next = new Set(selectedYears);
-                          if (checked) next.add(yr); else next.delete(yr);
-                          if (next.size > 0) setSelectedYears(next);
-                        }}
-                      />
-                      {yr}
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              {/* Counter filter (assigned POS only) */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Filter className="h-3.5 w-3.5" />
-                    Counter
+              <div className="flex items-center gap-1.5 ml-auto">
+                <div className="sm:hidden">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMobileFilterOpen(true)}
+                    className="h-8 px-2.5 text-xs gap-1.5 relative"
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    Filters
                     {selectedCounters !== null && (
-                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{selectedCounters.size}</Badge>
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary absolute -top-0.5 -right-0.5" />
                     )}
-                    <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 max-h-[300px] overflow-auto" align="start">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between pb-2 border-b">
-                      <span className="text-sm font-medium">Counter</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => setSelectedCounters(null)}
-                      >
-                        Select All
-                      </Button>
+                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="hidden sm:inline-flex h-8 gap-1 text-xs">
+                      <Filter className="h-3 w-3" />
+                      Counters: {counterFilterLabel}
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 max-h-[300px] overflow-auto" align="end">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between pb-2 border-b">
+                        <span className="text-sm font-medium">Counter</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs"
+                          onClick={() => setSelectedCounters(null)}
+                        >
+                          Select All
+                        </Button>
+                      </div>
+                      {assignedPos.map((pos) => {
+                        const checked = selectedCounters === null || selectedCounters.has(pos.id);
+                        return (
+                          <label key={pos.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(c) => {
+                                const base = selectedCounters ?? new Set(posIds);
+                                const next = new Set(base);
+                                if (c) next.add(pos.id); else next.delete(pos.id);
+                                if (next.size === posIds.length) setSelectedCounters(null);
+                                else setSelectedCounters(next);
+                              }}
+                            />
+                            {pos.storeName}
+                          </label>
+                        );
+                      })}
                     </div>
-                    {assignedPos.map((pos: any) => {
-                      const checked = selectedCounters === null || selectedCounters.has(pos.id);
-                      return (
-                        <label key={pos.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(c) => {
-                              const base = selectedCounters ?? new Set(posIds);
-                              const next = new Set(base);
-                              if (c) next.add(pos.id); else next.delete(pos.id);
-                              if (next.size === posIds.length) setSelectedCounters(null);
-                              else setSelectedCounters(next);
-                            }}
-                          />
-                          {pos.storeName ?? pos.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
+
+            {timeTab === "daterange" && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1 border-t border-border/50">
+                <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                  {(["7d", "14d", "30d", "mtd"] as const).map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => handleSelectPreset(preset)}
+                      className={cn(
+                        "px-2.5 py-1 text-xs rounded-md font-medium shrink-0 transition-colors border",
+                        quickPreset === preset
+                          ? "bg-primary text-primary-foreground border-primary font-semibold shadow-2xs"
+                          : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60",
+                      )}
+                    >
+                      {preset === "mtd" ? "This Month" : `Last ${preset.slice(0, -1)}D`}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setQuickPreset("custom")}
+                    className={cn(
+                      "px-2.5 py-1 text-xs rounded-md font-medium shrink-0 transition-colors border",
+                      quickPreset === "custom"
+                        ? "bg-primary text-primary-foreground border-primary font-semibold shadow-2xs"
+                        : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60",
+                    )}
+                  >
+                    Custom
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                    <span className="text-[11px] text-muted-foreground">From</span>
+                    <Input
+                      type="date"
+                      value={drStart}
+                      onChange={(e) => {
+                        setDrStart(e.target.value);
+                        setQuickPreset("custom");
+                      }}
+                      className="h-8 text-xs w-full sm:w-[135px]"
+                      aria-label="Start date"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                    <span className="text-[11px] text-muted-foreground">To</span>
+                    <Input
+                      type="date"
+                      value={drEnd}
+                      onChange={(e) => {
+                        setDrEnd(e.target.value);
+                        setQuickPreset("custom");
+                      }}
+                      className="h-8 text-xs w-full sm:w-[135px]"
+                      aria-label="End date"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {timeTab === "monthly" && (
+              <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Year</span>
+                  <Select value={monthlyYear} onValueChange={setMonthlyYear}>
+                    <SelectTrigger className="w-[95px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {yearOptions.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Month</span>
+                  <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
+                    <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Months</SelectItem>
+                      {MONTH_LABELS.map((label, i) => (
+                        <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {timeTab === "yearly" && (
+              <div className="flex items-center gap-3 flex-wrap pt-1 border-t border-border/50">
+                {availableYears.map((yr) => (
+                  <label key={yr} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <Checkbox
+                      checked={selectedYears.has(yr)}
+                      onCheckedChange={(checked) => {
+                        const next = new Set(selectedYears);
+                        if (checked) next.add(yr); else next.delete(yr);
+                        if (next.size > 0) setSelectedYears(next);
+                      }}
+                    />
+                    {yr}
+                  </label>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {isRestricted && (
-        <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-          Showing only your submitted sales entries.
-        </div>
-      )}
+      <Sheet open={mobileFilterOpen} onOpenChange={setMobileFilterOpen}>
+        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl p-4 space-y-4">
+          <SheetHeader className="text-left border-b pb-2">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-sm font-bold">Filter Dashboard</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedCounters(null)}
+                className="h-7 text-xs text-primary"
+              >
+                Reset
+              </Button>
+            </div>
+            <SheetDescription className="text-xs">
+              Choose which of your assigned counters to include.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold text-foreground">POS Locations</span>
+              <button type="button" className="text-xs text-primary underline" onClick={() => setSelectedCounters(null)}>All</button>
+            </div>
+            <div className="space-y-1">
+              {assignedPos.map((pos) => {
+                const checked = selectedCounters === null || selectedCounters.has(pos.id);
+                return (
+                  <label key={pos.id} className="flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 text-xs cursor-pointer">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(c) => {
+                        const base = selectedCounters ?? new Set(posIds);
+                        const next = new Set(base);
+                        if (c) next.add(pos.id); else next.delete(pos.id);
+                        if (next.size === posIds.length) setSelectedCounters(null);
+                        else setSelectedCounters(next);
+                      }}
+                    />
+                    <span className="truncate">{pos.storeName}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <Button className="w-full h-9 text-xs" onClick={() => setMobileFilterOpen(false)}>
+            Apply Filters
+          </Button>
+        </SheetContent>
+      </Sheet>
 
-      {/* Gross / Net toggle — only shown when the period has deductions to apply. */}
       {hasAnyDeduction && (
-        <div className="flex items-center justify-between gap-3 px-1">
-          <div className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between gap-2 px-1">
+          <div className="text-[11px] sm:text-xs text-muted-foreground truncate">
             Showing <span className="font-semibold text-foreground">{salesView === "net" ? "Net" : "Gross"}</span> sales
             {salesView === "net" && (
-              <> · {fmtCurrency(totalDeduction)} promo deductions
+              <span> · {fmtCurrency(totalDeduction)} promo deductions
                 {unallocatedDeduction > 0 && (
                   <span className="text-amber-600 dark:text-amber-400"> ({fmtCurrency(unallocatedDeduction)} unallocated)</span>
                 )}
-              </>
+              </span>
             )}
           </div>
-          <div className="inline-flex rounded-md border bg-background p-0.5" role="group" data-testid="ba-sales-view-toggle">
+          <div className="inline-flex rounded-lg border bg-muted/60 p-0.5 shrink-0" role="group" data-testid="ba-sales-view-toggle" aria-label="Sales view">
             <button
               type="button"
               onClick={() => setSalesView("net")}
-              className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "net" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className={cn(
+                "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                salesView === "net" ? "bg-primary text-primary-foreground font-semibold shadow-2xs" : "text-muted-foreground hover:text-foreground",
+              )}
               data-testid="ba-toggle-view-net"
             >
               Net
@@ -931,7 +1156,10 @@ export default function BADashboard() {
             <button
               type="button"
               onClick={() => setSalesView("gross")}
-              className={`px-2.5 py-1 text-xs font-medium rounded ${salesView === "gross" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className={cn(
+                "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                salesView === "gross" ? "bg-primary text-primary-foreground font-semibold shadow-2xs" : "text-muted-foreground hover:text-foreground",
+              )}
               data-testid="ba-toggle-view-gross"
             >
               Gross
@@ -940,145 +1168,180 @@ export default function BADashboard() {
         </div>
       )}
 
-      {/* ── Monthly Projection (BA only; full BAs, daterange within one month) ── */}
-      {projection && (
-        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <CalendarDays className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
-                Monthly Projection — {MONTH_LABELS[projection.month - 1]} {projection.year}
-              </span>
-              <span className="text-xs text-muted-foreground ml-1">
-                (based on {projection.daysElapsed} of {projection.monthDays} days)
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {/* Current period total sales — same number as the Total
-                  Sales KPI below, includes My + Part-time + imports. */}
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  {drStart.slice(8)} – {drEnd.slice(8)} {MONTH_LABELS[projection.month - 1]}
-                </p>
-                <p className="text-lg font-bold">{fmtCurrency(totalSales)}</p>
-              </div>
-              {/* Average dollars earned per day in the selected window. */}
-              <div>
-                <p className="text-xs text-muted-foreground">Daily Run Rate</p>
-                <p className="text-lg font-bold">{fmtCurrency(Math.round(projection.dailyRate))}</p>
-              </div>
-              {/* Run rate extrapolated across the whole month. */}
-              <div>
-                <p className="text-xs text-muted-foreground">Projected Full Month</p>
-                <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{fmtCurrency(projection.projected)}</p>
-              </div>
-              {/* Comparison vs same calendar month one year back's actual. */}
-              <div>
-                <p className="text-xs text-muted-foreground">vs {lmRange.label} Actual</p>
-                {projection.vsLM !== null ? (
-                  <div className={projection.vsLM >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-                    <p className="text-lg font-bold">
-                      {projection.vsLM >= 0 ? "▲" : "▼"} {fmtCurrency(Math.abs(projection.vsLM))}
-                    </p>
-                    <p className="text-xs font-medium">
-                      {projection.vsLMPct! >= 0 ? "+" : ""}{projection.vsLMPct!.toFixed(1)}% vs {fmtCurrency(projection.lmTotalSales)}
-                    </p>
+      {projection && (() => {
+        const pctOfMonth = Math.min(100, Math.max(0, Math.round((projection.daysElapsed / projection.monthDays) * 100)));
+        return (
+          <Card className="rounded-xl border border-blue-200 dark:border-blue-900 bg-gradient-to-br from-blue-50/70 via-blue-50/30 to-background dark:from-blue-950/30 dark:via-blue-950/10 dark:to-background overflow-hidden shadow-2xs">
+            <CardContent className="p-3.5 sm:p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-blue-600/10 dark:bg-blue-400/10 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                    <CalendarDays className="w-3.5 h-3.5" />
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No {lmRange.label} data</p>
-                )}
+                  <span className="font-semibold text-xs sm:text-sm text-blue-900 dark:text-blue-200">
+                    Monthly Projection — {MONTH_LABELS[projection.month - 1]} {projection.year}
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <span>Day {projection.daysElapsed} of {projection.monthDays}</span>
+                  <span className="font-semibold text-blue-600 dark:text-blue-400">({pctOfMonth}%)</span>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              <div className="w-full bg-blue-200/50 dark:bg-blue-900/40 h-1.5 rounded-full overflow-hidden mb-3" role="progressbar" aria-valuenow={pctOfMonth} aria-valuemin={0} aria-valuemax={100} aria-label="Month elapsed">
+                <div className="bg-blue-600 dark:bg-blue-400 h-full rounded-full transition-all duration-500" style={{ width: `${pctOfMonth}%` }} />
+              </div>
+              <div className="bg-background/95 dark:bg-card/95 rounded-xl p-3 sm:p-4 border border-blue-100 dark:border-blue-900/50 mb-3 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wider block">
+                      Projected Full Month
+                    </span>
+                    <div className="text-xl sm:text-3xl font-extrabold text-blue-600 dark:text-blue-400 tracking-tight">
+                      {fmtCurrency(projection.projected)}
+                    </div>
+                  </div>
+                  {projection.vsLM !== null && (
+                    <div className={cn(
+                      "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold w-fit",
+                      projection.vsLM >= 0
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800"
+                        : "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800",
+                    )}>
+                      <span>{projection.vsLM >= 0 ? "▲ +" : "▼ "}{Math.abs(projection.vsLMPct ?? 0).toFixed(1)}%</span>
+                      <span className="font-normal opacity-85 text-[11px]">({fmtCurrency(Math.abs(projection.vsLM))} vs {lmRange.label})</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 pt-1 text-center sm:text-left">
+                <div className="p-1">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">
+                    {drStart.slice(8)}–{drEnd.slice(8)} {MONTH_LABELS[projection.month - 1]}
+                  </p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">{fmtCurrency(totalSales)}</p>
+                </div>
+                <div className="p-1 border-x border-blue-200/50 dark:border-blue-900/40">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">Daily Run Rate</p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">{fmtCurrency(Math.round(projection.dailyRate))}</p>
+                </div>
+                <div className="p-1">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{lmRange.label} Total</p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">
+                    {projection.lmTotalSales > 0 ? fmtCurrency(projection.lmTotalSales) : "—"}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3.5">
+        <Card className="p-3 sm:p-4 rounded-xl border border-border/80 shadow-2xs">
+          <div className="flex items-center justify-between text-muted-foreground pb-0.5">
+            <span className="text-xs sm:text-sm font-medium flex items-center gap-1 text-foreground/80">
               Total Sales
               {hasAnyDeduction && (
-                <Badge variant="outline" className="ml-1.5 text-[10px] font-normal">
+                <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">
                   {salesView === "net" ? "Net" : "Gross"}
                 </Badge>
               )}
-            </CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{fmtCurrency(totalSales)}</div>
+            </span>
+            <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
+              <DollarSign className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            </div>
+          </div>
+          <div className="mt-1">
+            {isDataLoading ? <Skeleton className="h-6 sm:h-7 w-24 sm:w-28 my-1" /> : (
+              <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight text-foreground truncate">{fmtCurrency(totalSales)}</div>
+            )}
             {hasAnyDeduction && salesView === "net" && (
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                − {fmtCurrency(totalDeduction)} promo {totalDeduction === 1 ? "deduction" : "deductions"}
+              <div className="text-[10px] text-muted-foreground truncate">− {fmtCurrency(totalDeduction)} promo ded.</div>
+            )}
+            <VsPrev pct={salesDeltaPct} show={showKpiDelta && ppKpi.sales > 0} />
+          </div>
+        </Card>
+        <Card className="p-3 sm:p-4 rounded-xl border border-border/80 shadow-2xs">
+          <div className="flex items-center justify-between text-muted-foreground pb-0.5">
+            <span className="text-xs sm:text-sm font-medium text-foreground/80">Total Orders</span>
+            <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+              <ShoppingCart className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            </div>
+          </div>
+          <div className="mt-1">
+            {isDataLoading ? <Skeleton className="h-6 sm:h-7 w-16 sm:w-20 my-1" /> : (
+              <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight text-foreground truncate">{totalOrders.toLocaleString()}</div>
+            )}
+            <VsPrev pct={ordersDeltaPct} show={showKpiDelta && ppKpi.orders > 0} />
+          </div>
+        </Card>
+        <Card className="p-3 sm:p-4 rounded-xl border border-border/80 shadow-2xs">
+          <div className="flex items-center justify-between text-muted-foreground pb-0.5">
+            <span className="text-xs sm:text-sm font-medium text-foreground/80">ATV</span>
+            <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-amber-500/10 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+              <TrendingUp className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            </div>
+          </div>
+          <div className="mt-1">
+            {isDataLoading ? <Skeleton className="h-6 sm:h-7 w-20 sm:w-24 my-1" /> : (
+              <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight text-foreground truncate">
+                {atv !== null ? fmtCurrency(Math.round(atv)) : "—"}
               </div>
             )}
-          </CardContent>
+            <VsPrev pct={atvDeltaPct} show={showKpiDelta} />
+          </div>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
-            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalOrders.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ATV</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">UPT</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</div>
-          </CardContent>
+        <Card className="p-3 sm:p-4 rounded-xl border border-border/80 shadow-2xs">
+          <div className="flex items-center justify-between text-muted-foreground pb-0.5">
+            <span className="text-xs sm:text-sm font-medium text-foreground/80">UPT</span>
+            <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-md bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+              <Package className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+            </div>
+          </div>
+          <div className="mt-1">
+            {isDataLoading ? <Skeleton className="h-6 sm:h-7 w-14 sm:w-16 my-1" /> : (
+              <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight text-foreground truncate">
+                {upt !== null ? upt.toFixed(1) : "—"}
+              </div>
+            )}
+            <VsPrev pct={uptDeltaPct} show={showKpiDelta} />
+          </div>
         </Card>
       </div>
 
-      {/* Sales Attribution (BA only) */}
       {attribution && (attribution.othersSales > 0 || attribution.importedSales > 0) && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Sales Attribution</CardTitle>
+        <Card className="rounded-xl border border-border/80 shadow-2xs">
+          <CardHeader className="p-3 sm:p-4 pb-2">
+            <CardTitle className="text-xs sm:text-sm font-semibold">Sales Attribution</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-              <div className="space-y-0.5">
+          <CardContent className="p-3 sm:p-4 pt-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-sm">
+              <div className="p-2 rounded-lg bg-muted/40 space-y-0.5">
                 <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_COLORS[0] }} />
-                  <span className="text-muted-foreground">My Sales</span>
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS[0] }} />
+                  <span className="text-xs text-muted-foreground">My Sales</span>
                 </div>
-                <div className="font-semibold">{fmtCurrency(attribution.mySales)}</div>
-                <div className="text-xs text-muted-foreground">{attribution.myOrders} orders</div>
+                <div className="text-sm font-semibold truncate">{fmtCurrency(attribution.mySales)}</div>
+                <div className="text-[11px] text-muted-foreground">{attribution.myOrders} orders</div>
               </div>
               {attribution.othersSales > 0 && (
-                <div className="space-y-0.5">
+                <div className="p-2 rounded-lg bg-muted/40 space-y-0.5">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_COLORS[1] }} />
-                    <span className="text-muted-foreground">Part-Time</span>
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS[1] }} />
+                    <span className="text-xs text-muted-foreground">Part-Time</span>
                   </div>
-                  <div className="font-semibold">{fmtCurrency(attribution.othersSales)}</div>
-                  <div className="text-xs text-muted-foreground">{attribution.othersOrders} orders</div>
+                  <div className="text-sm font-semibold truncate">{fmtCurrency(attribution.othersSales)}</div>
+                  <div className="text-[11px] text-muted-foreground">{attribution.othersOrders} orders</div>
                 </div>
               )}
               {attribution.importedSales > 0 && (
-                <div className="space-y-0.5">
+                <div className="p-2 rounded-lg bg-muted/40 space-y-0.5">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-muted-foreground/30" />
-                    <span className="text-muted-foreground">Imported</span>
+                    <div className="w-2.5 h-2.5 rounded-full bg-muted-foreground/30 shrink-0" />
+                    <span className="text-xs text-muted-foreground">Imported</span>
                   </div>
-                  <div className="font-semibold">{fmtCurrency(attribution.importedSales)}</div>
-                  <div className="text-xs text-muted-foreground">{attribution.importedOrders} orders</div>
+                  <div className="text-sm font-semibold truncate">{fmtCurrency(attribution.importedSales)}</div>
+                  <div className="text-[11px] text-muted-foreground">{attribution.importedOrders} orders</div>
                 </div>
               )}
             </div>
@@ -1086,88 +1349,161 @@ export default function BADashboard() {
         </Card>
       )}
 
-      {/* Daily Sales Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {isRestricted
-              ? "Daily Sales"
-              : timeTab === "yearly" && selectedYears.size > 1
-                ? "Sales Trend (Year Overlay)"
-                : timeTab === "monthly" && monthlyMonth === "all"
-                  ? "Monthly Sales"
-                  : "Daily Sales"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            {isMultiYearOverlay ? (
-              <LineChart data={dailyChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name]} />
-                <Legend />
-                {Array.from(selectedYears).sort().map((yr, i) => (
-                  <Line key={yr} type="monotone" dataKey={yr} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} />
-                ))}
-              </LineChart>
-            ) : hasAttribution ? (
-              <BarChart data={dailyChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number, name: string) => [fmtCurrency(v), name === "mine" ? "My Sales" : "Others"]} />
-                <Legend formatter={(value) => value === "mine" ? "My Sales" : "Others"} />
-                <Bar dataKey="mine" stackId="1" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
-                <Bar dataKey="others" stackId="1" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            ) : (
-              <BarChart data={dailyChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-                <Bar dataKey="total" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
-              </BarChart>
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 flex flex-row items-center justify-between space-y-0 border-b border-border/50">
+          <div className="flex items-center gap-2 min-w-0">
+            <CardTitle className="text-xs sm:text-sm font-semibold truncate">{chartTitle}</CardTitle>
+            {!isRestricted && (
+              <Badge variant="outline" className="text-[9px] sm:text-[10px] font-normal py-0 shrink-0">
+                {timeTab === "daterange" ? (quickPreset !== "custom" ? quickPreset.toUpperCase() : "Daily") : timeTab === "monthly"
+                  ? (monthlyMonth === "all" ? "Monthly" : "Daily")
+                  : selectedYears.size > 1 ? "Year Comparison" : "Monthly"}
+              </Badge>
             )}
-          </ResponsiveContainer>
+          </div>
+          {timeTab === "daterange" && !isRestricted && (
+            <div className="flex items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg text-[10px] sm:text-[11px]">
+              {(["7d", "14d", "30d", "mtd"] as const).map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleSelectPreset(preset)}
+                  className={cn(
+                    "px-1.5 sm:px-2 py-0.5 rounded-md font-medium transition-colors",
+                    quickPreset === preset
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {preset.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent className="p-2 sm:p-4 pt-3">
+          {isDataLoading ? (
+            <div className="flex flex-col items-center justify-center h-[200px] sm:h-[260px] gap-2" aria-busy="true" aria-label="Loading chart">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading trend data...</span>
+            </div>
+          ) : dailyChartData.length === 0 ? (
+            <div className="flex items-center justify-center h-[200px] sm:h-[260px] text-muted-foreground text-xs sm:text-sm" role="status">
+              No data for selected filters
+            </div>
+          ) : (
+            <div className="h-[210px] sm:h-[260px] md:h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                {isMultiYearOverlay ? (
+                  <LineChart data={dailyChartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} minTickGap={16} />
+                    <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                      formatter={(v: number, name: string) => [fmtCurrency(v), name]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }} />
+                    {Array.from(selectedYears).sort().map((yr, i) => (
+                      <Line key={yr} type="monotone" dataKey={yr} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                    ))}
+                  </LineChart>
+                ) : hasAttribution ? (
+                  <BarChart data={dailyChartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                      formatter={(v: number, name: string) => [fmtCurrency(v), name === "mine" ? "My Sales" : "Others"]}
+                    />
+                    <Legend formatter={(value) => value === "mine" ? "My Sales" : "Others"} wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }} />
+                    <Bar dataKey="mine" stackId="1" fill={CHART_COLORS[0]} />
+                    <Bar dataKey="others" stackId="1" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                ) : (
+                  <BarChart data={dailyChartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                      formatter={(v: number) => [fmtCurrency(v), "Sales"]}
+                    />
+                    <Bar dataKey="total" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Monthly Sales Trend (BA monthly mode only) */}
       {!isRestricted && timeTab === "monthly" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly Sales Trend ({monthlyYear})</CardTitle>
+        <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+          <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+            <CardTitle className="text-xs sm:text-sm font-semibold">Monthly Sales Trend ({monthlyYear})</CardTitle>
           </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthlyTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-                <Bar dataKey="amount" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <CardContent className="p-2 sm:p-4 pt-3">
+            <div className="h-[210px] sm:h-[260px] md:h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyTrendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                    formatter={(v: number) => [fmtCurrency(v), "Sales"]}
+                  />
+                  <Bar dataKey="amount" fill={CHART_COLORS[1]} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Sales by Brand Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sales by Brand</CardTitle>
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-xs sm:text-sm font-semibold">Sales by Brand</CardTitle>
+              {compareEligible && ppLabel && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">vs PP: {ppLabel}</p>
+              )}
+            </div>
+            <div className="flex sm:hidden items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setBrandViewMode("cards")}
+                className={cn(
+                  "p-1 rounded-md transition-colors",
+                  brandViewMode === "cards" ? "bg-background text-foreground shadow-2xs font-semibold" : "text-muted-foreground",
+                )}
+                aria-label="Card view"
+                aria-pressed={brandViewMode === "cards"}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setBrandViewMode("table")}
+                className={cn(
+                  "p-1 rounded-md transition-colors",
+                  brandViewMode === "table" ? "bg-background text-foreground shadow-2xs font-semibold" : "text-muted-foreground",
+                )}
+                aria-label="Table view"
+                aria-pressed={brandViewMode === "table"}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-2 sm:p-4 pt-3">
           {brandTableData.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No sales data for this period.</p>
+            <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">No sales data for this period.</p>
           ) : (() => {
-            // Renders a compact 'vs prior' cell with up/down arrow,
-            // dollar delta, and signed percentage — matching the
-            // Management dashboard style. Used twice per row: vs
-            // Previous Period and vs Same Period Last Month.
             const renderDelta = (current: number, prior: number) => {
               if (!compareEligible) return <span className="text-muted-foreground">—</span>;
               if (prior === 0 && current === 0) return <span className="text-muted-foreground">—</span>;
@@ -1176,145 +1512,210 @@ export default function BADashboard() {
               const pct = (delta / prior) * 100;
               const isUp = delta >= 0;
               return (
-                <div className={isUp ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                <div className={isUp ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>
                   <div className="text-xs">{isUp ? "▲" : "▼"} {fmtCurrency(Math.abs(delta))}</div>
-                  <div className="text-[11px]">{isUp ? "+" : ""}{pct.toFixed(1)}%</div>
+                  <div className="text-[10px]">{isUp ? "+" : ""}{pct.toFixed(1)}%</div>
                 </div>
               );
             };
+            const deltaPctText = (current: number, prior: number) => {
+              if (prior === 0 && current === 0) return "—";
+              if (prior === 0) return "New";
+              const pct = ((current - prior) / prior) * 100;
+              return `${pct >= 0 ? "▲ +" : "▼ "}${Math.abs(pct).toFixed(1)}%`;
+            };
             return (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="pb-2 pr-6 font-medium">Brand</th>
-                      <th className="pb-2 px-6 font-medium text-right">Sales</th>
-                      {compareEligible && (
-                        <>
-                          <th className="pb-2 px-6 font-medium text-right whitespace-nowrap w-[150px] align-bottom">
-                            <div>vs Prev Period</div>
-                            <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{ppLabel}</div>
-                          </th>
-                          <th className="pb-2 px-6 font-medium text-right whitespace-nowrap w-[170px] align-bottom">
-                            <div>vs Same Period Last Month</div>
-                            <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{splmLabel}</div>
-                          </th>
-                        </>
-                      )}
-                      <th className="pb-2 px-6 font-medium text-right">Units</th>
-                      <th className="pb-2 px-6 font-medium text-right">ATV</th>
-                      <th className="pb-2 pl-6 font-medium text-right">UPT</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {brandTableData.map((row) => {
-                      const ppVal = ppBrandSales[row.name] ?? 0;
-                      const splmVal = splmBrandSales[row.name] ?? 0;
-                      return (
-                        <tr key={row.name} className="border-b last:border-0">
-                          <td className="py-2 pr-6">{row.name}</td>
-                          <td className="py-2 px-6 text-right">{fmtCurrency(row.sales)}</td>
-                          {compareEligible && (
-                            <>
-                              <td className="py-2 px-6 text-right w-[150px]">{renderDelta(row.sales, ppVal)}</td>
-                              <td className="py-2 px-6 text-right w-[170px]">{renderDelta(row.sales, splmVal)}</td>
-                            </>
-                          )}
-                          <td className="py-2 px-6 text-right">{row.units.toLocaleString()}</td>
-                          <td className="py-2 px-6 text-right">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
-                          <td className="py-2 pl-6 text-right">{fmtRatio(row.units, row.orders)}</td>
-                        </tr>
-                      );
-                    })}
-                    {/* Totals row — sums the comparison columns across
-                        all brands so the user sees overall PP / SPLM
-                        movement at a glance. */}
-                    {(() => {
-                      const totalPP = Object.values(ppBrandSales).reduce((s, v) => s + v, 0);
-                      const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
-                      return (
-                        <tr className="border-t-2 font-semibold">
-                          <td className="py-2 pr-6">Total</td>
-                          <td className="py-2 px-6 text-right">{fmtCurrency(totalSales)}</td>
-                          {compareEligible && (
-                            <>
-                              <td className="py-2 px-6 text-right w-[150px]">{renderDelta(totalSales, totalPP)}</td>
-                              <td className="py-2 px-6 text-right w-[170px]">{renderDelta(totalSales, totalSPLM)}</td>
-                            </>
-                          )}
-                          <td className="py-2 px-6 text-right">{totalUnits.toLocaleString()}</td>
-                          <td className="py-2 px-6 text-right">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
-                          <td className="py-2 pl-6 text-right">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
-                        </tr>
-                      );
-                    })()}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div className={cn("space-y-2", brandViewMode === "table" ? "hidden" : "sm:hidden")}>
+                  {brandTableData.map((row) => {
+                    const ppVal = ppBrandSales[row.name] ?? 0;
+                    const splmVal = splmBrandSales[row.name] ?? 0;
+                    const ppPct = ppVal > 0 ? ((row.sales - ppVal) / ppVal) * 100 : null;
+                    const isUp = (ppPct ?? 0) >= 0;
+                    return (
+                      <div key={row.name} className="p-2.5 rounded-lg border bg-card/60 space-y-1.5 shadow-2xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs font-semibold text-foreground min-w-0">{row.name}</div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs font-bold">{fmtCurrency(row.sales)}</div>
+                            {compareEligible && (
+                              <div className={cn(
+                                "text-[10px] font-semibold",
+                                ppVal === 0 && row.sales > 0 ? "text-muted-foreground" : isUp ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+                              )}>
+                                {deltaPctText(row.sales, ppVal)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {compareEligible && splmVal > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            vs last month: {deltaPctText(row.sales, splmVal)}
+                          </div>
+                        )}
+                        <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-border/50 text-center text-xs">
+                          <div className="bg-muted/40 p-1 rounded">
+                            <span className="text-[10px] text-muted-foreground block">Units</span>
+                            <span className="font-semibold text-foreground">{row.units.toLocaleString()}</span>
+                          </div>
+                          <div className="bg-muted/40 p-1 rounded">
+                            <span className="text-[10px] text-muted-foreground block">ATV</span>
+                            <span className="font-semibold text-foreground">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</span>
+                          </div>
+                          <div className="bg-muted/40 p-1 rounded">
+                            <span className="text-[10px] text-muted-foreground block">UPT</span>
+                            <span className="font-semibold text-foreground">{fmtRatio(row.units, row.orders)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className={cn("overflow-x-auto -mx-2 sm:mx-0", brandViewMode === "cards" ? "hidden sm:block" : "")}>
+                  <table className="w-full text-xs sm:text-sm min-w-[520px]">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-2 pl-2 sm:pl-0 font-medium sticky left-0 z-10 bg-card pr-2">Brand</th>
+                        <th className="pb-2 font-medium text-right w-[110px]">Sales</th>
+                        {compareEligible && (
+                          <>
+                            <th className="pb-2 font-medium text-right whitespace-nowrap w-[130px] align-bottom">
+                              <div>vs Prev Period</div>
+                              <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{ppLabel}</div>
+                            </th>
+                            <th className="pb-2 font-medium text-right whitespace-nowrap w-[140px] align-bottom">
+                              <div>vs Last Month</div>
+                              <div className="text-[10px] font-normal text-muted-foreground mt-0.5">{splmLabel}</div>
+                            </th>
+                          </>
+                        )}
+                        <th className="pb-2 font-medium text-right w-[65px]">Units</th>
+                        <th className="pb-2 font-medium text-right w-[85px]">ATV</th>
+                        <th className="pb-2 pr-2 sm:pr-0 font-medium text-right w-[55px]">UPT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {brandTableData.map((row) => {
+                        const ppVal = ppBrandSales[row.name] ?? 0;
+                        const splmVal = splmBrandSales[row.name] ?? 0;
+                        return (
+                          <tr key={row.name} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                            <td className="py-2 pl-2 sm:pl-0 sticky left-0 z-10 bg-card pr-2">{row.name}</td>
+                            <td className="py-2 text-right font-medium w-[110px] tabular-nums">{fmtCurrency(row.sales)}</td>
+                            {compareEligible && (
+                              <>
+                                <td className="py-2 text-right w-[130px] tabular-nums">{renderDelta(row.sales, ppVal)}</td>
+                                <td className="py-2 text-right w-[140px] tabular-nums">{renderDelta(row.sales, splmVal)}</td>
+                              </>
+                            )}
+                            <td className="py-2 text-right w-[65px] tabular-nums">{row.units.toLocaleString()}</td>
+                            <td className="py-2 text-right w-[85px] tabular-nums">{row.orders > 0 ? fmtCurrency(Math.round(row.sales / row.orders)) : "—"}</td>
+                            <td className="py-2 pr-2 sm:pr-0 text-right w-[55px] tabular-nums">{fmtRatio(row.units, row.orders)}</td>
+                          </tr>
+                        );
+                      })}
+                      {(() => {
+                        const totalPP = Object.values(ppBrandSales).reduce((s, v) => s + v, 0);
+                        const totalSPLM = Object.values(splmBrandSales).reduce((s, v) => s + v, 0);
+                        return (
+                          <tr className="border-t-2 font-semibold bg-muted/40">
+                            <td className="py-2 pl-2 sm:pl-0 sticky left-0 z-10 bg-card pr-2">Total</td>
+                            <td className="py-2 text-right w-[110px] tabular-nums">{fmtCurrency(totalSales)}</td>
+                            {compareEligible && (
+                              <>
+                                <td className="py-2 text-right w-[130px] tabular-nums">{renderDelta(totalSales, totalPP)}</td>
+                                <td className="py-2 text-right w-[140px] tabular-nums">{renderDelta(totalSales, totalSPLM)}</td>
+                              </>
+                            )}
+                            <td className="py-2 text-right w-[65px] tabular-nums">{totalUnits.toLocaleString()}</td>
+                            <td className="py-2 text-right w-[85px] tabular-nums">{totalOrders > 0 ? fmtCurrency(Math.round(totalSales / totalOrders)) : "—"}</td>
+                            <td className="py-2 pr-2 sm:pr-0 text-right w-[55px] tabular-nums">{totalOrders > 0 ? (totalUnits / totalOrders).toFixed(1) : "—"}</td>
+                          </tr>
+                        );
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             );
           })()}
         </CardContent>
       </Card>
 
-      {/* Promotion Performance Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Promotion Performance</CardTitle>
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+          <CardTitle className="text-xs sm:text-sm font-semibold">Promotion Performance</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-2 sm:p-4 pt-3">
           {promoTableData.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No active promotions for this period.</p>
+            <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">No active promotions for this period.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left">
-                    <th className="pb-2 font-medium">Promotion</th>
-                    <th className="pb-2 font-medium">Brand</th>
-                    <th className="pb-2 font-medium">Type</th>
-                    <th className="pb-2 font-medium">Period</th>
-                    <th className="pb-2 font-medium text-right">GWP Given</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {promoTableData.map((row) => (
-                    <tr key={row.id} className="border-b last:border-0">
-                      <td className="py-2">{row.name}</td>
-                      <td className="py-2">{row.brand}</td>
-                      <td className="py-2">{row.type}</td>
-                      <td className="py-2 whitespace-nowrap">
-                        {row.startDate} – {row.endDate}
-                      </td>
-                      <td className="py-2 text-right">
-                        {row.trackable ? row.gwpGiven : "—"}
-                      </td>
+            <>
+              <div className="space-y-2 sm:hidden">
+                {promoTableData.map((row) => (
+                  <div key={row.id} className="p-2.5 rounded-lg border bg-card/60 space-y-1 shadow-2xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold">{row.name}</div>
+                        <div className="text-[11px] text-muted-foreground">{row.brand} · {row.type}</div>
+                      </div>
+                      <div className="text-xs font-semibold tabular-nums shrink-0">
+                        {row.trackable ? `${row.gwpGiven} GWP` : "—"}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">{row.startDate} – {row.endDate}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="pb-2 font-medium sticky left-0 z-10 bg-card pr-2">Promotion</th>
+                      <th className="pb-2 font-medium">Brand</th>
+                      <th className="pb-2 font-medium">Type</th>
+                      <th className="pb-2 font-medium">Period</th>
+                      <th className="pb-2 font-medium text-right">GWP Given</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {promoTableData.map((row) => (
+                      <tr key={row.id} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="py-2 sticky left-0 z-10 bg-card pr-2">{row.name}</td>
+                        <td className="py-2">{row.brand}</td>
+                        <td className="py-2">{row.type}</td>
+                        <td className="py-2 whitespace-nowrap">{row.startDate} – {row.endDate}</td>
+                        <td className="py-2 text-right tabular-nums">{row.trackable ? row.gwpGiven : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
 
-      {/* Promotion Deductions — per-day or per-brand view of HK$ taken off counter sales via coupons */}
-      <Card>
-        <CardHeader>
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-3">
-              <CardTitle>Promotion Deductions (Coupon Redemptions)</CardTitle>
+            <div className="flex items-center gap-2 min-w-0">
+              <CardTitle className="text-xs sm:text-sm font-semibold truncate">Promotion Deductions</CardTitle>
               {totalDeductionAmount > 0 && (
-                <Badge variant="outline" className="text-xs font-normal">
+                <Badge variant="outline" className="text-[10px] font-normal shrink-0">
                   Total: −{fmtCurrency(totalDeductionAmount)}
                 </Badge>
               )}
             </div>
             {totalDeductionAmount > 0 && (
-              <div className="inline-flex rounded-md border bg-background p-0.5" role="group" data-testid="deduction-view-toggle">
+              <div className="inline-flex rounded-lg border bg-muted/60 p-0.5" role="group" data-testid="deduction-view-toggle" aria-label="Deduction view">
                 <button
                   type="button"
                   onClick={() => setDeductionView("daily")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded ${deductionView === "daily" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                    deductionView === "daily" ? "bg-primary text-primary-foreground font-semibold shadow-2xs" : "text-muted-foreground hover:text-foreground",
+                  )}
                   data-testid="deduction-toggle-daily"
                 >
                   By day
@@ -1322,7 +1723,10 @@ export default function BADashboard() {
                 <button
                   type="button"
                   onClick={() => setDeductionView("brand")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded ${deductionView === "brand" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                    deductionView === "brand" ? "bg-primary text-primary-foreground font-semibold shadow-2xs" : "text-muted-foreground hover:text-foreground",
+                  )}
                   data-testid="deduction-toggle-brand"
                 >
                   By brand
@@ -1331,67 +1735,98 @@ export default function BADashboard() {
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-2 sm:p-4 pt-3">
           {myDeductions.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No coupon redemptions recorded in this period.</p>
+            <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">No coupon redemptions recorded in this period.</p>
           ) : deductionView === "brand" ? (
-            /* ── By-brand allocation view ── */
             deductionByBrand.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                Deductions exist but couldn't be allocated to any brand (counter had no sales on deduction days).
+              <p className="text-muted-foreground text-xs sm:text-sm py-4 text-center" role="status">
+                Deductions exist but couldn&apos;t be allocated to any brand (counter had no sales on deduction days).
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="deduction-by-brand-table">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="px-3 py-2 font-medium">Brand</th>
-                      <th className="px-3 py-2 font-medium text-right">Gross Sales</th>
-                      <th className="px-3 py-2 font-medium text-right">Deduction</th>
-                      <th className="px-3 py-2 font-medium text-right">Net Sales</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {deductionByBrand.map((b) => (
-                      <tr key={b.brandId} className="border-b last:border-0">
-                        <td className="px-3 py-1.5">{b.brandName}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{fmtCurrency(b.gross)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(b.deduction)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{fmtCurrency(b.net)}</td>
+              <>
+                <div className="space-y-2 sm:hidden">
+                  {deductionByBrand.map((b) => (
+                    <div key={b.brandId} className="p-2.5 rounded-lg border bg-card/60 space-y-1.5 shadow-2xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold">{b.brandName}</span>
+                        <span className="text-xs font-bold tabular-nums">{fmtCurrency(b.net)}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 text-center text-xs">
+                        <div className="bg-muted/40 p-1 rounded">
+                          <span className="text-[10px] text-muted-foreground block">Gross</span>
+                          <span className="font-semibold">{fmtCurrency(b.gross)}</span>
+                        </div>
+                        <div className="bg-muted/40 p-1 rounded">
+                          <span className="text-[10px] text-muted-foreground block">Deduction</span>
+                          <span className="font-semibold text-blue-700 dark:text-blue-300">−{fmtCurrency(b.deduction)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden sm:block overflow-x-auto">
+                  <table className="w-full text-sm" data-testid="deduction-by-brand-table">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="px-3 py-2 font-medium sticky left-0 z-10 bg-card">Brand</th>
+                        <th className="px-3 py-2 font-medium text-right">Gross Sales</th>
+                        <th className="px-3 py-2 font-medium text-right">Deduction</th>
+                        <th className="px-3 py-2 font-medium text-right">Net Sales</th>
                       </tr>
-                    ))}
-                    <tr className="border-t-2 font-semibold">
-                      <td className="px-3 py-2">Total</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.gross, 0))}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-300">
-                        −{fmtCurrency(deductionByBrand.reduce((s, b) => s + b.deduction, 0))}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.net, 0))}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  Deductions are spread proportionally across brands that sold on each deduction day (brand share × daily deduction).
+                    </thead>
+                    <tbody>
+                      {deductionByBrand.map((b) => (
+                        <tr key={b.brandId} className="border-b last:border-0">
+                          <td className="px-3 py-1.5 sticky left-0 z-10 bg-card">{b.brandName}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtCurrency(b.gross)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(b.deduction)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{fmtCurrency(b.net)}</td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 font-semibold bg-muted/40">
+                        <td className="px-3 py-2 sticky left-0 z-10 bg-card">Total</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.gross, 0))}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-300">
+                          −{fmtCurrency(deductionByBrand.reduce((s, b) => s + b.deduction, 0))}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {fmtCurrency(deductionByBrand.reduce((s, b) => s + b.net, 0))}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2 px-1">
+                  Deductions are spread proportionally across brands that sold on each deduction day.
                 </p>
-              </div>
+              </>
             )
           ) : (
-            /* ── Original by-day view ── */
-            <div className="space-y-4">
+            <div className="space-y-3">
               {myDeductions.map((p) => (
-                <div key={p.promotionId} className="border rounded-md">
+                <div key={p.promotionId} className="border rounded-lg overflow-hidden">
                   <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between flex-wrap gap-2">
-                    <div className="text-sm font-medium">{p.promoName}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {p.totalCount} coupon{p.totalCount !== 1 ? "s" : ""} redeemed ·{" "}
-                      <span className="font-semibold text-blue-700 dark:text-blue-300">−{fmtCurrency(p.total)}</span> deducted
+                    <div className="text-xs sm:text-sm font-medium">{p.promoName}</div>
+                    <div className="text-[11px] sm:text-xs text-muted-foreground">
+                      {p.totalCount} coupon{p.totalCount !== 1 ? "s" : ""} ·{" "}
+                      <span className="font-semibold text-blue-700 dark:text-blue-300">−{fmtCurrency(p.total)}</span>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="sm:hidden divide-y">
+                    {p.rows.map((r, i) => (
+                      <div key={`${r.date}-${r.posName}-${i}`} className="px-3 py-2 space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground">{(() => { const [y, m, d] = r.date.split("-"); return `${d}/${m}/${y}`; })()} · {r.posName}</span>
+                          <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(r.amount)}</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{r.count} redemption{r.count !== 1 ? "s" : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b text-left">
@@ -1405,15 +1840,13 @@ export default function BADashboard() {
                         {p.rows.map((r, i) => (
                           <Fragment key={`${r.date}-${r.posName}-${i}`}>
                             <tr className="border-b last:border-0">
-                              <td className="px-3 py-1.5 whitespace-nowrap">{(() => { const [y,m,d] = r.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
+                              <td className="px-3 py-1.5 whitespace-nowrap">{(() => { const [y, m, d] = r.date.split("-"); return `${d}/${m}/${y}`; })()}</td>
                               <td className="px-3 py-1.5">{r.posName}</td>
                               <td className="px-3 py-1.5 text-right tabular-nums">{r.count}</td>
                               <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-300">−{fmtCurrency(r.amount)}</td>
                             </tr>
-                            {/* Per-tier breakdown (multi-tier Spend & Get only). Indented
-                                muted rows so the daily totals stay visually dominant. */}
                             {r.tierBreakdown && r.tierBreakdown.length > 0 && p.tiers && p.tiers.length > 0 && r.tierBreakdown.map((tb) => {
-                              const tierMeta = p.tiers!.find(t => t.id === tb.tierId);
+                              const tierMeta = p.tiers!.find((t) => t.id === tb.tierId);
                               if (!tierMeta) return null;
                               if ((tb.redemptionCount ?? 0) <= 0) return null;
                               const label = tierMeta.thresholdType === "qty"
@@ -1443,3 +1876,4 @@ export default function BADashboard() {
     </div>
   );
 }
+
