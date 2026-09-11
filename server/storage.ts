@@ -166,6 +166,8 @@ function makePromotion(id: string, data: InsertPromotion): Promotion {
     trackable: data.trackable ?? false,
     descriptionZh: data.descriptionZh ?? null,
     mechanicsZh: data.mechanicsZh ?? null,
+    simulatorPromoNumber: (data as any).simulatorPromoNumber ?? null,
+    spendGetTiers: (data as any).spendGetTiers ?? null,
   };
 }
 
@@ -883,8 +885,8 @@ export class PgStorage implements IStorage {
        condition_minimum_spend, condition_minimum_qty, condition_required_items, condition_other,
        reference_original_price, reference_promo_price, remarks, entered_by, date_entered,
        source_list_id, last_synced_at, source_app, source_scenario_id, promotion_layer, trackable,
-       description_zh, mechanics_zh, spend_get_tiers)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
+       description_zh, mechanics_zh, spend_get_tiers, simulator_promo_number)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47)`,
       [
         id, data.name, data.brandId ?? null, data.type, data.description, data.startDate, data.endDate, data.isActive ?? true,
         data.shopLocation ?? null, data.mechanics ?? null, data.promoAppliesTo ?? null, data.applicableProducts ?? null, data.exclusions ?? null,
@@ -898,6 +900,7 @@ export class PgStorage implements IStorage {
         data.sourceApp ?? null, data.sourceScenarioId ?? null, data.promotionLayer ?? null, data.trackable ?? false,
         data.descriptionZh ?? null, data.mechanicsZh ?? null,
         (data as any).spendGetTiers ?? null,
+        (data as any).simulatorPromoNumber ?? null,
       ],
     );
     return makePromotion(id, data);
