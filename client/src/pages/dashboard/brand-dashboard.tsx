@@ -1327,11 +1327,7 @@ export default function BrandDashboard() {
                     interval={brandTrendData.length > 35 ? Math.floor(brandTrendData.length / 10) : "preserveStartEnd"}
                   />
                   <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
-                    formatter={(v: number) => fmtCurrency(v)}
-                  />
-                  <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }} />
+                  <Tooltip content={<TrendTooltip />} />
                   {timePeriod === "yearly"
                     ? Array.from(selectedYears).sort().map((y, i) => (
                       <Line key={y} type="monotone" dataKey={y} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
@@ -1342,6 +1338,11 @@ export default function BrandDashboard() {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+            <BrandKey
+              items={timePeriod === "yearly"
+                ? Array.from(selectedYears).sort().map((y, i) => ({ name: y, color: CHART_COLORS[i % CHART_COLORS.length] }))
+                : activeBrandList.map((b, i) => ({ name: b.name, color: CHART_COLORS[i % CHART_COLORS.length] }))}
+            />
           )}
         </CardContent>
       </Card>
@@ -1487,6 +1488,53 @@ function KpiCard({
         )}
       </div>
     </Card>
+  );
+}
+
+function BrandKey({ items }: { items: { name: string; color: string }[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-3 lg:grid-cols-4" aria-label="Brands in this chart">
+      {items.map((item) => (
+        <li key={item.name} className="flex items-center gap-1.5 min-w-0">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.color }} aria-hidden />
+          <span className="text-[11px] leading-tight text-foreground break-words">{item.name}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TrendTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { name?: string; value?: number | string; color?: string }[];
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const rows = payload
+    .map((row) => ({ name: String(row.name ?? ""), value: Number(row.value ?? 0), color: row.color ?? "currentColor" }))
+    .filter((row) => row.name && row.value > 0)
+    .sort((a, b) => b.value - a.value);
+  if (rows.length === 0) return null;
+  return (
+    <div className="max-w-[220px] rounded-lg border border-border bg-card px-2.5 py-2 text-xs shadow-sm">
+      <p className="mb-1.5 font-medium text-foreground">{label}</p>
+      <ul className="max-h-40 space-y-1 overflow-y-auto" role="list">
+        {rows.map((row) => (
+          <li key={row.name} className="flex items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: row.color }} aria-hidden />
+              <span className="truncate">{row.name}</span>
+            </span>
+            <span className="shrink-0 tabular-nums font-medium">{fmtCurrency(row.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
