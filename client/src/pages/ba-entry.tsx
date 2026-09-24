@@ -483,9 +483,9 @@ export default function BAEntry() {
   };
 
   const loadExistingData = async () => {
-    // 1. Load sales data
+    // 1. Load sales data for this counter + date (the day's shared entry)
     const data: Record<string, { orders: number; units: number; amount: number; gwpCount: number }> = {};
-    myExistingEntries.forEach(e => {
+    existingSales.forEach(e => {
       data[e.brandId] = {
         orders: e.orders ?? 0,
         units: e.units ?? 0,
@@ -547,6 +547,14 @@ export default function BAEntry() {
 
     // 5. Reset submitted state to allow re-editing
     setSubmitted(false);
+
+    const loadedBrands = Object.keys(data).length;
+    const loadedPromos = Object.keys(pData).length + Object.keys(dData).length;
+    const loadedIncentives = Object.values(freshIncentives).filter((v) => (v as number) > 0).length;
+    if (loadedBrands === 0 && loadedPromos === 0 && loadedIncentives === 0 && !posFigure && existingPosFigures.length === 0) {
+      toast({ title: "Nothing saved for this day", description: "Choose another date, or enter new sales for this one." });
+      return;
+    }
 
     toast({ title: "All data loaded", description: "Sales, promotions, and incentive data loaded. Edit and re-submit to update." });
   };
@@ -798,6 +806,20 @@ export default function BAEntry() {
                   className="h-10"
                   data-testid="input-date"
                 />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full text-xs"
+                  disabled={!selectedCounter}
+                  onClick={loadExistingData}
+                  data-testid="button-load-edit"
+                >
+                  <Pencil className="w-3 h-3 mr-1" /> Load & Edit
+                </Button>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Pick a past day, then load that day’s saved entry to edit it.
+                </p>
               </div>
             </div>
             {selectedCounter && (
@@ -833,12 +855,12 @@ export default function BAEntry() {
           const couponCount = existingDeductions.reduce((s, d) => s + (d.redemptionCount ?? 0), 0);
           const incentiveValues = Object.values(incentiveDailyEntries);
           const incentiveRecordedCount = incentiveValues.filter((v) => (v ?? 0) > 0).length;
-          const hasStored = myExistingEntries.length > 0 || couponCount > 0 || incentiveRecordedCount > 0;
+          const hasStored = existingSales.length > 0 || couponCount > 0 || incentiveRecordedCount > 0;
           if (!selectedCounter || !hasStored || submitted) return null;
           const parts: string[] = [];
-          if (myExistingEntries.length > 0) {
+          if (existingSales.length > 0) {
             parts.push(
-              `${myExistingEntries.length} brand${myExistingEntries.length !== 1 ? "s" : ""} recorded — HK$${myExistingEntries.reduce((s, e) => s + e.amount, 0).toLocaleString()}`,
+              `${existingSales.length} brand${existingSales.length !== 1 ? "s" : ""} recorded — HK$${existingSales.reduce((s, e) => s + e.amount, 0).toLocaleString()}`,
             );
           }
           if (couponCount > 0) {

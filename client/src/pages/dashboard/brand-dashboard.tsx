@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { SalesEntry, PosLocation, Brand } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,8 +18,14 @@ import {
   DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import {
   DollarSign, Tag, Package, TrendingUp, TrendingDown, CalendarClock,
-  CalendarDays, Filter, ChevronDown, Layers, Download,
+  CalendarDays, Filter, ChevronDown, Download, SlidersHorizontal,
+  AlertCircle, RefreshCw,
 } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -34,7 +40,21 @@ function fmtCurrency(v: number) {
   return `HK$${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-function todayStr() { return new Date().toISOString().split("T")[0]; }
+function localDateStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function daysAgoStr(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return localDateStr(d);
+}
+
+function yesterdayStr() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return localDateStr(d);
+}
 
 function monthStartStr() {
   const d = new Date();
@@ -46,7 +66,7 @@ function dateRange(start: string, end: string): string[] {
   const d = new Date(start + "T00:00:00");
   const last = new Date(end + "T00:00:00");
   while (d <= last) {
-    dates.push(d.toISOString().split("T")[0]);
+    dates.push(localDateStr(d));
     d.setDate(d.getDate() + 1);
   }
   return dates;
@@ -80,7 +100,29 @@ export default function BrandDashboard() {
 
   // Date range state
   const [rangeStart, setRangeStart] = useState(monthStartStr);
-  const [rangeEnd, setRangeEnd] = useState(todayStr);
+  const [rangeEnd, setRangeEnd] = useState(yesterdayStr);
+  const [quickPreset, setQuickPreset] = useState<"7d" | "14d" | "30d" | "mtd" | "custom">("mtd");
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+
+  function handleSelectPreset(preset: "7d" | "14d" | "30d" | "mtd") {
+    setTimePeriod("range");
+    setQuickPreset(preset);
+    const end = yesterdayStr();
+    let start = monthStartStr();
+    if (preset === "7d") start = daysAgoStr(7);
+    else if (preset === "14d") start = daysAgoStr(14);
+    else if (preset === "30d") start = daysAgoStr(30);
+    else if (preset === "mtd") {
+      start = monthStartStr();
+      if (start > end) {
+        setRangeStart(start);
+        setRangeEnd(start);
+        return;
+      }
+    }
+    setRangeStart(start);
+    setRangeEnd(end);
+  }
 
   // Monthly state — year + month selectors
   const [monthlyYear, setMonthlyYear] = useState(String(currentYear));
@@ -114,17 +156,20 @@ export default function BrandDashboard() {
   }, [timePeriod, rangeStart, rangeEnd, monthlyYear, selectedYears, currentYear]);
 
   // ── Queries ───────────────────────────────────
-  const { data: sales = [] } = useQuery<SalesEntry[]>({
+  const { data: sales = [], isLoading: isLoadingSales, isError: isErrorSales, refetch: refetchSales } = useQuery<SalesEntry[]>({
     queryKey: ["/api/sales", `?startDate=${queryStart}&endDate=${queryEnd}`],
   });
 
-  const { data: posLocations = [] } = useQuery<PosLocation[]>({
+  const { data: posLocations = [], isLoading: isLoadingPos } = useQuery<PosLocation[]>({
     queryKey: ["/api/pos-locations"],
   });
 
-  const { data: brands = [] } = useQuery<Brand[]>({
+  const { data: brands = [], isLoading: isLoadingBrands } = useQuery<Brand[]>({
     queryKey: ["/api/brands"],
   });
+
+  const isDataLoading = isLoadingSales || isLoadingPos || isLoadingBrands;
+  const filtersActive = selectedCategories !== null || selectedBrands !== null || selectedChannels !== null || selectedCounters !== null;
 
   // ── Derived lookups ───────────────────────────
   const brandMap = useMemo(() => {
@@ -714,626 +759,783 @@ export default function BrandDashboard() {
   }
 
   // ── Render ────────────────────────────────────
+  const filtersReset = () => {
+    setSelectedCategories(null);
+    setSelectedBrands(null);
+    setSelectedChannels(null);
+    setSelectedCounters(null);
+  };
+
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* Filter Bar */}
-      <Card>
-        <CardContent className="pt-4 pb-4">
-          <div className="flex flex-wrap items-end gap-4">
-            {/* Time Period */}
-            <div className="flex gap-1">
-              {(["range", "monthly", "yearly"] as const).map((tp) => (
-                <Button
-                  key={tp}
-                  variant={timePeriod === tp ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setTimePeriod(tp)}
+    <div className="p-3 sm:p-5 md:p-6 space-y-3.5 sm:space-y-5 max-w-7xl mx-auto">
+      {isErrorSales && (
+        <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive flex items-center justify-between gap-3 text-xs" role="alert">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>Failed to load sales data. Check your network connection.</span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => refetchSales()} className="h-7 text-xs gap-1 shrink-0">
+            <RefreshCw className="w-3 h-3" /> Retry
+          </Button>
+        </div>
+      )}
+
+      <Card className="rounded-xl border border-border/80 shadow-2xs">
+        <CardContent className="p-3 sm:p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex rounded-lg border bg-muted/60 p-0.5" role="group" aria-label="Time period">
+              {([["range", "Date Range"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTimePeriod(key)}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                    timePeriod === key
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
                 >
-                  {tp === "range" ? "Date Range" : tp.charAt(0).toUpperCase() + tp.slice(1)}
-                </Button>
+                  {label}
+                </button>
               ))}
             </div>
 
-            {/* Date controls based on time period */}
-            {timePeriod === "range" && (
-              <div className="flex items-end gap-2">
-                <div>
-                  <Label className="text-xs text-muted-foreground">From</Label>
-                  <Input
-                    type="date"
-                    value={rangeStart}
-                    onChange={(e) => setRangeStart(e.target.value)}
-                    className="w-[130px] md:w-[150px]"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">To</Label>
-                  <Input
-                    type="date"
-                    value={rangeEnd}
-                    onChange={(e) => setRangeEnd(e.target.value)}
-                    className="w-[130px] md:w-[150px]"
-                  />
-                </div>
-              </div>
-            )}
-
-            {timePeriod === "monthly" && (
-              <div className="flex items-end gap-2">
-                <div>
-                  <Label className="text-xs text-muted-foreground">Year</Label>
-                  <Select value={monthlyYear} onValueChange={setMonthlyYear}>
-                    <SelectTrigger className="w-[100px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {yearOptions.map((y) => (
-                        <SelectItem key={y} value={y}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Month</Label>
-                  <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
-                    <SelectTrigger className="w-[120px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Months</SelectItem>
-                      {["01","02","03","04","05","06","07","08","09","10","11","12"].map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {new Date(2000, Number(m) - 1, 1).toLocaleString("en-US", { month: "long" })}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            {timePeriod === "yearly" && (
-              <div className="flex items-end gap-3">
-                <Label className="text-xs text-muted-foreground">Years:</Label>
-                <div className="flex flex-wrap gap-3">
-                  {yearOptions.map((y) => (
-                    <label key={y} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                      <Checkbox
-                        checked={selectedYears.has(y)}
-                        onCheckedChange={(checked) => {
-                          setSelectedYears((prev) => {
-                            const next = new Set(prev);
-                            if (checked) next.add(y); else next.delete(y);
-                            if (next.size === 0) next.add(y); // keep at least 1
-                            return next;
-                          });
-                        }}
-                      />
-                      {y}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Category filter */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Filter className="h-3.5 w-3.5" />
-                  Category: {categoryLabel()}
-                  <ChevronDown className="h-3.5 w-3.5" />
+            <div className="flex items-center gap-1.5 ml-auto">
+              <div className="sm:hidden">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setMobileFilterOpen(true)}
+                  className="h-8 px-2.5 text-xs gap-1.5 relative"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span>Filters</span>
+                  {filtersActive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary absolute -top-0.5 -right-0.5" aria-hidden />
+                  )}
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56" align="start">
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Categories</span>
-                    <div className="flex gap-2 text-xs">
-                      <button className="text-primary underline" onClick={() => { setSelectedCategories(null); setSelectedBrands(null); }}>All</button>
-                      <button className="text-primary underline" onClick={() => { setSelectedCategories(new Set()); setSelectedBrands(new Set()); }}>None</button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {categories.map((cat) => (
-                      <label key={cat} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <Checkbox
-                          checked={activeCategories.has(cat)}
-                          onCheckedChange={() => {
-                            toggleSet(setSelectedCategories, categories, cat);
-                            setSelectedBrands(null);
-                          }}
-                        />
-                        {cat}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
+              </div>
 
-            {/* Brand filter */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Filter className="h-3.5 w-3.5" />
-                  Brands: {brandLabel()}
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64" align="start">
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-sm font-medium">Brands</span>
-                    <div className="flex gap-2 text-xs">
-                      <button className="text-primary underline" onClick={() => setSelectedBrands(null)}>All</button>
-                      <button className="text-primary underline" onClick={() => setSelectedBrands(new Set())}>None</button>
-                    </div>
-                  </div>
-                  <div className="max-h-[350px] overflow-y-auto pr-1">
-                    <div className="space-y-2">
-                      {categoryFilteredBrands.map((b) => (
-                        <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                          <Checkbox
-                            checked={activeBrandIds.has(b.id)}
-                            onCheckedChange={() => toggleSet(setSelectedBrands, categoryFilteredBrands.map((x) => x.id), b.id)}
-                          />
-                          <span>{b.name}</span>
-                          <Badge variant="outline" className="ml-auto text-[10px] px-1">{b.category}</Badge>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Counter / Channel filter */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Filter className="h-3.5 w-3.5" />
-                  {counterViewMode === "channel" ? "Channels" : "Counters"}: {counterChannelLabel()}
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72" align="start">
-                <div className="space-y-3">
-                  <div className="flex gap-1 mb-2">
-                    <Button
-                      variant={counterViewMode === "channel" ? "default" : "outline"}
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => { setCounterViewMode("channel"); setSelectedCounters(null); }}
-                    >
-                      By Channel
+              <div className="hidden sm:flex items-center gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                      <Filter className="h-3 w-3" />
+                      Category: {categoryLabel()}
+                      <ChevronDown className="h-3 w-3" />
                     </Button>
-                    <Button
-                      variant={counterViewMode === "counter" ? "default" : "outline"}
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => { setCounterViewMode("counter"); setSelectedChannels(null); }}
-                    >
-                      By Counter
-                    </Button>
-                  </div>
-
-                  {counterViewMode === "channel" ? (
-                    <>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56" align="start">
+                    <div className="space-y-3">
                       <div className="flex justify-between">
-                        <span className="text-sm font-medium">Channels</span>
+                        <span className="text-sm font-medium">Categories</span>
                         <div className="flex gap-2 text-xs">
-                          <button className="text-primary underline" onClick={() => setSelectedChannels(null)}>All</button>
-                          <button className="text-primary underline" onClick={() => setSelectedChannels(new Set())}>None</button>
+                          <button type="button" className="text-primary underline" onClick={() => { setSelectedCategories(null); setSelectedBrands(null); }}>All</button>
+                          <button type="button" className="text-primary underline" onClick={() => { setSelectedCategories(new Set()); setSelectedBrands(new Set()); }}>None</button>
                         </div>
                       </div>
                       <div className="space-y-2">
-                        {channels.map((ch) => (
-                          <label key={ch} className="flex items-center gap-2 text-sm cursor-pointer">
+                        {categories.map((cat) => (
+                          <label key={cat} className="flex items-center gap-2 text-sm cursor-pointer">
                             <Checkbox
-                              checked={activeChannels.has(ch)}
-                              onCheckedChange={() => toggleSet(setSelectedChannels, channels, ch)}
+                              checked={activeCategories.has(cat)}
+                              onCheckedChange={() => {
+                                toggleSet(setSelectedCategories, categories, cat);
+                                setSelectedBrands(null);
+                              }}
                             />
-                            {ch}
+                            {cat}
                           </label>
                         ))}
                       </div>
-                    </>
-                  ) : (
-                    <>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                      <Filter className="h-3 w-3" />
+                      Brands: {brandLabel()}
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64" align="start">
+                    <div className="space-y-3">
                       <div className="flex justify-between">
-                        <span className="text-sm font-medium">Counters</span>
+                        <span className="text-sm font-medium">Brands</span>
                         <div className="flex gap-2 text-xs">
-                          <button className="text-primary underline" onClick={() => setSelectedCounters(null)}>All</button>
-                          <button className="text-primary underline" onClick={() => setSelectedCounters(new Set())}>None</button>
+                          <button type="button" className="text-primary underline" onClick={() => setSelectedBrands(null)}>All</button>
+                          <button type="button" className="text-primary underline" onClick={() => setSelectedBrands(new Set())}>None</button>
                         </div>
                       </div>
-                      <div className="max-h-[400px] overflow-y-auto pr-1">
-                        <div className="space-y-3">
-                          {Object.entries(posGroupedByChannel).map(([channel, locs]) => (
-                            <div key={channel}>
-                              <div className="text-xs font-medium text-muted-foreground mb-1">{channel}</div>
-                              <div className="space-y-1.5 pl-1">
-                                {locs.map((loc) => (
-                                  <label key={loc.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                                    <Checkbox
-                                      checked={activeCounterIds.has(loc.id)}
-                                      onCheckedChange={() => {
-                                        const allPos = posLocations.filter((p) => activeChannels.has(p.salesChannel));
-                                        toggleSet(setSelectedCounters, allPos.map((p) => p.id), loc.id);
-                                      }}
-                                    />
-                                    {loc.storeName}
-                                  </label>
-                                ))}
-                              </div>
+                      <div className="max-h-[350px] overflow-y-auto pr-1 space-y-2">
+                        {categoryFilteredBrands.map((b) => (
+                          <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={activeBrandIds.has(b.id)}
+                              onCheckedChange={() => toggleSet(setSelectedBrands, categoryFilteredBrands.map((x) => x.id), b.id)}
+                            />
+                            <span className="min-w-0">{b.name}</span>
+                            <Badge variant="outline" className="ml-auto text-[10px] px-1 shrink-0">{b.category}</Badge>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                      <Filter className="h-3 w-3" />
+                      {counterViewMode === "channel" ? "Channels" : "Counters"}: {counterChannelLabel()}
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72" align="start">
+                    <div className="space-y-3">
+                      <div className="flex gap-1">
+                        <Button variant={counterViewMode === "channel" ? "default" : "outline"} size="sm" className="h-6 text-xs" onClick={() => { setCounterViewMode("channel"); setSelectedCounters(null); }}>By Channel</Button>
+                        <Button variant={counterViewMode === "counter" ? "default" : "outline"} size="sm" className="h-6 text-xs" onClick={() => { setCounterViewMode("counter"); setSelectedChannels(null); }}>By Counter</Button>
+                      </div>
+                      {counterViewMode === "channel" ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-sm font-medium">Channels</span>
+                            <div className="flex gap-2 text-xs">
+                              <button type="button" className="text-primary underline" onClick={() => setSelectedChannels(null)}>All</button>
+                              <button type="button" className="text-primary underline" onClick={() => setSelectedChannels(new Set())}>None</button>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
+                          </div>
+                          <div className="space-y-2">
+                            {channels.map((ch) => (
+                              <label key={ch} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox checked={activeChannels.has(ch)} onCheckedChange={() => toggleSet(setSelectedChannels, channels, ch)} />
+                                {ch}
+                              </label>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-sm font-medium">Counters</span>
+                            <div className="flex gap-2 text-xs">
+                              <button type="button" className="text-primary underline" onClick={() => setSelectedCounters(null)}>All</button>
+                              <button type="button" className="text-primary underline" onClick={() => setSelectedCounters(new Set())}>None</button>
+                            </div>
+                          </div>
+                          <div className="max-h-[400px] overflow-y-auto pr-1 space-y-3">
+                            {Object.entries(posGroupedByChannel).map(([channel, locs]) => (
+                              <div key={channel}>
+                                <div className="text-xs font-medium text-muted-foreground mb-1">{channel}</div>
+                                <div className="space-y-1.5 pl-1">
+                                  {locs.map((loc) => (
+                                    <label key={loc.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                      <Checkbox
+                                        checked={activeCounterIds.has(loc.id)}
+                                        onCheckedChange={() => {
+                                          const allPos = posLocations.filter((p) => activeChannels.has(p.salesChannel));
+                                          toggleSet(setSelectedCounters, allPos.map((p) => p.id), loc.id);
+                                        }}
+                                      />
+                                      {loc.storeName}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Download className="h-3.5 w-3.5" />
-                  Export
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={exportBrandPerformance}>Brand Performance Summary</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportBrandCounterMatrix}>Brand × Counter Matrix</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportCategorySummary}>Category Summary</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportBrandMonthlyTrend}>Brand Monthly Trend</DropdownMenuItem>
-                <DropdownMenuItem onClick={exportBrandChannelMatrix}>Brand × Channel Matrix</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={exportCurrentView}>Export Current View</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                    <Download className="h-3 w-3" />
+                    <span className="hidden sm:inline">Export</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={exportBrandPerformance}>Brand Performance Summary</DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportBrandCounterMatrix}>Brand × Counter Matrix</DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportCategorySummary}>Category Summary</DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportBrandMonthlyTrend}>Brand Monthly Trend</DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportBrandChannelMatrix}>Brand × Channel Matrix</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={exportCurrentView}>Export Current View</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* KPI Cards */}
-      <div className={`grid gap-4 ${timePeriod === "range" ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-5" : "grid-cols-2 md:grid-cols-4"}`}>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{fmtCurrency(totalSales)}</div>
-          </CardContent>
-        </Card>
-        {timePeriod === "range" ? (
-          <>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
-                <Tag className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{totalOrders > 0 ? totalOrders.toLocaleString() : "—"}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Units</CardTitle>
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "—"}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg Orders/Day</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{avgOrdersPerDay !== null ? avgOrdersPerDay.toFixed(1) : "—"}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg Units/Day</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{avgUnitsPerDay !== null ? avgUnitsPerDay.toFixed(1) : "—"}</div>
-              </CardContent>
-            </Card>
-          </>
-        ) : (
-          <>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Units</CardTitle>
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{totalUnits > 0 ? totalUnits.toLocaleString() : "—"}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">vs. Last Month</CardTitle>
-                {vsLastMonth !== null && vsLastMonth >= 0 ? <TrendingUp className="h-4 w-4 text-green-600" /> : vsLastMonth !== null ? <TrendingDown className="h-4 w-4 text-red-500" /> : <TrendingUp className="h-4 w-4 text-muted-foreground" />}
-              </CardHeader>
-              <CardContent>
-                {vsLastMonth !== null ? (
-                  <div className={`text-2xl font-bold ${vsLastMonth >= 0 ? "text-green-600" : "text-red-500"}`}>
-                    {vsLastMonth >= 0 ? "+" : ""}{vsLastMonth.toFixed(1)}%
-                  </div>
-                ) : (
-                  <div className="text-2xl font-bold text-muted-foreground">—</div>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">vs. Last Year</CardTitle>
-                {vsLastYear !== null && vsLastYear >= 0 ? <CalendarClock className="h-4 w-4 text-green-600" /> : vsLastYear !== null ? <CalendarClock className="h-4 w-4 text-red-500" /> : <CalendarClock className="h-4 w-4 text-muted-foreground" />}
-              </CardHeader>
-              <CardContent>
-                {vsLastYear !== null ? (
-                  <div className={`text-2xl font-bold ${vsLastYear >= 0 ? "text-green-600" : "text-red-500"}`}>
-                    {vsLastYear >= 0 ? "+" : ""}{vsLastYear.toFixed(1)}%
-                  </div>
-                ) : (
-                  <div className="text-2xl font-bold text-muted-foreground">—</div>
-                )}
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
-
-      {/* ── Monthly Projection Card ─────────────────────────────────── */}
-      {brandProjection && (
-        <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <CalendarDays className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span className="font-semibold text-sm text-blue-800 dark:text-blue-200">
-                Monthly Projection — {MONTH_LABELS[brandProjection.month - 1]} {brandProjection.year}
-              </span>
-              <span className="text-xs text-muted-foreground ml-1">
-                (based on {brandProjection.daysElapsed} of {brandProjection.monthDays} days)
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  {rangeStart.slice(8)} – {rangeEnd.slice(8)} {MONTH_LABELS[brandProjection.month - 1]}
-                </p>
-                <p className="text-lg font-bold">{fmtCurrency(totalSales)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Daily Run Rate</p>
-                <p className="text-lg font-bold">{fmtCurrency(Math.round(brandProjection.dailyRate))}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Projected Full Month</p>
-                <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{fmtCurrency(brandProjection.projected)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">vs {brandLmLabel} Actual</p>
-                {brandProjection.vsLM !== null ? (
-                  <div className={brandProjection.vsLM >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-                    <p className="text-lg font-bold">
-                      {brandProjection.vsLM >= 0 ? "▲" : "▼"} {fmtCurrency(Math.abs(brandProjection.vsLM))}
-                    </p>
-                    <p className="text-xs font-medium">
-                      {brandProjection.vsLMPct! >= 0 ? "+" : ""}{brandProjection.vsLMPct!.toFixed(1)}% vs {fmtCurrency(brandProjection.lmTotalSales)}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No {brandLmLabel} data</p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Sales Trend by Brand (multi-line) */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            Sales Trend by Brand
-            <Badge variant="outline" className="ml-2 font-normal">
-              {timePeriod === "range" ? "Daily" : timePeriod.charAt(0).toUpperCase() + timePeriod.slice(1)}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {brandTrendData.length === 0 ? (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-              No data for selected filters
-            </div>
-          ) : timePeriod === "yearly" ? (
-            <ResponsiveContainer width="100%" height={350}>
-              <LineChart data={brandTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => fmtCurrency(v)} />
-                <Legend />
-                {Array.from(selectedYears).sort().map((y, i) => (
-                  <Line
-                    key={y}
-                    type="monotone"
-                    dataKey={y}
-                    stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                  />
+          {timePeriod === "range" && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1 border-t border-border/50">
+              <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                {(["7d", "14d", "30d", "mtd"] as const).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs rounded-md font-medium shrink-0 transition-colors border",
+                      quickPreset === preset
+                        ? "bg-primary text-primary-foreground border-primary font-semibold shadow-2xs"
+                        : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60",
+                    )}
+                  >
+                    {preset === "mtd" ? "This Month" : `Last ${preset.slice(0, -1)}D`}
+                  </button>
                 ))}
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <ResponsiveContainer width="100%" height={350}>
-              <LineChart data={brandTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 11 }}
-                  interval={brandTrendData.length > 60 ? Math.floor(brandTrendData.length / 15) : "preserveStartEnd"}
-                />
-                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => fmtCurrency(v)} />
-                <Legend />
-                {activeBrandList.map((b, i) => (
-                  <Line
-                    key={b.id}
-                    type="monotone"
-                    dataKey={b.name}
-                    stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 3 }}
+                <button
+                  type="button"
+                  onClick={() => setQuickPreset("custom")}
+                  className={cn(
+                    "px-2.5 py-1 text-xs rounded-md font-medium shrink-0 transition-colors border",
+                    quickPreset === "custom"
+                      ? "bg-primary text-primary-foreground border-primary font-semibold shadow-2xs"
+                      : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60",
+                  )}
+                >
+                  Custom
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                  <span className="text-[11px] text-muted-foreground">From</span>
+                  <Input
+                    type="date"
+                    value={rangeStart}
+                    onChange={(e) => { setRangeStart(e.target.value); setQuickPreset("custom"); }}
+                    className="h-8 text-xs w-full sm:w-[135px]"
+                    aria-label="From date"
                   />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+                </div>
+                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                  <span className="text-[11px] text-muted-foreground">To</span>
+                  <Input
+                    type="date"
+                    value={rangeEnd}
+                    onChange={(e) => { setRangeEnd(e.target.value); setQuickPreset("custom"); }}
+                    className="h-8 text-xs w-full sm:w-[135px]"
+                    aria-label="To date"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {timePeriod === "monthly" && (
+            <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Year</span>
+                <Select value={monthlyYear} onValueChange={setMonthlyYear}>
+                  <SelectTrigger className="w-[95px] h-8 text-xs" aria-label="Year"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {yearOptions.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Month</span>
+                <Select value={monthlyMonth} onValueChange={setMonthlyMonth}>
+                  <SelectTrigger className="w-[120px] h-8 text-xs" aria-label="Month"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Months</SelectItem>
+                    {MONTH_LABELS.map((ml, i) => (
+                      <SelectItem key={i} value={String(i + 1).padStart(2, "0")}>{ml}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          {timePeriod === "yearly" && (
+            <div className="flex items-center gap-3 flex-wrap pt-1 border-t border-border/50">
+              {yearOptions.map((y) => (
+                <label key={y} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <Checkbox
+                    checked={selectedYears.has(y)}
+                    onCheckedChange={(checked) => {
+                      setSelectedYears((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.add(y); else next.delete(y);
+                        if (next.size === 0) next.add(y);
+                        return next;
+                      });
+                    }}
+                  />
+                  {y}
+                </label>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Brand Comparison + Category Comparison */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-        {/* Brand Comparison */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Brand Comparison</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {brandCompareData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-                No data
+      <Sheet open={mobileFilterOpen} onOpenChange={setMobileFilterOpen}>
+        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl p-4 space-y-4">
+          <SheetHeader className="text-left border-b pb-2">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-sm font-bold">Filter brands</SheetTitle>
+              <Button variant="ghost" size="sm" onClick={filtersReset} className="h-7 text-xs text-primary">
+                Reset All
+              </Button>
+            </div>
+            <SheetDescription className="text-xs">
+              Limit the view by category, brand, and where it sold
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold">Categories</span>
+              <div className="flex gap-2 text-xs">
+                <button type="button" className="text-primary underline" onClick={() => { setSelectedCategories(null); setSelectedBrands(null); }}>All</button>
+                <button type="button" className="text-primary underline" onClick={() => { setSelectedCategories(new Set()); setSelectedBrands(new Set()); }}>None</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {categories.map((cat) => (
+                <label key={cat} className="flex items-center gap-2 p-2 rounded-lg border bg-muted/30 text-xs cursor-pointer">
+                  <Checkbox
+                    checked={activeCategories.has(cat)}
+                    onCheckedChange={() => {
+                      toggleSet(setSelectedCategories, categories, cat);
+                      setSelectedBrands(null);
+                    }}
+                  />
+                  <span className="truncate">{cat}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold">Brands</span>
+              <div className="flex gap-2 text-xs">
+                <button type="button" className="text-primary underline" onClick={() => setSelectedBrands(null)}>All</button>
+                <button type="button" className="text-primary underline" onClick={() => setSelectedBrands(new Set())}>None</button>
+              </div>
+            </div>
+            <div className="max-h-[180px] overflow-y-auto space-y-1 pr-1">
+              {categoryFilteredBrands.map((b) => (
+                <label key={b.id} className="flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 text-xs cursor-pointer">
+                  <Checkbox
+                    checked={activeBrandIds.has(b.id)}
+                    onCheckedChange={() => toggleSet(setSelectedBrands, categoryFilteredBrands.map((x) => x.id), b.id)}
+                  />
+                  <span className="truncate flex-1">{b.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{b.category}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold">Where it sold</span>
+              <div className="inline-flex rounded-lg border bg-muted/60 p-0.5" role="group" aria-label="Counter or channel">
+                <button type="button" onClick={() => { setCounterViewMode("channel"); setSelectedCounters(null); }} className={cn("px-2 py-0.5 text-[11px] rounded-md", counterViewMode === "channel" ? "bg-background font-semibold shadow-2xs" : "text-muted-foreground")}>Channel</button>
+                <button type="button" onClick={() => { setCounterViewMode("counter"); setSelectedChannels(null); }} className={cn("px-2 py-0.5 text-[11px] rounded-md", counterViewMode === "counter" ? "bg-background font-semibold shadow-2xs" : "text-muted-foreground")}>Counter</button>
+              </div>
+            </div>
+            {counterViewMode === "channel" ? (
+              <div className="grid grid-cols-2 gap-2">
+                {channels.map((ch) => (
+                  <label key={ch} className="flex items-center gap-2 p-2 rounded-lg border bg-muted/30 text-xs cursor-pointer">
+                    <Checkbox checked={activeChannels.has(ch)} onCheckedChange={() => toggleSet(setSelectedChannels, channels, ch)} />
+                    <span className="truncate">{ch}</span>
+                  </label>
+                ))}
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={Math.max(300, brandCompareData.length * 32)}>
-                <BarChart data={brandCompareData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="name" width={70} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-                  <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
-                    {brandCompareData.map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+              <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                {Object.entries(posGroupedByChannel).map(([channel, locs]) => (
+                  <div key={channel} className="space-y-1">
+                    <div className="text-[11px] font-semibold text-muted-foreground uppercase">{channel}</div>
+                    {locs.map((loc) => (
+                      <label key={loc.id} className="flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 text-xs cursor-pointer">
+                        <Checkbox
+                          checked={activeCounterIds.has(loc.id)}
+                          onCheckedChange={() => {
+                            const allPos = posLocations.filter((p) => activeChannels.has(p.salesChannel));
+                            toggleSet(setSelectedCounters, allPos.map((p) => p.id), loc.id);
+                          }}
+                        />
+                        <span className="truncate">{loc.storeName}</span>
+                      </label>
                     ))}
-                  </Bar>
-                </BarChart>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Button className="w-full h-9 text-xs" onClick={() => setMobileFilterOpen(false)}>
+            Apply Filters
+          </Button>
+        </SheetContent>
+      </Sheet>
+
+      <div className={cn("grid gap-2 sm:gap-3.5", timePeriod === "range" ? "grid-cols-2 lg:grid-cols-5" : "grid-cols-2 lg:grid-cols-4")}>
+        <KpiCard label="Total Sales" value={fmtCurrency(totalSales)} loading={isDataLoading} icon={<DollarSign className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="primary" />
+        {timePeriod === "range" ? (
+          <>
+            <KpiCard label="Total Orders" value={totalOrders > 0 ? totalOrders.toLocaleString() : "—"} loading={isDataLoading} icon={<Tag className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="blue" />
+            <KpiCard label="Total Units" value={totalUnits > 0 ? totalUnits.toLocaleString() : "—"} loading={isDataLoading} icon={<Package className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="amber" />
+            <KpiCard label="Avg Orders/Day" value={avgOrdersPerDay !== null ? avgOrdersPerDay.toFixed(1) : "—"} loading={isDataLoading} icon={<TrendingUp className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="primary" />
+            <KpiCard label="Avg Units/Day" value={avgUnitsPerDay !== null ? avgUnitsPerDay.toFixed(1) : "—"} loading={isDataLoading} icon={<Package className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="amber" />
+          </>
+        ) : (
+          <>
+            <KpiCard label="Total Units" value={totalUnits > 0 ? totalUnits.toLocaleString() : "—"} loading={isDataLoading} icon={<Package className="h-3 w-3 sm:h-3.5 sm:w-3.5" />} tone="amber" />
+            <KpiCard
+              label="vs. Last Month"
+              value={vsLastMonth !== null ? `${vsLastMonth >= 0 ? "+" : ""}${vsLastMonth.toFixed(1)}%` : "—"}
+              loading={isDataLoading}
+              icon={vsLastMonth !== null && vsLastMonth < 0 ? <TrendingDown className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> : <TrendingUp className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
+              tone={vsLastMonth === null ? "muted" : vsLastMonth >= 0 ? "up" : "down"}
+              valueClass={vsLastMonth === null ? undefined : vsLastMonth >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}
+            />
+            <KpiCard
+              label="vs. Last Year"
+              value={vsLastYear !== null ? `${vsLastYear >= 0 ? "+" : ""}${vsLastYear.toFixed(1)}%` : "—"}
+              loading={isDataLoading}
+              icon={<CalendarClock className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
+              tone={vsLastYear === null ? "muted" : vsLastYear >= 0 ? "up" : "down"}
+              valueClass={vsLastYear === null ? undefined : vsLastYear >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}
+            />
+          </>
+        )}
+      </div>
+
+      {brandProjection && (() => {
+        const pctOfMonth = Math.min(100, Math.max(0, Math.round((brandProjection.daysElapsed / brandProjection.monthDays) * 100)));
+        return (
+          <Card className="rounded-xl border border-blue-200 dark:border-blue-900 bg-gradient-to-br from-blue-50/70 via-blue-50/30 to-background dark:from-blue-950/30 dark:via-blue-950/10 dark:to-background overflow-hidden shadow-2xs">
+            <CardContent className="p-3.5 sm:p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 mb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-blue-600/10 dark:bg-blue-400/10 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                    <CalendarDays className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="font-semibold text-xs sm:text-sm text-blue-900 dark:text-blue-200">
+                    Monthly Projection — {MONTH_LABELS[brandProjection.month - 1]} {brandProjection.year}
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <span>Day {brandProjection.daysElapsed} of {brandProjection.monthDays}</span>
+                  <span className="font-semibold text-blue-600 dark:text-blue-400">({pctOfMonth}%)</span>
+                </div>
+              </div>
+              <div className="w-full bg-blue-200/50 dark:bg-blue-900/40 h-1.5 rounded-full overflow-hidden mb-3" role="progressbar" aria-valuenow={pctOfMonth} aria-valuemin={0} aria-valuemax={100} aria-label="Month progress">
+                <div className="bg-blue-600 dark:bg-blue-400 h-full rounded-full" style={{ width: `${pctOfMonth}%` }} />
+              </div>
+              <div className="bg-background/95 dark:bg-card/95 rounded-xl p-3 sm:p-4 border border-blue-100 dark:border-blue-900/50 mb-3 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wider block">Projected Full Month</span>
+                    <div className="text-xl sm:text-3xl font-extrabold text-blue-600 dark:text-blue-400 tracking-tight">{fmtCurrency(brandProjection.projected)}</div>
+                  </div>
+                  {brandProjection.vsLM !== null && (
+                    <div className={cn(
+                      "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold w-fit",
+                      brandProjection.vsLM >= 0
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800"
+                        : "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800",
+                    )}>
+                      <span>{brandProjection.vsLM >= 0 ? "▲ +" : "▼ "}{Math.abs(brandProjection.vsLMPct ?? 0).toFixed(1)}%</span>
+                      <span className="font-normal opacity-85 text-[11px]">vs {brandLmLabel}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 pt-1 text-center sm:text-left">
+                <div className="p-1">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{rangeStart.slice(8)}–{rangeEnd.slice(8)} {MONTH_LABELS[brandProjection.month - 1]}</p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">{fmtCurrency(totalSales)}</p>
+                </div>
+                <div className="p-1 border-x border-blue-200/50 dark:border-blue-900/40">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">Daily Run Rate</p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">{fmtCurrency(Math.round(brandProjection.dailyRate))}</p>
+                </div>
+                <div className="p-1">
+                  <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{brandLmLabel} Total</p>
+                  <p className="text-xs sm:text-base font-bold text-foreground truncate">{brandProjection.lmTotalSales > 0 ? fmtCurrency(brandProjection.lmTotalSales) : "—"}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 flex flex-row items-center justify-between space-y-0 border-b border-border/50">
+          <div className="flex items-center gap-2 min-w-0">
+            <CardTitle className="text-xs sm:text-sm font-semibold">Sales Trend by Brand</CardTitle>
+            <Badge variant="outline" className="text-[9px] sm:text-[10px] font-normal py-0 shrink-0">
+              {timePeriod === "range" ? (quickPreset !== "custom" ? quickPreset.toUpperCase() : "Daily") : timePeriod === "monthly" ? "Monthly" : "Yearly"}
+            </Badge>
+          </div>
+          {timePeriod === "range" && (
+            <div className="flex items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg text-[10px] sm:text-[11px] shrink-0">
+              {(["7d", "14d", "30d", "mtd"] as const).map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleSelectPreset(preset)}
+                  className={cn(
+                    "px-1.5 sm:px-2 py-0.5 rounded-md font-medium transition-colors",
+                    quickPreset === preset ? "bg-background text-foreground shadow-2xs font-semibold" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {preset.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
+        </CardHeader>
+        <CardContent className="p-2 sm:p-4 pt-3">
+          {isDataLoading ? (
+            <div className="flex flex-col items-center justify-center h-[200px] sm:h-[260px] gap-2" aria-busy="true">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading trend data...</span>
+            </div>
+          ) : brandTrendData.length === 0 ? (
+            <div className="flex items-center justify-center h-[200px] sm:h-[260px] text-muted-foreground text-xs sm:text-sm" role="status">
+              No data for selected filters
+            </div>
+          ) : (
+            <div className="h-[210px] sm:h-[260px] md:h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={brandTrendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 10 }}
+                    tickLine={false}
+                    minTickGap={16}
+                    interval={brandTrendData.length > 35 ? Math.floor(brandTrendData.length / 10) : "preserveStartEnd"}
+                  />
+                  <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
+                    formatter={(v: number) => fmtCurrency(v)}
+                  />
+                  <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }} />
+                  {timePeriod === "yearly"
+                    ? Array.from(selectedYears).sort().map((y, i) => (
+                      <Line key={y} type="monotone" dataKey={y} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                    ))
+                    : activeBrandList.map((b, i) => (
+                      <Line key={b.id} type="monotone" dataKey={b.name} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={1.75} dot={false} activeDot={{ r: 3 }} />
+                    ))}
+                </LineChart>
               </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+        <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+          <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+            <CardTitle className="text-xs sm:text-sm font-semibold">Brand Comparison</CardTitle>
+          </CardHeader>
+          <CardContent className="p-2 sm:p-4 pt-3">
+            {brandCompareData.length === 0 ? (
+              <div className="flex items-center justify-center h-[160px] text-muted-foreground text-xs" role="status">No data</div>
+            ) : (
+              <>
+                <div className="space-y-2 md:hidden">
+                  {brandCompareData.map((row, i) => {
+                    const share = totalSales > 0 ? (row.amount / totalSales) * 100 : 0;
+                    return (
+                      <div key={row.name} className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium truncate">{row.name}</span>
+                          <span className="tabular-nums shrink-0 font-semibold">{fmtCurrency(row.amount)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${Math.max(2, share)}%`, background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                          </div>
+                          <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{share.toFixed(0)}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hidden md:block" style={{ height: Math.max(220, brandCompareData.length * 28) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={brandCompareData} layout="vertical" margin={{ left: 4, right: 8, top: 4, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                      <YAxis type="category" dataKey="name" width={72} tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
+                      <Bar dataKey="amount" radius={[0, 4, 4, 0]}>
+                        {brandCompareData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
 
-        {/* Category Comparison */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Category Comparison</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {categoryData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-                No data
+        <ShareCard title="Category Comparison" rows={categoryData} total={totalSales} empty="No data" />
+      </div>
+
+      <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+          <CardTitle className="text-xs sm:text-sm font-semibold">Sales by Counter</CardTitle>
+        </CardHeader>
+        <CardContent className="p-2 sm:p-4 pt-3">
+          {counterStackedData.length === 0 ? (
+            <div className="flex items-center justify-center h-[160px] text-muted-foreground text-xs" role="status">No data</div>
+          ) : (
+            <>
+              <div className="space-y-2 md:hidden">
+                {counterStackedData.map((row) => {
+                  const share = totalSales > 0 ? (row.total / totalSales) * 100 : 0;
+                  return (
+                    <div key={row.counter} className="p-2.5 rounded-lg border bg-card/60 space-y-1 shadow-2xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold truncate">{row.counter}</span>
+                        <span className="text-xs font-bold tabular-nums shrink-0">{fmtCurrency(row.total)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(2, share)}%` }} />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground tabular-nums">{share.toFixed(0)}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
+              <div className="hidden md:block" style={{ height: Math.max(240, counterStackedData.length * 32) }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={counterStackedData} layout="vertical" margin={{ left: 4, right: 8, top: 4, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="counter" width={88} tick={{ fontSize: 10 }} />
+                    <Tooltip formatter={(v: number) => fmtCurrency(v)} />
+                    <Legend wrapperStyle={{ fontSize: "11px" }} />
+                    {activeBrandList.map((b, i) => (
+                      <Bar key={b.id} dataKey={b.name} stackId="brands" fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <ShareCard title="Sales by Channel" rows={channelPieData} total={totalSales} empty="No data" />
+    </div>
+  );
+}
+
+const KPI_TONES: Record<string, string> = {
+  primary: "bg-primary/10 text-primary",
+  blue: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  up: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  down: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  muted: "bg-muted text-muted-foreground",
+};
+
+function KpiCard({
+  label, value, loading, icon, tone, valueClass,
+}: {
+  label: string;
+  value: string;
+  loading: boolean;
+  icon: ReactNode;
+  tone: keyof typeof KPI_TONES;
+  valueClass?: string;
+}) {
+  return (
+    <Card className="p-3 sm:p-4 rounded-xl border border-border/80 shadow-2xs">
+      <div className="flex items-center justify-between gap-1 pb-0.5">
+        <span className="text-[11px] sm:text-sm font-medium text-foreground/80 leading-tight">{label}</span>
+        <div className={cn("w-5 h-5 sm:w-6 sm:h-6 rounded-md flex items-center justify-center shrink-0", KPI_TONES[tone])}>
+          {icon}
+        </div>
+      </div>
+      <div className="mt-1">
+        {loading ? (
+          <Skeleton className="h-6 sm:h-7 w-20 my-1" />
+        ) : (
+          <div className={cn("text-base sm:text-xl lg:text-2xl font-bold tracking-tight text-foreground truncate", valueClass)}>
+            {value}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ShareCard({
+  title, rows, total, empty,
+}: {
+  title: string;
+  rows: { name: string; value: number }[];
+  total: number;
+  empty: string;
+}) {
+  return (
+    <Card className="rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+      <CardHeader className="p-3 sm:p-4 pb-2 border-b border-border/50">
+        <CardTitle className="text-xs sm:text-sm font-semibold">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="p-2 sm:p-4 pt-3">
+        {rows.length === 0 ? (
+          <div className="flex items-center justify-center h-[140px] text-muted-foreground text-xs" role="status">{empty}</div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-[160px_1fr] gap-3 items-center">
+            <div className="h-[150px] sm:h-[170px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={100}
-                    dataKey="value"
-                    nameKey="name"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {categoryData.map((_, i) => (
+                  <Pie data={rows} cx="50%" cy="50%" innerRadius={36} outerRadius={62} paddingAngle={2} dataKey="value" nameKey="name">
+                    {rows.map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
                 </PieChart>
               </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Sales by Counter (stacked by brand) */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sales by Counter (by Brand)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {counterStackedData.length === 0 ? (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-              No data
             </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={Math.max(300, counterStackedData.length * 36)}>
-              <BarChart data={counterStackedData} layout="vertical" margin={{ left: 10, right: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <YAxis type="category" dataKey="counter" width={80} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: number) => fmtCurrency(v)} />
-                <Legend />
-                {activeBrandList.map((b, i) => (
-                  <Bar
-                    key={b.id}
-                    dataKey={b.name}
-                    stackId="brands"
-                    fill={CHART_COLORS[i % CHART_COLORS.length]}
-                  />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Sales by Channel */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sales by Channel</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {channelPieData.length === 0 ? (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
-              No data
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={channelPieData}
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  dataKey="value"
-                  nameKey="name"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                >
-                  {channelPieData.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => [fmtCurrency(v), "Sales"]} />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            <ul className="space-y-1.5 min-w-0" role="list">
+              {rows.map((row, i) => {
+                const share = total > 0 ? (row.value / total) * 100 : 0;
+                return (
+                  <li key={row.name} className="flex items-center gap-2 text-xs min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} aria-hidden />
+                    <span className="truncate flex-1">{row.name}</span>
+                    <span className="tabular-nums text-muted-foreground shrink-0">{share.toFixed(0)}%</span>
+                    <span className="tabular-nums font-medium shrink-0 w-[72px] text-right">{fmtCurrency(row.value)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
