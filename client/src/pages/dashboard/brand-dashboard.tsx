@@ -1315,34 +1315,36 @@ export default function BrandDashboard() {
               No data for selected filters
             </div>
           ) : (
-            <div className="h-[210px] sm:h-[260px] md:h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={brandTrendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 10 }}
-                    tickLine={false}
-                    minTickGap={16}
-                    interval={brandTrendData.length > 35 ? Math.floor(brandTrendData.length / 10) : "preserveStartEnd"}
-                  />
-                  <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
-                  <Tooltip content={<TrendTooltip />} />
-                  {timePeriod === "yearly"
-                    ? Array.from(selectedYears).sort().map((y, i) => (
-                      <Line key={y} type="monotone" dataKey={y} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
-                    ))
-                    : activeBrandList.map((b, i) => (
-                      <Line key={b.id} type="monotone" dataKey={b.name} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={1.75} dot={false} activeDot={{ r: 3 }} />
-                    ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <BrandKey
-              items={timePeriod === "yearly"
-                ? Array.from(selectedYears).sort().map((y, i) => ({ name: y, color: CHART_COLORS[i % CHART_COLORS.length] }))
-                : activeBrandList.map((b, i) => ({ name: b.name, color: CHART_COLORS[i % CHART_COLORS.length] }))}
-            />
+            <>
+              <div className="h-[210px] sm:h-[260px] md:h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={brandTrendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 10 }}
+                      tickLine={false}
+                      minTickGap={16}
+                      interval={brandTrendData.length > 35 ? Math.floor(brandTrendData.length / 10) : "preserveStartEnd"}
+                    />
+                    <YAxis tick={{ fontSize: 10 }} width={38} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip content={<TrendTooltip />} />
+                    {timePeriod === "yearly"
+                      ? Array.from(selectedYears).sort().map((y, i) => (
+                        <Line key={y} type="monotone" dataKey={y} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+                      ))
+                      : activeBrandList.map((b, i) => (
+                        <Line key={b.id} type="monotone" dataKey={b.name} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={1.75} dot={false} activeDot={{ r: 3 }} />
+                      ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <BrandKey
+                items={timePeriod === "yearly"
+                  ? Array.from(selectedYears).sort().map((y, i) => ({ name: y, color: CHART_COLORS[i % CHART_COLORS.length] }))
+                  : activeBrandList.map((b, i) => ({ name: b.name, color: CHART_COLORS[i % CHART_COLORS.length] }))}
+              />
+            </>
           )}
         </CardContent>
       </Card>
