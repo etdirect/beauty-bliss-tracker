@@ -764,7 +764,7 @@ export default function BAEntry() {
         </div>
       </header>
 
-      <div className="max-w-lg mx-auto p-3 sm:p-4 space-y-3.5 pb-36">
+      <div className="max-w-lg mx-auto px-3 sm:px-4 pt-3 sm:pt-4 space-y-3.5 pb-[calc(13rem+env(safe-area-inset-bottom))]">
         <Card className="rounded-xl border border-border/80 shadow-2xs">
           <CardContent className="p-3 sm:p-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
