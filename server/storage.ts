@@ -559,6 +559,10 @@ export class PgStorage implements IStorage {
         console.log("[pg] Brand-POS availability seeded");
       }
     }
+
+    const { bindCommissionQuery, ensureCommissionSchema } = await import("./commissionRepo");
+    bindCommissionQuery((text, params) => this.q(text, params));
+    await ensureCommissionSchema();
   }
 
   // ── Row mappers ──
@@ -620,7 +624,7 @@ export class PgStorage implements IStorage {
     return { id: r.id, userId: r.user_id, posId: r.pos_id };
   }
   private mapBrandPosAvailability(r: any): BrandPosAvailability {
-    return { id: r.id, brandId: r.brand_id, posId: r.pos_id };
+    return { id: r.id, brandId: r.brand_id, posId: r.pos_id, isPriority: r.is_priority ?? false };
   }
 
   // ── Counters ──
@@ -1518,7 +1522,16 @@ export class MemStorage implements IStorage {
   }
 
   async init(): Promise<void> {
-    // No-op for in-memory storage
+    const { ensureCommissionMemory } = await import("./commissionRepo");
+    ensureCommissionMemory({
+      pos: Array.from(this.posLocationsMap.values()),
+      brands: Array.from(this.brands.values()).map(b => ({ id: b.id, name: b.name })),
+      setPriority: (brandId, posId, value) => {
+        for (const row of Array.from(this.brandPosAvailabilityMap.values())) {
+          if (row.brandId === brandId && row.posId === posId) row.isPriority = value;
+        }
+      },
+    });
   }
 
   private seed() {
@@ -1592,7 +1605,7 @@ export class MemStorage implements IStorage {
     for (const posId of posIds) {
       for (const bid of brandIds) {
         const id = randomUUID();
-        this.brandPosAvailabilityMap.set(id, { id, brandId: bid, posId });
+        this.brandPosAvailabilityMap.set(id, { id, brandId: bid, posId, isPriority: false });
       }
     }
 
@@ -1601,7 +1614,7 @@ export class MemStorage implements IStorage {
     const ba1Id = randomUUID();
     const adminHash = bcrypt.hashSync("1234", 10);
     const ba1Hash = bcrypt.hashSync("1111", 10);
-    this.usersMap.set(adminId, { id: adminId, username: "admin", pin: adminHash, name: "Admin", role: "management", isActive: true, canViewHistory: true });
+    this.usersMap.set(adminId, { id: adminId, username: "admin", pin: adminHash, name: "Admin", role: "admin", isActive: true, canViewHistory: true });
     this.usersMap.set(ba1Id, { id: ba1Id, username: "ba1", pin: ba1Hash, name: "BA Demo", role: "ba", isActive: true, canViewHistory: false });
 
     // BA1 assigned to LOGON/TS (index 2)
@@ -1628,7 +1641,7 @@ export class MemStorage implements IStorage {
           const id = randomUUID();
           const units = Math.floor(Math.random() * 8) + 1;
           const amount = units * (Math.floor(Math.random() * 300) + 100);
-          this.salesEntries.set(id, { id, counterId: counterIds[ci], brandId: brandIds[bi], date: dateStr, units, amount, gwpCount: 0 });
+          this.salesEntries.set(id, { id, counterId: counterIds[ci], brandId: brandIds[bi], date: dateStr, units, amount, gwpCount: 0, orders: 0, submittedBy: null });
         }
       }
     }
@@ -1860,7 +1873,7 @@ export class MemStorage implements IStorage {
   }
   async setBrandPosAvailability(brandId: string, posId: string, enabled: boolean): Promise<void> {
     const existing = Array.from(this.brandPosAvailabilityMap.values()).find(a => a.brandId === brandId && a.posId === posId);
-    if (enabled && !existing) { const id = randomUUID(); this.brandPosAvailabilityMap.set(id, { id, brandId, posId }); }
+    if (enabled && !existing) { const id = randomUUID(); this.brandPosAvailabilityMap.set(id, { id, brandId, posId, isPriority: false }); }
     else if (!enabled && existing) { this.brandPosAvailabilityMap.delete(existing.id); }
   }
 

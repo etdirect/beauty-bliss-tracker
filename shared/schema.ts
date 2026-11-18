@@ -93,6 +93,7 @@ export const brandPosAvailability = pgTable("brand_pos_availability", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   brandId: varchar("brand_id").notNull(),
   posId: varchar("pos_id").notNull(),
+  isPriority: boolean("is_priority").notNull().default(false),
 });
 
 export const insertBrandPosAvailabilitySchema = createInsertSchema(brandPosAvailability).omit({ id: true });
@@ -344,6 +345,57 @@ export type InsertIncentiveEntry = z.infer<typeof insertIncentiveEntrySchema>;
 export type IncentiveEntry = typeof incentiveEntries.$inferSelect;
 
 // Incentive category display labels
+// === BA commission scheme (December 2026). Kept beside sales_entries. ===
+export const salesCounters = pgTable("sales_counters", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  channel: text("channel").notNull(),
+  tierTable: text("tier_table").notNull(),
+  tradeMargin: real("trade_margin").notNull().default(0),
+  minTarget: real("min_target").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: text("created_at").notNull(),
+  updatedBy: varchar("updated_by"),
+  updatedAt: text("updated_at"),
+});
+
+export const salesCounterMembers = pgTable("sales_counter_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  counterId: varchar("counter_id").notNull(),
+  shopCode: text("shop_code").notNull(),
+  posId: varchar("pos_id"),
+  createdAt: text("created_at").notNull(),
+});
+
+export const commissionTiers = pgTable("commission_tiers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tierTable: text("tier_table").notNull(),
+  lower: real("lower").notNull(),
+  upper: real("upper"),
+  rate: real("rate").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+  updatedBy: varchar("updated_by"),
+  updatedAt: text("updated_at"),
+});
+
+export const commissionSettings = pgTable("commission_settings", {
+  id: varchar("id").primaryKey(),
+  guaranteedRate: real("guaranteed_rate").notNull(),
+  defaultBasicSalary: real("default_basic_salary").notNull(),
+  partTimeDayRate: real("part_time_day_rate").notNull(),
+  partTimePlannedRate: real("part_time_planned_rate").notNull(),
+  partTimeUnexpectedRate: real("part_time_unexpected_rate").notNull(),
+  consecutiveDaysThreshold: integer("consecutive_days_threshold").notNull(),
+  reconciliationGapThreshold: real("reconciliation_gap_threshold").notNull(),
+  defaultRestDays: integer("default_rest_days").notNull(),
+  prioritySeeded: boolean("priority_seeded").notNull().default(false),
+  updatedBy: varchar("updated_by"),
+  updatedAt: text("updated_at"),
+  createdAt: text("created_at").notNull(),
+});
+
 export const INCENTIVE_CATEGORY_LABELS: Record<IncentiveCategory, string> = {
   product_units: "Product Sales (Units)",
   product_amount: "Product Sales (Amount)",

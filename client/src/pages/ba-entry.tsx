@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Link } from "wouter";
+import { canUseOfficeScreens } from "@shared/access";
 
 const PROMO_TYPE_COLORS: Record<string, string> = {
   "GWP": "bg-pink-100 text-pink-800 border-pink-200",
@@ -213,7 +214,7 @@ export default function BAEntry() {
   // risked accidental double-entry on re-submit.
 
   // For management users, show all active POS locations; for BA, only assigned
-  const isManagement = user?.role === "management";
+  const isManagement = canUseOfficeScreens(user?.role);
 
   // Fetch existing sales for selected POS + date (to detect previous entries)
   const { data: existingSales = [] } = useQuery<SalesEntry[]>({
@@ -675,6 +676,18 @@ export default function BAEntry() {
                 >
                   <LayoutDashboard className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline ml-1">Dashboard</span>
+                </Button>
+              </Link>
+            )}
+            {user?.role === "ba" && (
+              <Link href="/my-commission">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  aria-label="My commission"
+                >
+                  <span className="text-xs">Commission</span>
                 </Button>
               </Link>
             )}

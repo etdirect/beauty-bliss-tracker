@@ -879,8 +879,15 @@ export default function BADashboard() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
-        <div className="min-w-0">
-          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">My Dashboard</h1>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">My Dashboard</h1>
+            {user?.role === "ba" && (
+              <Link href="/my-commission">
+                <Button variant="outline" size="sm" className="h-7 text-xs">My commission</Button>
+              </Link>
+            )}
+          </div>
           <p className="text-xs sm:text-sm text-muted-foreground truncate">
             {assignedPos.map((p) => p.storeName).join(", ")}
           </p>

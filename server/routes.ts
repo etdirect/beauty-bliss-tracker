@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
+import { registerCommissionRoutes, assertRoleChange } from "./commissionRoutes";
 import multer from "multer";
 import * as XLSX from "xlsx";
 
@@ -39,12 +40,9 @@ async function requireManagement(req: Request, res: Response, next: NextFunction
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
-  // If role not in session (old session), fetch from DB
-  if (!req.session.role) {
-    const user = await storage.getUser(req.session.userId);
-    if (user) req.session.role = user.role;
-  }
-  if (req.session.role !== "management") {
+  const user = await storage.getUser(req.session.userId);
+  if (user) req.session.role = user.role;
+  if (req.session.role !== "management" && req.session.role !== "admin") {
     res.status(403).json({ error: "Management access required" });
     return;
   }
@@ -55,6 +53,7 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  registerCommissionRoutes(app);
 
   // === PUBLIC ENDPOINTS (no auth — server-to-server) ===
   app.get("/api/public/pos-locations", async (_req, res) => {
@@ -219,6 +218,10 @@ export async function registerRoutes(
       if (!username || !pin || !name) {
         return res.status(400).json({ error: "username, pin, name required" });
       }
+      const actor = await storage.getUser(req.session.userId!);
+      if (!assertRoleChange(actor?.role ?? "", role || "ba")) {
+        return res.status(403).json({ error: "Only an admin can assign that role" });
+      }
       const hashed = await bcrypt.hash(pin, 10);
       const user = await storage.createUser({ username, pin: hashed, name, role: role || "ba", isActive: true });
       res.json({ id: user.id, username: user.username, name: user.name, role: user.role, isActive: user.isActive, canViewHistory: user.canViewHistory });
@@ -233,6 +236,12 @@ export async function registerRoutes(
       const updates: any = { ...req.body };
       if (updates.pin) {
         updates.pin = await bcrypt.hash(updates.pin, 10);
+      }
+      if (updates.role) {
+        const actor = await storage.getUser(req.session.userId!);
+        if (!assertRoleChange(actor?.role ?? "", updates.role)) {
+          return res.status(403).json({ error: "Only an admin can assign that role" });
+        }
       }
       const user = await storage.updateUser(req.params.id as string, updates);
       if (!user) return res.status(404).json({ error: "Not found" });

@@ -10,6 +10,7 @@ import BAEntry from "@/pages/ba-entry";
 import BADashboard from "@/pages/ba-dashboard";
 import Dashboard from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
+import MyCommission from "@/pages/my-commission";
 
 interface AuthUser {
   id: string;
@@ -100,6 +101,7 @@ function AppRouter() {
       <Switch>
         <Route path="/" component={BAEntry} />
         <Route path="/my-dashboard" component={BADashboard} />
+        <Route path="/my-commission" component={MyCommission} />
         <Route path="/dashboard">
           <Redirect to="/" />
         </Route>

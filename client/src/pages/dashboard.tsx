@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   BarChart3, Tag, Settings, Gift, Trophy, FileSpreadsheet,
-  LayoutDashboard, Moon, Sun, LogOut, Package, Menu,
+  LayoutDashboard, Moon, Sun, LogOut, Package, Menu, CalendarDays, ClipboardList, Target, Wallet,
 } from "lucide-react";
 
 import ManagementDashboard from "./dashboard/management-dashboard";
@@ -14,6 +14,11 @@ import Promotions from "./dashboard/promotions";
 import IncentiveTracking from "./dashboard/incentive-tracking";
 import PosReconciliation from "./dashboard/pos-reconciliation";
 import SettingsPage from "./dashboard/settings";
+import DutyPage from "./dashboard/duty";
+import ActualsPage from "./dashboard/actuals";
+import TargetsPage from "./dashboard/targets";
+import PayPage from "./dashboard/pay";
+import { canUseOfficeScreens } from "@shared/access";
 
 export const CHART_COLORS = [
   "hsl(340, 65%, 47%)", "hsl(173, 58%, 39%)", "hsl(43, 74%, 49%)",
@@ -24,12 +29,16 @@ export const CHART_COLORS = [
 ];
 
 const navItems = [
-  { path: "/dashboard", label: "Management", icon: BarChart3 },
-  { path: "/dashboard/brands", label: "Brand Analytics", icon: Tag },
-  { path: "/dashboard/promotions", label: "Promotions", icon: Gift },
-  { path: "/dashboard/incentives", label: "Incentive Tracking", icon: Trophy },
-  { path: "/dashboard/reconciliation", label: "POS Reconciliation", icon: FileSpreadsheet },
-  { path: "/dashboard/settings", label: "Settings", icon: Settings },
+  { path: "/dashboard", label: "Management", icon: BarChart3, roles: ["management", "admin", "sales_manager", "brand_manager"] },
+  { path: "/dashboard/brands", label: "Brand Analytics", icon: Tag, roles: ["management", "admin", "sales_manager", "brand_manager"] },
+  { path: "/dashboard/promotions", label: "Promotions", icon: Gift, roles: ["management", "admin"] },
+  { path: "/dashboard/incentives", label: "Incentive Tracking", icon: Trophy, roles: ["management", "admin"] },
+  { path: "/dashboard/reconciliation", label: "POS Reconciliation", icon: FileSpreadsheet, roles: ["management", "admin", "sales_manager"] },
+  { path: "/dashboard/duty", label: "Duty Record", icon: CalendarDays, roles: ["admin", "sales_manager"] },
+  { path: "/dashboard/actuals", label: "Monthly Actuals", icon: ClipboardList, roles: ["admin", "sales_manager"] },
+  { path: "/dashboard/targets", label: "Targets", icon: Target, roles: ["admin", "sales_manager", "brand_manager"] },
+  { path: "/dashboard/pay", label: "Pay Overview", icon: Wallet, roles: ["admin", "sales_manager"] },
+  { path: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["management", "admin"] },
 ];
 
 export default function Dashboard() {
@@ -42,10 +51,28 @@ export default function Dashboard() {
   const [isIncentives] = useRoute("/dashboard/incentives");
   const [isReconciliation] = useRoute("/dashboard/reconciliation");
   const [isSettings] = useRoute("/dashboard/settings");
+  const [isDuty] = useRoute("/dashboard/duty");
+  const [isActuals] = useRoute("/dashboard/actuals");
+  const [isTargets] = useRoute("/dashboard/targets");
+  const [isPay] = useRoute("/dashboard/pay");
 
-  if (!user || user.role !== "management") {
+  if (!user || !canUseOfficeScreens(user.role)) {
     return <Redirect to="/" />;
   }
+
+  const visibleNav = navItems.filter(item => item.roles.includes(user.role));
+  const onPath = (path: string) =>
+    (path === "/dashboard" && isManagement) ||
+    (path === "/dashboard/brands" && isBrands) ||
+    (path === "/dashboard/promotions" && isPromos) ||
+    (path === "/dashboard/incentives" && isIncentives) ||
+    (path === "/dashboard/reconciliation" && isReconciliation) ||
+    (path === "/dashboard/settings" && isSettings) ||
+    (path === "/dashboard/duty" && isDuty) ||
+    (path === "/dashboard/actuals" && isActuals) ||
+    (path === "/dashboard/targets" && isTargets) ||
+    (path === "/dashboard/pay" && isPay);
+  if (!visibleNav.some(item => onPath(item.path))) return <Redirect to="/dashboard" />;
 
   const toggleTheme = () => {
     setIsDark(!isDark);
@@ -65,14 +92,18 @@ export default function Dashboard() {
           </div>
         </div>
         <nav className="space-y-1">
-          {navItems.map(item => {
+          {visibleNav.map(item => {
             const isActive =
               (item.path === "/dashboard" && isManagement) ||
               (item.path === "/dashboard/brands" && isBrands) ||
               (item.path === "/dashboard/promotions" && isPromos) ||
               (item.path === "/dashboard/incentives" && isIncentives) ||
               (item.path === "/dashboard/reconciliation" && isReconciliation) ||
-              (item.path === "/dashboard/settings" && isSettings);
+              (item.path === "/dashboard/settings" && isSettings) ||
+              (item.path === "/dashboard/duty" && isDuty) ||
+              (item.path === "/dashboard/actuals" && isActuals) ||
+              (item.path === "/dashboard/targets" && isTargets) ||
+              (item.path === "/dashboard/pay" && isPay);
             return (
               <Link key={item.path} href={item.path}>
                 <div
@@ -151,6 +182,10 @@ export default function Dashboard() {
           {isIncentives && <IncentiveTracking />}
           {isReconciliation && <PosReconciliation />}
           {isSettings && <SettingsPage />}
+          {isDuty && <DutyPage />}
+          {isActuals && <ActualsPage />}
+          {isTargets && <TargetsPage />}
+          {isPay && <PayPage />}
         </main>
       </div>
     </div>

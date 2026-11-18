@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { useAuth } from "@/App";
+import CommissionSettings from "./commission-settings";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +35,8 @@ interface UserPosAssignment {
 
 export default function SettingsPage() {
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
+  const isAdminUser = authUser?.role === "admin";
 
   // POS Location form
   const [newPosSalesChannel, setNewPosSalesChannel] = useState("");
@@ -479,6 +483,11 @@ export default function SettingsPage() {
 
       <Tabs defaultValue="pos-locations">
         <TabsList className="flex-wrap">
+          {isAdminUser && (
+            <TabsTrigger value="commission" data-testid="tab-commission">
+              Commission
+            </TabsTrigger>
+          )}
           <TabsTrigger value="pos-locations" data-testid="tab-pos-locations">
             <MapPin className="w-4 h-4 mr-1.5" /> POS Locations
           </TabsTrigger>
@@ -500,6 +509,11 @@ export default function SettingsPage() {
         </TabsList>
 
         {/* POS Locations Tab */}
+        {isAdminUser && (
+          <TabsContent value="commission" className="space-y-4 mt-4">
+            <CommissionSettings />
+          </TabsContent>
+        )}
         <TabsContent value="pos-locations" className="space-y-4 mt-4">
           <Card>
             <CardHeader className="pb-2">
@@ -672,6 +686,9 @@ export default function SettingsPage() {
                     <SelectItem value="ba">BA</SelectItem>
                     <SelectItem value="part_time">Part Time</SelectItem>
                     <SelectItem value="management">Management</SelectItem>
+                    {isAdminUser && <SelectItem value="admin">Admin</SelectItem>}
+                    {isAdminUser && <SelectItem value="sales_manager">Sales Manager</SelectItem>}
+                    {isAdminUser && <SelectItem value="brand_manager">Brand Manager</SelectItem>}
                   </SelectContent>
                 </Select>
                 <Button
@@ -692,13 +709,16 @@ export default function SettingsPage() {
             <CardContent className="p-0">
               {(() => {
                 // Sort: management first, then BA, then Part Time; within each group sort by name
-                const roleOrder: Record<string, number> = { management: 0, ba: 1, part_time: 2 };
+                const roleOrder: Record<string, number> = { admin: 0, sales_manager: 1, brand_manager: 2, management: 3, ba: 4, part_time: 5 };
                 const sorted = [...users].sort((a, b) => {
-                  const ra = roleOrder[a.role] ?? 3, rb = roleOrder[b.role] ?? 3;
+                  const ra = roleOrder[a.role] ?? 6, rb = roleOrder[b.role] ?? 6;
                   if (ra !== rb) return ra - rb;
                   return a.name.localeCompare(b.name);
                 });
                 const groups = [
+                  { label: "Admin", items: sorted.filter(u => u.role === "admin") },
+                  { label: "Sales Managers", items: sorted.filter(u => u.role === "sales_manager") },
+                  { label: "Brand Managers", items: sorted.filter(u => u.role === "brand_manager") },
                   { label: "Management", items: sorted.filter(u => u.role === "management") },
                   { label: "Beauty Advisors", items: sorted.filter(u => u.role === "ba") },
                   { label: "Part Time", items: sorted.filter(u => u.role === "part_time") },
@@ -725,11 +745,14 @@ export default function SettingsPage() {
                           <Input className="w-[100px] sm:w-[140px] h-8 text-sm" value={editUserName} onChange={(e) => setEditUserName(e.target.value)} placeholder="Name" />
                           <Input className="w-[80px] sm:w-[120px] h-8 text-sm" value={editUserUsername} onChange={(e) => setEditUserUsername(e.target.value)} placeholder="Username" />
                           <Select value={editUserRole} onValueChange={setEditUserRole}>
-                            <SelectTrigger className="w-[90px] sm:w-[120px] h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="w-[120px] sm:w-[150px] h-8 text-sm"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="ba">BA</SelectItem>
                               <SelectItem value="part_time">Part Time</SelectItem>
                               <SelectItem value="management">Management</SelectItem>
+                              {isAdminUser && <SelectItem value="admin">Admin</SelectItem>}
+                              {isAdminUser && <SelectItem value="sales_manager">Sales Manager</SelectItem>}
+                              {isAdminUser && <SelectItem value="brand_manager">Brand Manager</SelectItem>}
                             </SelectContent>
                           </Select>
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
