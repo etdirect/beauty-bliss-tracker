@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hkMonth, monthDates } from "@shared/hkTime";
+import { counterLabel, matchPos, type PosLike } from "@shared/scheme";
 
 const PREFILL_FROM = "2026-10";
 
@@ -62,20 +63,45 @@ export default function DutyPage() {
     },
   });
   const { data: people = [] } = useQuery<any[]>({ queryKey: ["/api/commission/roster-users"] });
+  const { data: locations = [] } = useQuery<PosLike[]>({ queryKey: ["/api/pos-locations"] });
+  const { data: assignments = [] } = useQuery<{ userId: string; posId: string }[]>({ queryKey: ["/api/user-pos-assignments"] });
+
+  const shopIds = useMemo(() => {
+    if (!counter) return [] as string[];
+    const linked = (counter.members ?? []).map((m: any) => m.posId).filter(Boolean) as string[];
+    if (linked.length > 0) return linked;
+    return (counter.members ?? [])
+      .map((m: any) => matchPos(locations, counter.channel, m.shopCode)?.id)
+      .filter((id: string | undefined): id is string => !!id);
+  }, [counter, locations]);
+
+  const labelFor = (c: any) => {
+    const named = (c.members ?? []).find((m: any) => m.storeName);
+    if (named?.storeName) return counterLabel(c.channel, named.storeName, c.name);
+    const loc = (c.members ?? [])
+      .map((m: any) => matchPos(locations, c.channel, m.shopCode))
+      .find((loc: PosLike | undefined) => loc?.storeName);
+    return loc ? counterLabel(c.channel, loc.storeName, c.name) : c.name;
+  };
 
   const stationedId = useMemo(() => {
-    if (!counter || month < PREFILL_FROM) return null;
-    const shopIds = new Set((counter.members ?? []).map((m: any) => m.posId).filter(Boolean));
+    if (!counter || month < PREFILL_FROM || shopIds.length === 0) return null;
+    const shopSet = new Set(shopIds);
+    const posIdsFor = (person: any) => {
+      const fromRoster = person.posIds as string[] | undefined;
+      if (fromRoster && fromRoster.length > 0) return fromRoster;
+      return assignments.filter(a => a.userId === person.id).map(a => a.posId);
+    };
     const stationed = people.filter((p: any) =>
-      p.role === "ba" && p.canViewHistory && (p.posIds ?? []).some((id: string) => shopIds.has(id)),
+      p.role === "ba" && p.canViewHistory && posIdsFor(p).some(id => shopSet.has(id)),
     );
     return stationed.length === 1 ? stationed[0].id : null;
-  }, [counter, people, month]);
+  }, [counter, people, month, shopIds, assignments]);
 
   useEffect(() => {
     if (!counter) return;
     const saved = new Map((data?.days ?? []).map((d: any) => [d.date, d]));
-    const onlyShop = counter.members?.length === 1 ? counter.members[0].posId : null;
+    const onlyShop = counter.members?.length === 1 ? (counter.members[0].posId || shopIds[0] || null) : null;
     setDays(monthDates(month).map(date => {
       const row = saved.get(date);
       if (row) {
@@ -99,7 +125,7 @@ export default function DutyPage() {
         note: null,
       };
     }));
-  }, [data, counter, month, aeon, stationedId]);
+  }, [data, counter, month, aeon, stationedId, shopIds]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -166,7 +192,7 @@ export default function DutyPage() {
         <Select value={activeId} onValueChange={setCounterId}>
           <SelectTrigger className="w-56"><SelectValue placeholder="Counter" /></SelectTrigger>
           <SelectContent>
-            {counters.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+            {counters.map(c => <SelectItem key={c.id} value={c.id}>{labelFor(c)}</SelectItem>)}
           </SelectContent>
         </Select>
         {locked && <span className="text-sm text-amber-700">This month is locked</span>}

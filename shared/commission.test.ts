@@ -18,6 +18,7 @@ import {
   type DutyStatus,
 } from "./commission";
 import { monthDates } from "./hkTime";
+import { matchPos } from "./scheme";
 
 const cent = (actual: number, expected: number) => {
   expect(Math.abs(actual - expected)).toBeLessThan(0.001);
@@ -42,6 +43,23 @@ function duty(statuses: DutyStatus[], posId = "shop") {
     substitutionType: statuses[i] && statuses[i] !== "WORKED" ? "planned" as const : null,
   }));
 }
+
+describe("shop matching", () => {
+  const locations = [
+    { id: "ts", salesChannel: "LOGON", storeCode: "TS", storeName: "Times Square" },
+    { id: "cwb", salesChannel: "SOGO", storeCode: "CWB", storeName: "Causeway Bay" },
+    { id: "apm", salesChannel: "LOGON", storeCode: "APM", storeName: "APM" },
+  ];
+
+  it("matches Times Square by code and by name", () => {
+    expect(matchPos(locations, "LOG", "TS")?.id).toBe("ts");
+    expect(matchPos(locations, "LOGON", "TS")?.storeName).toBe("Times Square");
+  });
+
+  it("matches SOGO Causeway Bay when the channel is stored as SOGO", () => {
+    expect(matchPos(locations, "SOG", "CWB")?.id).toBe("cwb");
+  });
+});
 
 describe("section 8.1 spec cases", () => {
   it("1 L 90,000 at 100%", () => {

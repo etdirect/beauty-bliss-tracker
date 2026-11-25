@@ -8,7 +8,7 @@ import {
   type SubstitutionType,
   type TierSlice,
 } from "@shared/commission";
-import { PRIORITY_CODES, SCHEME_COUNTERS, brandMatchesCode, matchPos, type PosLike } from "@shared/scheme";
+import { PRIORITY_CODES, SCHEME_COUNTERS, brandMatchesCode, channelKey, counterLabel, matchPos, type PosLike } from "@shared/scheme";
 
 type Q = (sql: string, params?: any[]) => Promise<{ rows: any[] }>;
 
@@ -895,11 +895,14 @@ export async function ensureCommissionSchema() {
   for (const counter of counters) {
     const seed = SCHEME_COUNTERS.find(s => s.code === counter.code);
     if (!seed) continue;
+    let linkedName: string | null = null;
     for (const shop of seed.shops) {
       const member = counter.members.find(m => m.shopCode === shop);
-      if (member?.posId) continue;
-      const found = matchPos(locations, seed.channel, shop);
-      if (!found) continue;
+      const found = member?.posId
+        ? locations.find(p => p.id === member.posId) ?? matchPos(locations, seed.channel, shop)
+        : matchPos(locations, seed.channel, shop);
+      if (found?.storeName) linkedName = found.storeName;
+      if (!found || member?.posId) continue;
       if (!member) {
         await q(
           `INSERT INTO sales_counter_members (id, counter_id, shop_code, pos_id, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
@@ -907,6 +910,13 @@ export async function ensureCommissionSchema() {
         );
       } else {
         await q(`UPDATE sales_counter_members SET pos_id=$3 WHERE counter_id=$1 AND shop_code=$2 AND pos_id IS NULL`, [counter.id, shop, found.id]);
+      }
+    }
+    if (seed.shops.length === 1 && linkedName) {
+      const label = counterLabel(seed.channel, linkedName, seed.name);
+      const stale = counter.name === seed.name || counter.name === "LOGON Tsim Sha Tsui" || channelKey(counter.name) !== channelKey(seed.channel);
+      if (stale && label !== counter.name) {
+        await q(`UPDATE sales_counters SET name=$2, updated_at=$3 WHERE id=$1`, [counter.id, label, ts]);
       }
     }
   }

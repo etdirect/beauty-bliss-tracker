@@ -15,7 +15,7 @@ export const SCHEME_COUNTERS: SchemeSeed[] = [
   { code: "FW", name: "LOGON Fashion Walk", channel: "LOGON", tierTable: "L", tradeMargin: 0.37, minTarget: 83086, shops: ["FW"] },
   { code: "LP", name: "LOGON Langham Place", channel: "LOGON", tierTable: "L", tradeMargin: 0.37, minTarget: 83086, shops: ["LP"] },
   { code: "NTP", name: "LOGON New Town Plaza", channel: "LOGON", tierTable: "L", tradeMargin: 0.37, minTarget: 83086, shops: ["NTP"] },
-  { code: "TS", name: "LOGON Tsim Sha Tsui", channel: "LOGON", tierTable: "L", tradeMargin: 0.37, minTarget: 83086, shops: ["TS"] },
+  { code: "TS", name: "LOGON Times Square", channel: "LOGON", tierTable: "L", tradeMargin: 0.37, minTarget: 83086, shops: ["TS"] },
   { code: "CWB", name: "SOGO Causeway Bay", channel: "SOGO", tierTable: "S", tradeMargin: 0.28, minTarget: 57031, shops: ["CWB"] },
   { code: "KTK", name: "SOGO Kai Tak", channel: "SOGO", tierTable: "S", tradeMargin: 0.16, minTarget: 40216, shops: ["KTK"] },
   { code: "AEON", name: "AEON", channel: "AEON", tierTable: "L", tradeMargin: 0.35, minTarget: 75429, shops: ["KH", "SK"] },
@@ -57,17 +57,47 @@ export interface PosLike {
   storeName?: string;
 }
 
-/** Match a live shop. Does not create shops. HC matches store code HC or LOG/HC, not a longer code. */
+/** LOG and LOGON are the same channel. The settings screen shows the first three letters (SOG/CWB). */
+export function channelKey(value: string): string {
+  const letters = value.toUpperCase().replace(/[^A-Z]/g, "");
+  if (letters.startsWith("LOG")) return "LOGON";
+  if (letters.startsWith("SOG")) return "SOGO";
+  if (letters.startsWith("AEO")) return "AEON";
+  return letters;
+}
+
+const SHOP_NAME_HINTS: Record<string, RegExp> = {
+  TS: /times?\s*square/i,
+  HC: /harbour\s*city|harbor\s*city/i,
+  FW: /fashion\s*walk/i,
+  LP: /langham/i,
+  NTP: /new\s*town\s*plaza/i,
+  CWB: /causeway/i,
+  KTK: /kai\s*tak/i,
+};
+
+function shopCodeOf(storeCode: string): string {
+  const code = storeCode.toUpperCase().trim();
+  return code.split(/[/_\s-]+/).filter(Boolean).pop() ?? code;
+}
+
+/** Match a live shop. Does not create shops. */
 export function matchPos(locations: PosLike[], channel: string, shopCode: string): PosLike | undefined {
-  const wantChannel = channel.toUpperCase();
+  const wantChannel = channelKey(channel);
   const wantShop = shopCode.toUpperCase();
-  return locations.find(pos => {
-    const ch = pos.salesChannel.toUpperCase();
-    if (ch !== wantChannel && !ch.includes(wantChannel)) return false;
-    const code = pos.storeCode.toUpperCase().trim();
-    const last = code.split(/[/_\s-]+/).filter(Boolean).pop() ?? code;
-    return code === wantShop || last === wantShop;
-  });
+  const inChannel = locations.filter(pos => channelKey(pos.salesChannel) === wantChannel);
+  const byCode = inChannel.find(pos => shopCodeOf(pos.storeCode) === wantShop || pos.storeCode.toUpperCase().trim() === wantShop);
+  if (byCode) return byCode;
+  const hint = SHOP_NAME_HINTS[wantShop];
+  if (!hint) return undefined;
+  return inChannel.find(pos => hint.test(pos.storeName ?? ""));
+}
+
+export function counterLabel(channel: string, storeName: string | null | undefined, fallback: string): string {
+  const name = (storeName ?? "").trim();
+  if (!name) return fallback;
+  if (channelKey(name) === channelKey(channel)) return name;
+  return `${channel} ${name}`;
 }
 
 export function isAeonCounter(code: string, shopCount: number): boolean {
