@@ -242,19 +242,23 @@ export function registerCommissionRoutes(app: Express) {
     if (!counter) return res.json({ rows: [], reconciliation: null });
     const calc = await calculateCounter(counter, month, false);
     const brands = await storage.getBrands();
-    const priorities = await commissionRepo().priorities();
     const ids = posIdsOf(counter);
-    const brandIds = new Set<string>(Array.from(calc.fig.brands.keys()).concat(calc.fig.actuals.map(a => a.brandId)));
-    for (const p of priorities) if (p.isPriority && ids.includes(p.posId)) brandIds.add(p.brandId);
     const avail = await storage.getBrandPosAvailability();
-    for (const row of avail) if (ids.includes(row.posId)) brandIds.add(row.brandId);
+    const availableByBrand = new Map<string, Set<string>>();
+    for (const row of avail) {
+      if (!ids.includes(row.posId)) continue;
+      const shops = availableByBrand.get(row.brandId) ?? new Set<string>();
+      shops.add(row.posId);
+      availableByBrand.set(row.brandId, shops);
+    }
     res.json({
-      rows: Array.from(brandIds).map(brandId => ({
+      rows: Array.from(availableByBrand.entries()).map(([brandId, shops]) => ({
         brandId,
         name: brands.find(b => b.id === brandId)?.name ?? brandId,
         provisional: calc.fig.brands.get(brandId) ?? 0,
         byShop: ids.map(posId => ({
           posId,
+          available: shops.has(posId),
           actual: calc.fig.actuals.find(a => a.brandId === brandId && a.posId === posId)?.actualAmount ?? null,
         })),
       })).sort((a, b) => a.name.localeCompare(b.name)),

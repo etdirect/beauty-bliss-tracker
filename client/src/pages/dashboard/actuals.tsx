@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatHk, hkMonth } from "@shared/hkTime";
+
+const UPLOAD_CHANNELS = ["LOGON", "SOGO", "AEON"] as const;
 
 export default function ActualsPage() {
   const { toast } = useToast();
@@ -57,14 +60,32 @@ export default function ActualsPage() {
 
   const rec = data?.reconciliation;
   const gapPct = rec?.gapPct == null ? null : `${(rec.gapPct * 100).toFixed(1)}%`;
+  const rows = data?.rows ?? [];
+  const shops = counter?.members ?? [];
+  const typedTotal = rows.reduce((sum: number, row: any) => sum + (Number(row.provisional) || 0), 0);
+  const shopTotal = (posId: string) => rows.reduce((sum: number, row: any) => {
+    const shop = (row.byShop ?? []).find((s: any) => s.posId === posId);
+    if (!shop?.available) return sum;
+    const raw = draft[`${row.brandId}|${posId}`];
+    const amount = raw === undefined || raw === "" ? (shop.actual ?? 0) : Number(raw);
+    return sum + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-xl font-semibold">Monthly actuals</h2>
+        <p className="text-sm text-muted-foreground">Brands shown are the ones ticked for that shop under Settings, Brand-POS.</p>
+      </div>
+      <Tabs defaultValue="enter">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="enter">Enter by store</TabsTrigger>
+          {UPLOAD_CHANNELS.map(channel => (
+            <TabsTrigger key={channel} value={`upload-${channel}`}>Upload {channel}</TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="enter" className="space-y-4 mt-4">
       <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">Monthly actuals</h2>
-          <p className="text-sm text-muted-foreground">Type the channel's month-end total. File import is not set up yet.</p>
-        </div>
         <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
         <Select value={activeId} onValueChange={setCounterId}>
           <SelectTrigger className="w-56"><SelectValue placeholder="Counter" /></SelectTrigger>
@@ -95,27 +116,59 @@ export default function ActualsPage() {
             </tr>
           </thead>
           <tbody>
-            {(data?.rows ?? []).map((row: any) => (
+            {rows.map((row: any) => (
               <tr key={row.brandId} className="border-t">
                 <td className="p-2">{row.name}</td>
                 <td className="p-2 text-right tabular-nums">{formatHk(row.provisional)}</td>
-                {(row.byShop ?? []).map((shop: any) => (
-                  <td key={shop.posId} className="p-2 text-right">
-                    <Input
-                      className="h-8 w-28 ml-auto text-right"
-                      inputMode="decimal"
-                      value={draft[`${row.brandId}|${shop.posId}`] ?? ""}
-                      onChange={e => setDraft(prev => ({ ...prev, [`${row.brandId}|${shop.posId}`]: e.target.value }))}
-                      disabled={!shop.posId || data?.status === "locked"}
-                    />
+                {shops.map((m: any) => {
+                  const shop = (row.byShop ?? []).find((s: any) => s.posId === m.posId);
+                  return (
+                  <td key={m.shopCode} className="p-2 text-right">
+                    {shop?.available ? (
+                      <Input
+                        className="h-8 w-28 ml-auto text-right"
+                        inputMode="decimal"
+                        value={draft[`${row.brandId}|${shop.posId}`] ?? ""}
+                        onChange={e => setDraft(prev => ({ ...prev, [`${row.brandId}|${shop.posId}`]: e.target.value }))}
+                        disabled={!shop.posId || data?.status === "locked"}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
-                ))}
+                  );
+                })}
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="border-t bg-muted/40 font-semibold">
+              <td className="p-2">Total</td>
+              <td className="p-2 text-right tabular-nums">{formatHk(typedTotal)}</td>
+              {shops.map((m: any) => (
+                <td key={m.shopCode} className="p-2 text-right tabular-nums">{m.posId ? formatHk(shopTotal(m.posId)) : "—"}</td>
+              ))}
+            </tr>
+          </tfoot>
         </table>
       </div>
-      <Button onClick={() => save.mutate()} disabled={data?.status === "locked" || save.isPending}>Save actuals</Button>
+      <Button onClick={() => save.mutate()} disabled={data?.status === "locked" || save.isPending || rows.length === 0}>Save actuals</Button>
+        </TabsContent>
+        {UPLOAD_CHANNELS.map(channel => (
+          <TabsContent key={channel} value={`upload-${channel}`} className="mt-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Upload {channel}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <p>One Excel file will cover every {channel} door for the month. The doors do not need a separate file.</p>
+                <p>The column layout is not set yet. When you send a sample file, this tab will read it and fill the actual amounts.</p>
+                <Button type="button" variant="outline" disabled>Choose Excel file</Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 }
