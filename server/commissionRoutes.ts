@@ -184,9 +184,31 @@ export function registerCommissionRoutes(app: Express) {
     if (!canEditRoster(user.role)) return deny(res);
     const month = String(req.query.month || "");
     const counterId = String(req.query.counterId || "");
+    const [saved, status, counters, users, assignments, locations] = await Promise.all([
+      commissionRepo().listDuty(counterId, month),
+      commissionRepo().monthStatus(counterId, month),
+      activeCounters(),
+      storage.getUsers(),
+      storage.getUserPosAssignments(),
+      storage.getPosLocations(),
+    ]);
+    const counter = counters.find(c => c.id === counterId);
+    const shopIds = new Set(counter ? posIdsForCounter(counter, locations) : []);
+    const fullTime = users.filter(u =>
+      u.isActive && u.role === "ba" && u.canViewHistory &&
+      assignments.some(a => a.userId === u.id && shopIds.has(a.posId)),
+    );
+    const stationed = fullTime.length === 1 ? fullTime[0] : null;
+    const shopLabels = locations
+      .filter(p => shopIds.has(p.id))
+      .map(p => `${p.salesChannel}/${p.storeCode}`);
     res.json({
-      days: await commissionRepo().listDuty(counterId, month),
-      status: await commissionRepo().monthStatus(counterId, month),
+      days: saved,
+      status,
+      stationedUserId: stationed?.id ?? null,
+      stationedName: stationed?.name ?? null,
+      shopLabels,
+      fullTimeOnShop: fullTime.map(u => u.name),
     });
   });
 

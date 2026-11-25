@@ -114,7 +114,13 @@ export function posIdsForCounter(
   if (codes.size === 0 && counter.code && counter.code !== "AEON") codes.add(counter.code);
   for (const code of codes) {
     for (const loc of locations) {
-      if (matchPos([loc], counter.channel, code)) ids.add(loc.id);
+      if (matchPos([loc], counter.channel || "", code)) ids.add(loc.id);
+    }
+  }
+  if (ids.size === 0) {
+    for (const loc of locations) {
+      const code = (loc.storeCode || "").toUpperCase().trim().split(/[/_\s-]+/).filter(Boolean).pop() ?? "";
+      if (codes.has(code)) ids.add(loc.id);
     }
   }
   return Array.from(ids);

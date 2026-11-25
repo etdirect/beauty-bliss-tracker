@@ -53,7 +53,7 @@ export default function DutyPage() {
 
   useEffect(() => { if (!counterId && counters[0]) setCounterId(counters[0].id); }, [counters, counterId]);
 
-  const { data } = useQuery<{ days: any[]; status: string }>({
+  const { data } = useQuery<{ days: any[]; status: string; stationedUserId?: string | null; stationedName?: string | null; shopLabels?: string[]; fullTimeOnShop?: string[] }>({
     queryKey: ["commission-duty", month, activeId],
     enabled: !!activeId,
     queryFn: async () => {
@@ -79,6 +79,7 @@ export default function DutyPage() {
 
   const stationedId = useMemo(() => {
     if (!counter || month < PREFILL_FROM) return null;
+    if (data?.stationedUserId) return data.stationedUserId;
     if (counter.stationedUserId) return counter.stationedUserId as string;
     if (shopIds.length === 0) return null;
     const shopSet = new Set(shopIds);
@@ -91,7 +92,7 @@ export default function DutyPage() {
       p.role === "ba" && p.canViewHistory && posIdsFor(p).some(id => shopSet.has(id)),
     );
     return stationed.length === 1 ? stationed[0].id : null;
-  }, [counter, people, month, shopIds, assignments]);
+  }, [data?.stationedUserId, counter, people, month, shopIds, assignments]);
 
   useEffect(() => {
     if (!counter) return;
@@ -123,9 +124,9 @@ export default function DutyPage() {
   }, [data, counter, month, aeon, stationedId, shopIds]);
 
   const weeks = useMemo(() => days.map(day => {
-    if (!stationedId || month < PREFILL_FROM || aeon || day.regularUserId) return day;
+    if (!stationedId || month < PREFILL_FROM || day.regularUserId) return day;
     return { ...day, regularUserId: stationedId, status: day.status || "WORKED", posId: day.posId || shopIds[0] || null };
-  }), [days, stationedId, month, aeon, shopIds]);
+  }), [days, stationedId, month, shopIds]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -166,7 +167,15 @@ export default function DutyPage() {
     return !!person && !person.canViewHistory;
   }).length;
 
-  const stationedName = (counter?.stationedName as string | undefined) || bas.find(p => p.id === stationedId)?.name;
+  const stationedName = data?.stationedName || (counter?.stationedName as string | undefined) || bas.find(p => p.id === stationedId)?.name || data?.fullTimeOnShop?.[0];
+  const serverKnowsShop = !!data && Array.isArray(data.shopLabels);
+  const fillNote = stationedName || !serverKnowsShop
+    ? null
+    : (data?.fullTimeOnShop?.length ?? 0) > 1
+      ? `More than one full-time BA is assigned here: ${data?.fullTimeOnShop?.join(", ")}.`
+      : (data?.shopLabels?.length ?? 0) === 0
+        ? "This store is not linked to a shop, so the full-time BA cannot be filled in."
+        : "No full-time BA with “Can view past sales data” is assigned to this shop.";
   const isFullTime = (userId: string | null) => {
     if (!userId) return false;
     if (userId === stationedId) return true;
@@ -200,6 +209,8 @@ export default function DutyPage() {
             {counters.map(c => <SelectItem key={c.id} value={c.id}>{labelFor(c)}</SelectItem>)}
           </SelectContent>
         </Select>
+        {stationedName && <span className={`text-sm font-medium ${FULL_TIME_TEXT}`}>Full-time BA: {stationedName}</span>}
+        {fillNote && <span className="text-sm text-amber-700">{fillNote}</span>}
         {locked && <span className="text-sm text-amber-700">This month is locked</span>}
         {unset > 0 && <span className="text-sm text-amber-700">{unset} days still need a shop</span>}
       </div>
