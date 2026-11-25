@@ -144,10 +144,19 @@ export function registerCommissionRoutes(app: Express) {
     const user = await actor(req);
     if (!user) return res.status(401).json({ error: "Not authenticated" });
     if (!canEditRoster(user.role)) return deny(res);
-    const users = await storage.getUsers();
+    const [users, assignments] = await Promise.all([
+      storage.getUsers(),
+      storage.getUserPosAssignments(),
+    ]);
     res.json(users
       .filter(u => u.isActive && (u.role === "ba" || u.role === "part_time"))
-      .map(u => ({ id: u.id, name: u.name, role: u.role, canViewHistory: !!u.canViewHistory })));
+      .map(u => ({
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        canViewHistory: !!u.canViewHistory,
+        posIds: assignments.filter(a => a.userId === u.id).map(a => a.posId),
+      })));
   });
 
   app.get("/api/commission/duty", async (req, res) => {

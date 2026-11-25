@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hkMonth, monthDates } from "@shared/hkTime";
 
+const PREFILL_FROM = "2026-10";
+
 const STATUSES = [
   ["WORKED", "Worked"],
   ["REST", "Rest day"],
@@ -61,16 +63,43 @@ export default function DutyPage() {
   });
   const { data: people = [] } = useQuery<any[]>({ queryKey: ["/api/commission/roster-users"] });
 
+  const stationedId = useMemo(() => {
+    if (!counter || month < PREFILL_FROM) return null;
+    const shopIds = new Set((counter.members ?? []).map((m: any) => m.posId).filter(Boolean));
+    const stationed = people.filter((p: any) =>
+      p.role === "ba" && p.canViewHistory && (p.posIds ?? []).some((id: string) => shopIds.has(id)),
+    );
+    return stationed.length === 1 ? stationed[0].id : null;
+  }, [counter, people, month]);
+
   useEffect(() => {
     if (!counter) return;
     const saved = new Map((data?.days ?? []).map((d: any) => [d.date, d]));
     const onlyShop = counter.members?.length === 1 ? counter.members[0].posId : null;
     setDays(monthDates(month).map(date => {
       const row = saved.get(date);
-      if (row) return { date, posId: row.posId, status: row.status, regularUserId: row.regularUserId, partTimeUserId: row.partTimeUserId, substitutionType: row.substitutionType, note: row.note };
-      return { date, posId: aeon ? null : onlyShop, status: aeon ? "" : "WORKED", regularUserId: null, partTimeUserId: null, substitutionType: null, note: null };
+      if (row) {
+        return {
+          date,
+          posId: row.posId,
+          status: row.status,
+          regularUserId: row.regularUserId || stationedId,
+          partTimeUserId: row.partTimeUserId,
+          substitutionType: row.substitutionType,
+          note: row.note,
+        };
+      }
+      return {
+        date,
+        posId: aeon ? null : onlyShop,
+        status: aeon ? "" : "WORKED",
+        regularUserId: aeon ? null : stationedId,
+        partTimeUserId: null,
+        substitutionType: null,
+        note: null,
+      };
     }));
-  }, [data, counter, month, aeon]);
+  }, [data, counter, month, aeon, stationedId]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -131,7 +160,7 @@ export default function DutyPage() {
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <h2 className="text-xl font-semibold">Duty record</h2>
-          <p className="text-sm text-muted-foreground">Mark who worked. Leave inside a date range stays visible. Until you save, commission uses the 6-rest-day estimate.</p>
+          <p className="text-sm text-muted-foreground">From October 2026, each day starts as Worked for the full-time BA assigned to that store. Change only the rest days and name the part-timer covering them. Until you save, commission uses the 6-rest-day estimate.</p>
         </div>
         <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
         <Select value={activeId} onValueChange={setCounterId}>
