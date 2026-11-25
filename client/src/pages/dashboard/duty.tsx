@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hkMonth, monthDates } from "@shared/hkTime";
 
 const STATUSES = [
@@ -18,6 +18,10 @@ const STATUSES = [
   ["MATERNITY_LEAVE", "Maternity leave"],
   ["UNPAID_LEAVE", "Unpaid leave"],
 ] as const;
+
+// Full-time BA = "Can view past sales data" is on. Part-time BA = that box is off.
+const FULL_TIME_TEXT = "text-teal-800 dark:text-teal-300";
+const PART_TIME_TEXT = "text-violet-800 dark:text-violet-300";
 
 type Day = {
   date: string;
@@ -81,7 +85,10 @@ export default function DutyPage() {
   });
 
   const partTimers = people.filter(p => p.role === "part_time");
-  const bas = people.filter(p => p.role === "ba");
+  const bas = people.filter(p => p.role === "ba").slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const fullTimeBas = bas.filter(p => p.canViewHistory);
+  const partTimeBas = bas.filter(p => !p.canViewHistory);
+  const baById = new Map(bas.map(p => [p.id, p]));
   const locked = data?.status === "locked";
   const unset = aeon ? days.filter(d => !d.posId).length : 0;
 
@@ -99,6 +106,25 @@ export default function DutyPage() {
   };
 
   const weeks = useMemo(() => days, [days]);
+  const fullTimeDays = days.filter(d => d.regularUserId && baById.get(d.regularUserId)?.canViewHistory).length;
+  const partTimeDays = days.filter(d => {
+    const person = d.regularUserId ? baById.get(d.regularUserId) : null;
+    return !!person && !person.canViewHistory;
+  }).length;
+
+  const baTextClass = (userId: string | null) => {
+    const person = userId ? baById.get(userId) : null;
+    if (!person) return "";
+    return person.canViewHistory ? FULL_TIME_TEXT : PART_TIME_TEXT;
+  };
+
+  const dayCardClass = (userId: string | null) => {
+    const person = userId ? baById.get(userId) : null;
+    if (!person) return "bg-card";
+    return person.canViewHistory
+      ? "bg-teal-50 border-teal-200 dark:bg-teal-950/40 dark:border-teal-800"
+      : "bg-violet-50 border-violet-200 dark:bg-violet-950/40 dark:border-violet-800";
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-6xl mx-auto">
@@ -116,6 +142,19 @@ export default function DutyPage() {
         </Select>
         {locked && <span className="text-sm text-amber-700">This month is locked</span>}
         {unset > 0 && <span className="text-sm text-amber-700">{unset} days still need a shop</span>}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-teal-600 dark:bg-teal-400" />
+          <span className={`font-medium ${FULL_TIME_TEXT}`}>Full-time BA</span>
+          <span className="text-muted-foreground">{fullTimeDays} {fullTimeDays === 1 ? "day" : "days"}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-violet-600 dark:bg-violet-400" />
+          <span className={`font-medium ${PART_TIME_TEXT}`}>Part-time BA</span>
+          <span className="text-muted-foreground">{partTimeDays} {partTimeDays === 1 ? "day" : "days"}</span>
+        </span>
       </div>
 
       <Card>
@@ -145,7 +184,7 @@ export default function DutyPage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {weeks.map(day => (
-          <div key={day.date} className="rounded-lg border p-2 space-y-1 bg-card">
+          <div key={day.date} className={`rounded-lg border p-2 space-y-1 ${dayCardClass(day.regularUserId)}`}>
             <div className="text-xs font-medium">{day.date.slice(8)}</div>
             {aeon && (
               <Select value={day.posId || "none"} onValueChange={v => update(day.date, { posId: v === "none" ? null : v, status: day.status || "WORKED" })}>
@@ -183,10 +222,21 @@ export default function DutyPage() {
             )}
             {bas.length > 0 && (
               <Select value={day.regularUserId || "none"} onValueChange={v => update(day.date, { regularUserId: v === "none" ? null : v })}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="BA" /></SelectTrigger>
+                <SelectTrigger className={`h-8 text-xs font-medium ${baTextClass(day.regularUserId)}`}><SelectValue placeholder="BA" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Regular BA</SelectItem>
-                  {bas.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  {fullTimeBas.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className={`pl-2 text-xs uppercase tracking-wide ${FULL_TIME_TEXT}`}>Full time</SelectLabel>
+                      {fullTimeBas.map(p => <SelectItem key={p.id} value={p.id} className={FULL_TIME_TEXT}>{p.name}</SelectItem>)}
+                    </SelectGroup>
+                  )}
+                  {partTimeBas.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className={`pl-2 text-xs uppercase tracking-wide ${PART_TIME_TEXT}`}>Part time</SelectLabel>
+                      {partTimeBas.map(p => <SelectItem key={p.id} value={p.id} className={PART_TIME_TEXT}>{p.name}</SelectItem>)}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
             )}

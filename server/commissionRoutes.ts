@@ -147,7 +147,7 @@ export function registerCommissionRoutes(app: Express) {
     const users = await storage.getUsers();
     res.json(users
       .filter(u => u.isActive && (u.role === "ba" || u.role === "part_time"))
-      .map(u => ({ id: u.id, name: u.name, role: u.role })));
+      .map(u => ({ id: u.id, name: u.name, role: u.role, canViewHistory: !!u.canViewHistory })));
   });
 
   app.get("/api/commission/duty", async (req, res) => {

@@ -715,13 +715,15 @@ export default function SettingsPage() {
                   if (ra !== rb) return ra - rb;
                   return a.name.localeCompare(b.name);
                 });
+                const beautyAdvisors = sorted.filter(u => u.role === "ba");
                 const groups = [
-                  { label: "Admin", items: sorted.filter(u => u.role === "admin") },
-                  { label: "Sales Managers", items: sorted.filter(u => u.role === "sales_manager") },
-                  { label: "Brand Managers", items: sorted.filter(u => u.role === "brand_manager") },
-                  { label: "Management", items: sorted.filter(u => u.role === "management") },
-                  { label: "Beauty Advisors", items: sorted.filter(u => u.role === "ba") },
-                  { label: "Part Time", items: sorted.filter(u => u.role === "part_time") },
+                  { label: "Admin", items: sorted.filter(u => u.role === "admin"), tone: "" },
+                  { label: "Sales Managers", items: sorted.filter(u => u.role === "sales_manager"), tone: "" },
+                  { label: "Brand Managers", items: sorted.filter(u => u.role === "brand_manager"), tone: "" },
+                  { label: "Management", items: sorted.filter(u => u.role === "management"), tone: "" },
+                  { label: "Full-time Beauty Advisors", items: beautyAdvisors.filter(u => u.canViewHistory), tone: "full" },
+                  { label: "Part-time Beauty Advisors", items: beautyAdvisors.filter(u => !u.canViewHistory), tone: "part" },
+                  { label: "Part Time", items: sorted.filter(u => u.role === "part_time"), tone: "" },
                 ].filter(g => g.items.length > 0);
                 // Sort POS once for all users
                 const sortedPos = [...activePos].sort((a, b) => {
@@ -730,8 +732,16 @@ export default function SettingsPage() {
                 });
                 return groups.map(group => (
                   <div key={group.label}>
-                    <div className="px-4 py-2 bg-muted/50 border-b">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</span>
+                    <div className={`px-4 py-2 border-b ${
+                      group.tone === "full" ? "bg-teal-50 dark:bg-teal-950/40" :
+                      group.tone === "part" ? "bg-violet-50 dark:bg-violet-950/40" :
+                      "bg-muted/50"
+                    }`}>
+                      <span className={`text-xs font-semibold uppercase tracking-wider ${
+                        group.tone === "full" ? "text-teal-800 dark:text-teal-300" :
+                        group.tone === "part" ? "text-violet-800 dark:text-violet-300" :
+                        "text-muted-foreground"
+                      }`}>{group.label}</span>
                       <span className="text-xs text-muted-foreground ml-2">({group.items.length})</span>
                     </div>
                     <div className="divide-y">
@@ -768,7 +778,12 @@ export default function SettingsPage() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 flex-wrap min-w-0">
                           <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                          <span className={`text-sm truncate ${user.isActive ? "font-medium" : "text-muted-foreground line-through"}`}>
+                          <span className={`text-sm truncate ${
+                            !user.isActive ? "text-muted-foreground line-through" :
+                            user.role === "ba" && user.canViewHistory ? "font-medium text-teal-800 dark:text-teal-300" :
+                            user.role === "ba" && !user.canViewHistory ? "font-medium text-violet-800 dark:text-violet-300" :
+                            "font-medium"
+                          }`}>
                             {user.name}
                           </span>
                           <Badge variant="outline" className="text-xs">@{user.username}</Badge>
@@ -862,7 +877,6 @@ export default function SettingsPage() {
                             }}
                           />
                           <span>Can view past sales data</span>
-                          {!user.canViewHistory && <Badge variant="secondary" className="text-[10px] px-1">Probation</Badge>}
                         </label>
                       </div>
                     )}
