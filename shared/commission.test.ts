@@ -18,7 +18,7 @@ import {
   type DutyStatus,
 } from "./commission";
 import { monthDates } from "./hkTime";
-import { matchPos } from "./scheme";
+import { matchPos, posIdsForCounter } from "./scheme";
 
 const cent = (actual: number, expected: number) => {
   expect(Math.abs(actual - expected)).toBeLessThan(0.001);
@@ -58,6 +58,14 @@ describe("shop matching", () => {
 
   it("matches SOGO Causeway Bay when the channel is stored as SOGO", () => {
     expect(matchPos(locations, "SOG", "CWB")?.id).toBe("cwb");
+  });
+
+  it("finds Harbour City even when the counter has no saved shop link", () => {
+    const shops = [
+      { id: "hc", salesChannel: "LOGON", storeCode: "HC", storeName: "Harbour City" },
+      { id: "ts", salesChannel: "LOGON", storeCode: "TS", storeName: "Times Square" },
+    ];
+    expect(posIdsForCounter({ code: "HC", channel: "LOGON", members: [] }, shops)).toEqual(["hc"]);
   });
 });
 

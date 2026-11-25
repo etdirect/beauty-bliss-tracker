@@ -100,6 +100,26 @@ export function counterLabel(channel: string, storeName: string | null | undefin
   return `${channel} ${name}`;
 }
 
+/** Every live shop id that belongs to this counter, including ones not linked yet. */
+export function posIdsForCounter(
+  counter: { code: string; channel: string; members?: { shopCode?: string | null; posId?: string | null }[] },
+  locations: PosLike[],
+): string[] {
+  const ids = new Set<string>();
+  const codes = new Set<string>();
+  for (const member of counter.members ?? []) {
+    if (member.posId) ids.add(member.posId);
+    if (member.shopCode) codes.add(member.shopCode);
+  }
+  if (codes.size === 0 && counter.code && counter.code !== "AEON") codes.add(counter.code);
+  for (const code of codes) {
+    for (const loc of locations) {
+      if (matchPos([loc], counter.channel, code)) ids.add(loc.id);
+    }
+  }
+  return Array.from(ids);
+}
+
 export function isAeonCounter(code: string, shopCount: number): boolean {
   return code === "AEON" || shopCount > 1;
 }

@@ -22,6 +22,8 @@ import {
   monthEditDecision,
   payRouteDecision,
 } from "@shared/access";
+import { posIdsForCounter } from "@shared/scheme";
+
 async function actor(req: Request) {
   const id = req.session?.userId;
   if (!id) return undefined;
@@ -45,14 +47,31 @@ export function registerCommissionRoutes(app: Express) {
   app.get("/api/commission/counters", async (req, res) => {
     const user = await actor(req);
     if (!user) return res.status(401).json({ error: "Not authenticated" });
-    const counters = await activeCounters();
+    const [counters, users, assignments, locations] = await Promise.all([
+      activeCounters(),
+      storage.getUsers(),
+      storage.getUserPosAssignments(),
+      storage.getPosLocations(),
+    ]);
+    const withBa = counters.map(counter => {
+      const shopIds = new Set(posIdsForCounter(counter, locations));
+      const stationed = users.filter(u =>
+        u.isActive && u.role === "ba" && u.canViewHistory &&
+        assignments.some(a => a.userId === u.id && shopIds.has(a.posId)),
+      );
+      return {
+        ...counter,
+        stationedUserId: stationed.length === 1 ? stationed[0].id : null,
+        stationedName: stationed.length === 1 ? stationed[0].name : null,
+      };
+    });
     if (user.role === "ba" || user.role === "part_time") {
       const assigns = await storage.getUserPosAssignments(user.id);
       const mine = new Set(assigns.map(a => a.posId));
-      return res.json(counters.filter(c => c.members.some(m => m.posId && mine.has(m.posId))));
+      return res.json(withBa.filter(c => c.members.some(m => m.posId && mine.has(m.posId)) || posIdsForCounter(c, locations).some(id => mine.has(id))));
     }
     if (user.role === "management") return res.json([]);
-    return res.json(counters);
+    return res.json(withBa);
   });
 
   app.get("/api/commission/settings", async (req, res) => {

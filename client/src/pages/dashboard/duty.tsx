@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hkMonth, monthDates } from "@shared/hkTime";
-import { counterLabel, matchPos, type PosLike } from "@shared/scheme";
+import { counterLabel, matchPos, posIdsForCounter, type PosLike } from "@shared/scheme";
 
 const PREFILL_FROM = "2026-10";
 
@@ -66,14 +66,7 @@ export default function DutyPage() {
   const { data: locations = [] } = useQuery<PosLike[]>({ queryKey: ["/api/pos-locations"] });
   const { data: assignments = [] } = useQuery<{ userId: string; posId: string }[]>({ queryKey: ["/api/user-pos-assignments"] });
 
-  const shopIds = useMemo(() => {
-    if (!counter) return [] as string[];
-    const linked = (counter.members ?? []).map((m: any) => m.posId).filter(Boolean) as string[];
-    if (linked.length > 0) return linked;
-    return (counter.members ?? [])
-      .map((m: any) => matchPos(locations, counter.channel, m.shopCode)?.id)
-      .filter((id: string | undefined): id is string => !!id);
-  }, [counter, locations]);
+  const shopIds = useMemo(() => (counter ? posIdsForCounter(counter, locations) : []), [counter, locations]);
 
   const labelFor = (c: any) => {
     const named = (c.members ?? []).find((m: any) => m.storeName);
@@ -85,12 +78,14 @@ export default function DutyPage() {
   };
 
   const stationedId = useMemo(() => {
-    if (!counter || month < PREFILL_FROM || shopIds.length === 0) return null;
+    if (!counter || month < PREFILL_FROM) return null;
+    if (counter.stationedUserId) return counter.stationedUserId as string;
+    if (shopIds.length === 0) return null;
     const shopSet = new Set(shopIds);
     const posIdsFor = (person: any) => {
       const fromRoster = person.posIds as string[] | undefined;
-      if (fromRoster && fromRoster.length > 0) return fromRoster;
-      return assignments.filter(a => a.userId === person.id).map(a => a.posId);
+      const fromAssignments = assignments.filter(a => a.userId === person.id).map(a => a.posId);
+      return Array.from(new Set([...(fromRoster ?? []), ...fromAssignments]));
     };
     const stationed = people.filter((p: any) =>
       p.role === "ba" && p.canViewHistory && posIdsFor(p).some(id => shopSet.has(id)),
@@ -127,9 +122,14 @@ export default function DutyPage() {
     }));
   }, [data, counter, month, aeon, stationedId, shopIds]);
 
+  const weeks = useMemo(() => days.map(day => {
+    if (!stationedId || month < PREFILL_FROM || aeon || day.regularUserId) return day;
+    return { ...day, regularUserId: stationedId, status: day.status || "WORKED", posId: day.posId || shopIds[0] || null };
+  }), [days, stationedId, month, aeon, shopIds]);
+
   const save = useMutation({
     mutationFn: async () => {
-      const payload = days.filter(d => d.status).map(d => ({ ...d, status: d.status || "WORKED" }));
+      const payload = weeks.filter(d => d.status).map(d => ({ ...d, status: d.status || "WORKED" }));
       await apiRequest("PUT", "/api/commission/duty", { counterId: activeId, month, days: payload });
     },
     onSuccess: () => {
@@ -160,23 +160,28 @@ export default function DutyPage() {
     }));
   };
 
-  const weeks = useMemo(() => days, [days]);
-  const fullTimeDays = days.filter(d => d.regularUserId && baById.get(d.regularUserId)?.canViewHistory).length;
+  const fullTimeDays = weeks.filter(d => d.regularUserId && (baById.get(d.regularUserId)?.canViewHistory || d.regularUserId === stationedId)).length;
   const partTimeDays = days.filter(d => {
     const person = d.regularUserId ? baById.get(d.regularUserId) : null;
     return !!person && !person.canViewHistory;
   }).length;
 
+  const stationedName = (counter?.stationedName as string | undefined) || bas.find(p => p.id === stationedId)?.name;
+  const isFullTime = (userId: string | null) => {
+    if (!userId) return false;
+    if (userId === stationedId) return true;
+    return !!baById.get(userId)?.canViewHistory;
+  };
   const baTextClass = (userId: string | null) => {
     const person = userId ? baById.get(userId) : null;
-    if (!person) return "";
-    return person.canViewHistory ? FULL_TIME_TEXT : PART_TIME_TEXT;
+    if (!person && userId !== stationedId) return "";
+    return isFullTime(userId) ? FULL_TIME_TEXT : PART_TIME_TEXT;
   };
 
   const dayCardClass = (userId: string | null) => {
     const person = userId ? baById.get(userId) : null;
-    if (!person) return "bg-card";
-    return person.canViewHistory
+    if (!person && userId !== stationedId) return "bg-card";
+    return isFullTime(userId)
       ? "bg-teal-50 border-teal-200 dark:bg-teal-950/40 dark:border-teal-800"
       : "bg-violet-50 border-violet-200 dark:bg-violet-950/40 dark:border-violet-800";
   };
@@ -275,11 +280,14 @@ export default function DutyPage() {
                 </Select>
               </>
             )}
-            {bas.length > 0 && (
+            {(bas.length > 0 || stationedId) && (
               <Select value={day.regularUserId || "none"} onValueChange={v => update(day.date, { regularUserId: v === "none" ? null : v })}>
                 <SelectTrigger className={`h-8 text-xs font-medium ${baTextClass(day.regularUserId)}`}><SelectValue placeholder="BA" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Regular BA</SelectItem>
+                  {stationedId && stationedName && !bas.some(p => p.id === stationedId) && (
+                    <SelectItem value={stationedId} className={FULL_TIME_TEXT}>{stationedName}</SelectItem>
+                  )}
                   {fullTimeBas.length > 0 && (
                     <SelectGroup>
                       <SelectLabel className={`pl-2 text-xs uppercase tracking-wide ${FULL_TIME_TEXT}`}>Full time</SelectLabel>
