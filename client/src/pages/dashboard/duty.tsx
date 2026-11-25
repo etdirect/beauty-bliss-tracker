@@ -88,9 +88,10 @@ export default function DutyPage() {
       const fromAssignments = assignments.filter(a => a.userId === person.id).map(a => a.posId);
       return Array.from(new Set([...(fromRoster ?? []), ...fromAssignments]));
     };
-    const stationed = people.filter((p: any) =>
-      p.role === "ba" && p.canViewHistory && posIdsFor(p).some(id => shopSet.has(id)),
-    );
+    const stationed = people.filter((p: any) => {
+      const label = `${p.name || ""} ${p.username || ""}`.trim().toLowerCase();
+      return p.role === "ba" && p.canViewHistory && !label.split(/\s+/).includes("batest") && posIdsFor(p).some(id => shopSet.has(id));
+    });
     return stationed.length === 1 ? stationed[0].id : null;
   }, [data?.stationedUserId, counter, people, month, shopIds, assignments]);
 
@@ -167,7 +168,7 @@ export default function DutyPage() {
     return !!person && !person.canViewHistory;
   }).length;
 
-  const stationedName = data?.stationedName || (counter?.stationedName as string | undefined) || bas.find(p => p.id === stationedId)?.name || data?.fullTimeOnShop?.[0];
+  const stationedName = data?.stationedName || (counter?.stationedName as string | undefined) || bas.find(p => p.id === stationedId)?.name;
   const serverKnowsShop = !!data && Array.isArray(data.shopLabels);
   const fillNote = stationedName || !serverKnowsShop
     ? null

@@ -30,6 +30,19 @@ async function actor(req: Request) {
   return storage.getUser(id);
 }
 
+function isTestAccount(user: { name?: string | null; username?: string | null }) {
+  const name = (user.name || "").trim().toLowerCase();
+  const username = (user.username || "").trim().toLowerCase();
+  return name === "batest" || username === "batest";
+}
+
+function realFullTimeOnShop(users: { id: string; name: string; username: string; isActive: boolean; role: string; canViewHistory: boolean }[], assignments: { userId: string; posId: string }[], shopIds: Set<string>) {
+  return users.filter(u =>
+    u.isActive && u.role === "ba" && u.canViewHistory && !isTestAccount(u) &&
+    assignments.some(a => a.userId === u.id && shopIds.has(a.posId)),
+  );
+}
+
 function deny(res: Response) {
   return res.status(403).json({ error: "You do not have access to this" });
 }
@@ -55,10 +68,7 @@ export function registerCommissionRoutes(app: Express) {
     ]);
     const withBa = counters.map(counter => {
       const shopIds = new Set(posIdsForCounter(counter, locations));
-      const stationed = users.filter(u =>
-        u.isActive && u.role === "ba" && u.canViewHistory &&
-        assignments.some(a => a.userId === u.id && shopIds.has(a.posId)),
-      );
+      const stationed = realFullTimeOnShop(users, assignments, shopIds);
       return {
         ...counter,
         stationedUserId: stationed.length === 1 ? stationed[0].id : null,
@@ -174,6 +184,7 @@ export function registerCommissionRoutes(app: Express) {
         name: u.name,
         role: u.role,
         canViewHistory: !!u.canViewHistory,
+        username: u.username,
         posIds: assignments.filter(a => a.userId === u.id).map(a => a.posId),
       })));
   });
@@ -194,10 +205,7 @@ export function registerCommissionRoutes(app: Express) {
     ]);
     const counter = counters.find(c => c.id === counterId);
     const shopIds = new Set(counter ? posIdsForCounter(counter, locations) : []);
-    const fullTime = users.filter(u =>
-      u.isActive && u.role === "ba" && u.canViewHistory &&
-      assignments.some(a => a.userId === u.id && shopIds.has(a.posId)),
-    );
+    const fullTime = realFullTimeOnShop(users, assignments, shopIds);
     const stationed = fullTime.length === 1 ? fullTime[0] : null;
     const shopLabels = locations
       .filter(p => shopIds.has(p.id))
