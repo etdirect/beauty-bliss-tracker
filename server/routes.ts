@@ -4,6 +4,8 @@ import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { registerCommissionRoutes, assertRoleChange } from "./commissionRoutes";
+import { AEON_UNITS_MONTH, aeonUnitLines } from "./aeonUnits202610";
+import { canUseOfficeScreens } from "@shared/access";
 import multer from "multer";
 import * as XLSX from "xlsx";
 
@@ -187,6 +189,14 @@ export async function registerRoutes(
   app.get("/api/pos-locations", requireAuth, async (_req, res) => {
     const locations = await storage.getPosLocations();
     res.json(locations);
+  });
+
+  app.get("/api/aeon-units", requireAuth, async (req, res) => {
+    const user = await storage.getUser(req.session.userId!);
+    if (!user || !canUseOfficeScreens(user.role)) {
+      return res.status(403).json({ error: "You do not have access to this" });
+    }
+    res.json({ month: AEON_UNITS_MONTH, lines: aeonUnitLines });
   });
 
   app.post("/api/pos-locations", requireManagement, async (req, res) => {
