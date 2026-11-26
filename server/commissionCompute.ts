@@ -212,13 +212,29 @@ export async function targetPreview(counter: SchemeCounter, month: string, input
   }
   const prevMonth = previousMonths(month, 1)[0];
   const prev = prevMonth ? await repo.listBrandTargets(counter.id, prevMonth) : [];
+  let lastMonthSales = 0;
+  let lastMonthBasis: "actual" | "provisional" = "provisional";
+  if (prevMonth) {
+    const actuals = await repo.listActuals(counter.id, prevMonth);
+    const actualByBrand = new Map<string, number>();
+    for (const row of actuals) actualByBrand.set(row.brandId, (actualByBrand.get(row.brandId) ?? 0) + row.actualAmount);
+    const shopIds = posIdsOf(counter);
+    const entries = (await salesBetween(monthStart(prevMonth), monthEnd(prevMonth))).filter(e => shopIds.includes(e.counterId));
+    const provisionalByBrand = new Map<string, number>();
+    for (const entry of entries) provisionalByBrand.set(entry.brandId, (provisionalByBrand.get(entry.brandId) ?? 0) + provisionalAmount(entry.amount));
+    const brandIds = new Set<string>([...Array.from(actualByBrand.keys()), ...Array.from(provisionalByBrand.keys())]);
+    for (const brandId of Array.from(brandIds)) {
+      lastMonthSales += actualByBrand.has(brandId) ? (actualByBrand.get(brandId) ?? 0) : (provisionalByBrand.get(brandId) ?? 0);
+    }
+    if (actuals.length > 0) lastMonthBasis = "actual";
+  }
   const brandAdjustments: Record<string, number> = {};
   const manualAmounts: Record<string, number | null> = {};
   for (const b of savedBrands) {
     brandAdjustments[b.brandId] = b.brandAdjustment;
     manualAmounts[b.brandId] = b.manualAmount;
   }
-  return { ref, starting, built, saved, prev, allAdj, nonPriority, step, brandAdjustments, manualAmounts };
+  return { ref, starting, built, saved, prev, allAdj, nonPriority, step, brandAdjustments, manualAmounts, lastMonth: prevMonth ?? null, lastMonthSales, lastMonthBasis };
 }
 
 export async function projectionFor(opts: {

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatHk, hkMonth, previousMonths } from "@shared/hkTime";
+import { median } from "@shared/commission";
 
 function brandFinal(starting: number, allMultiplier: number, multiplier: string, amount: string) {
   if (amount.trim() !== "" && !Number.isNaN(Number(amount))) return Number(amount);
@@ -158,6 +159,24 @@ export default function TargetsPage() {
       {list.length === 0 && (
         <tr><td colSpan={8} className="p-2 text-muted-foreground">None</td></tr>
       )}
+      {list.length > 0 && (() => {
+        const monthCount = data?.ref?.months?.length ?? 0;
+        const monthSums = Array.from({ length: monthCount }, (_, i) => list.reduce((sum: number, row: any) => sum + (row.months[i] ?? 0), 0));
+        const startingSum = list.reduce((sum: number, row: any) => sum + liveFinal(row).starting, 0);
+        const finalSum = list.reduce((sum: number, row: any) => sum + liveFinal(row).final, 0);
+        return (
+          <tr className="border-t bg-muted/30 font-semibold">
+            <td className="p-2">Subtotal</td>
+            {monthSums.map((n, i) => <td key={i} className="p-2 text-right tabular-nums">{formatHk(n)}</td>)}
+            <td className="p-2 text-right tabular-nums">{formatHk(median(monthSums))}</td>
+            <td className="p-2 text-right tabular-nums">{formatHk(startingSum)}</td>
+            <td />
+            <td />
+            <td className="p-2 text-right tabular-nums">{formatHk(finalSum)}</td>
+            <td />
+          </tr>
+        );
+      })()}
     </>
   );
 
@@ -207,7 +226,15 @@ export default function TargetsPage() {
           <CardContent className="p-4 grid sm:grid-cols-3 gap-3 text-sm">
             <div><div className="text-muted-foreground">Counter median</div><div className="font-semibold">{formatHk(data.ref.counterMedian)}</div></div>
             <div><div className="text-muted-foreground">Starting target</div><div className="font-semibold">{formatHk(data.starting)}</div></div>
-            <div><div className="text-muted-foreground">Final counter target</div><div className="font-semibold">{formatHk(liveCounter)}</div></div>
+            <div>
+              <div className="text-muted-foreground">Final counter target</div>
+              <div className="font-semibold">{formatHk(liveCounter)}</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {data.lastMonthSales > 0
+                  ? `${Math.round((liveCounter / data.lastMonthSales) * 100)}% of ${data.lastMonth} ${data.lastMonthBasis === "actual" ? "actual" : "typed sales"} (${formatHk(data.lastMonthSales)})`
+                  : `No sales recorded for ${data.lastMonth ?? "last month"}`}
+              </div>
+            </div>
             {counter && liveCounter < counter.minTarget && <p className="sm:col-span-3 text-amber-700">This is below the minimum target. You can still save it.</p>}
             {data.built?.poolNegative && <p className="sm:col-span-3 text-amber-700">The priority pool is negative, so this cannot be published yet.</p>}
           </CardContent>
