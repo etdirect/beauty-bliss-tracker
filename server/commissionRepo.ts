@@ -89,6 +89,7 @@ export interface BrandTargetRow {
   startingTarget: number;
   brandAdjustment: number;
   finalTarget: number;
+  manualAmount: number | null;
   status: "draft" | "published";
 }
 
@@ -391,9 +392,6 @@ class PgRepo implements CommissionRepo {
     await this.locked(input.counterId, input.month);
     const oldB = await this.listBrandTargets(input.counterId, input.month);
     const oldC = await this.getCounterTarget(input.counterId, input.month);
-    if ((oldC?.status === "published" || oldB.some(b => b.status === "published")) && input.status === "published" && !input.reason?.trim()) {
-      throw new Error("REASON_REQUIRED");
-    }
     const ts = now();
     await this.q(
       `INSERT INTO monthly_counter_targets (id, month, counter_id, starting_target, all_brands_adjustment, non_priority_expected, final_counter_target, below_minimum_warning, status, set_by, set_at, updated_by, updated_at, created_at)
@@ -409,12 +407,13 @@ class PgRepo implements CommissionRepo {
     );
     for (const b of input.brands) {
       await this.q(
-        `INSERT INTO monthly_targets (id, month, counter_id, brand_id, starting_target, brand_adjustment, final_target, is_current, set_by, set_at, status, updated_by, updated_at, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8,$9,$10,$8,$9,$9)
+        `INSERT INTO monthly_targets (id, month, counter_id, brand_id, starting_target, brand_adjustment, final_target, manual_amount, is_current, set_by, set_at, status, updated_by, updated_at, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$9,$10,$10)
          ON CONFLICT (month, counter_id, brand_id) DO UPDATE SET
            starting_target=EXCLUDED.starting_target, brand_adjustment=EXCLUDED.brand_adjustment, final_target=EXCLUDED.final_target,
+           manual_amount=EXCLUDED.manual_amount,
            set_by=EXCLUDED.set_by, set_at=EXCLUDED.set_at, status=EXCLUDED.status, updated_by=EXCLUDED.updated_by, updated_at=EXCLUDED.updated_at`,
-        [randomUUID(), input.month, input.counterId, b.brandId, b.startingTarget, b.brandAdjustment, b.finalTarget, userId, ts, input.status],
+        [randomUUID(), input.month, input.counterId, b.brandId, b.startingTarget, b.brandAdjustment, b.finalTarget, b.manualAmount, userId, ts, input.status],
       );
       await this.q(
         `INSERT INTO monthly_target_history (id, month, counter_id, brand_id, field_name, old_value, new_value, reason, changed_by, changed_at)
@@ -556,7 +555,9 @@ function mapBrandTarget(r: any): BrandTargetRow {
   return {
     id: r.id, month: r.month, counterId: r.counter_id, brandId: r.brand_id,
     startingTarget: Number(r.starting_target), brandAdjustment: Number(r.brand_adjustment),
-    finalTarget: Number(r.final_target), status: r.status,
+    finalTarget: Number(r.final_target),
+    manualAmount: r.manual_amount == null ? null : Number(r.manual_amount),
+    status: r.status,
   };
 }
 function mapCounterTarget(r: any): CounterTargetRow {
@@ -665,7 +666,6 @@ class MemRepo implements CommissionRepo {
   }, userId: string) {
     this.assert(input.counterId, input.month);
     const old = await this.getCounterTarget(input.counterId, input.month);
-    if (old?.status === "published" && input.status === "published" && !input.reason?.trim()) throw new Error("REASON_REQUIRED");
     this.counterTargets = this.counterTargets.filter(t => !(t.counterId === input.counterId && t.month === input.month));
     this.counterTargets.push({ id: randomUUID(), month: input.month, counterId: input.counterId, ...input.counter });
     for (const b of input.brands) {
@@ -815,7 +815,7 @@ export async function ensureCommissionSchema() {
       id TEXT PRIMARY KEY, month TEXT NOT NULL, counter_id TEXT NOT NULL, brand_id TEXT NOT NULL,
       starting_target REAL NOT NULL, brand_adjustment REAL NOT NULL DEFAULT 1, final_target REAL NOT NULL,
       is_current BOOLEAN NOT NULL DEFAULT true, set_by TEXT, set_at TEXT, status TEXT NOT NULL DEFAULT 'draft',
-      updated_by TEXT, updated_at TEXT, created_at TEXT NOT NULL, UNIQUE (month, counter_id, brand_id)
+      updated_by TEXT, updated_at TEXT, created_at TEXT NOT NULL, manual_amount REAL, UNIQUE (month, counter_id, brand_id)
     );
     CREATE TABLE IF NOT EXISTS monthly_counter_targets (
       id TEXT PRIMARY KEY, month TEXT NOT NULL, counter_id TEXT NOT NULL, starting_target REAL NOT NULL,
@@ -855,6 +855,7 @@ export async function ensureCommissionSchema() {
     );
   `);
   await q(`ALTER TABLE brand_pos_availability ADD COLUMN IF NOT EXISTS is_priority BOOLEAN NOT NULL DEFAULT false`);
+  await q(`ALTER TABLE monthly_targets ADD COLUMN IF NOT EXISTS manual_amount REAL`);
   await q(`UPDATE users SET role = 'admin' WHERE lower(username) = 'admin' AND role = 'management'`);
 
   const repo = new PgRepo(q);

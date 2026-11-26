@@ -23,6 +23,7 @@ import {
   payRouteDecision,
 } from "@shared/access";
 import { posIdsForCounter } from "@shared/scheme";
+import { previousMonths } from "@shared/hkTime";
 
 async function actor(req: Request) {
   const id = req.session?.userId;
@@ -144,7 +145,7 @@ export function registerCommissionRoutes(app: Express) {
   app.put("/api/commission/priority", async (req, res) => {
     const user = await actor(req);
     if (!user) return res.status(401).json({ error: "Not authenticated" });
-    if (!canEditCommissionSettings(user.role)) return deny(res);
+    if (!canSetTargets(user.role)) return deny(res);
     await commissionRepo().setPriority(req.body.brandId, req.body.posId, !!req.body.isPriority, user.id);
     res.json({ ok: true });
   });
@@ -304,7 +305,25 @@ export function registerCommissionRoutes(app: Express) {
       return res.json({ published: true, rows, counter: head });
     }
     if (!canSetTargets(user.role)) return deny(res);
-    const preview = await targetPreview(counter, month);
+    const count = Math.min(24, Math.max(1, Number(req.query.months || 3) || 3));
+    const from = String(req.query.from || "");
+    const to = String(req.query.to || "");
+    let historyMonths: string[] | undefined;
+    if (/^\d{4}-\d{2}$/.test(from) && /^\d{4}-\d{2}$/.test(to) && from <= to) {
+      historyMonths = [];
+      let cursor = from;
+      while (cursor <= to && historyMonths.length < 24) {
+        historyMonths.push(cursor);
+        const [y, m] = cursor.split("-").map(Number);
+        const next = new Date(Date.UTC(y, m, 1));
+        cursor = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+      }
+    } else {
+      historyMonths = undefined;
+    }
+    const preview = await targetPreview(counter, month, {
+      historyMonths: historyMonths ?? previousMonths(month, count),
+    });
     res.json({
       ...preview,
       status: await commissionRepo().monthStatus(counterId, month),
@@ -320,15 +339,35 @@ export function registerCommissionRoutes(app: Express) {
     if (!counter) return res.status(404).json({ error: "Counter not found" });
     const status = await commissionRepo().monthStatus(counter.id, req.body.month);
     if (monthEditDecision(status, user.role, "edit") !== "ok") return res.status(403).json({ error: "This month is locked" });
-    const isAdmin = canEditCommissionSettings(user.role);
     try {
+      const history = Array.isArray(req.body.historyMonths) ? req.body.historyMonths : undefined;
       const preview = await targetPreview(counter, req.body.month, {
         allBrandsAdjustment: Number(req.body.allBrandsAdjustment ?? 1),
-        nonPriorityExpected: req.body.nonPriorityExpected != null ? Number(req.body.nonPriorityExpected) : null,
         brandAdjustments: req.body.brandAdjustments ?? {},
-        counterStartingOverride: isAdmin && req.body.counterStarting != null ? Number(req.body.counterStarting) : null,
-        brandStartingOverrides: isAdmin ? req.body.brandStartingOverrides ?? undefined : undefined,
+        historyMonths: history,
       });
+      const allAdj = Number(req.body.allBrandsAdjustment ?? 1) || 1;
+      const manuals = req.body.manualAmounts ?? {};
+      const adjustments = req.body.brandAdjustments ?? {};
+      const brandRows = preview.ref.rows.map(row => {
+        const built = preview.built.brands.find(b => b.brandId === row.brandId);
+        const starting = row.priority ? (built?.startingTarget ?? 0) : row.median;
+        const typed = manuals[row.brandId];
+        const hasAmount = typed !== undefined && typed !== null && String(typed) !== "" && !Number.isNaN(Number(typed));
+        const multiplier = Number(adjustments[row.brandId] ?? 1);
+        const finalTarget = hasAmount ? Number(typed) : starting * allAdj * (Number.isFinite(multiplier) ? multiplier : 1);
+        return {
+          brandId: row.brandId,
+          priority: row.priority,
+          startingTarget: starting,
+          brandAdjustment: Number.isFinite(multiplier) ? multiplier : 1,
+          finalTarget,
+          manualAmount: hasAmount ? Number(typed) : null,
+        };
+      });
+      const nonPriorityExpected = brandRows.filter(b => !b.priority).reduce((s, b) => s + b.finalTarget, 0);
+      const finalCounterTarget = brandRows.reduce((s, b) => s + b.finalTarget, 0);
+      const belowMinimum = finalCounterTarget < counter.minTarget;
       if (req.body.publish && preview.built.poolNegative) {
         return res.status(400).json({ error: "The priority pool is negative. Adjust the figures before publishing." });
       }
@@ -336,23 +375,18 @@ export function registerCommissionRoutes(app: Express) {
         counterId: counter.id,
         month: req.body.month,
         status: req.body.publish ? "published" : "draft",
-        reason: req.body.reason ?? null,
+        reason: null,
         counter: {
           startingTarget: preview.starting,
-          allBrandsAdjustment: preview.allAdj,
-          nonPriorityExpected: preview.nonPriority,
-          finalCounterTarget: preview.built.finalCounterTarget,
-          belowMinimumWarning: preview.built.belowMinimum,
+          allBrandsAdjustment: allAdj,
+          nonPriorityExpected,
+          finalCounterTarget,
+          belowMinimumWarning: belowMinimum,
           status: req.body.publish ? "published" : "draft",
         },
-        brands: preview.built.brands.map(b => ({
-          brandId: b.brandId,
-          startingTarget: b.startingTarget,
-          brandAdjustment: req.body.brandAdjustments?.[b.brandId] ?? 1,
-          finalTarget: b.finalTarget,
-        })),
+        brands: brandRows,
       }, user.id);
-      res.json({ ok: true, belowMinimum: preview.built.belowMinimum, poolNegative: preview.built.poolNegative });
+      res.json({ ok: true, belowMinimum, poolNegative: preview.built.poolNegative });
     } catch (err) { fail(res, err); }
   });
 

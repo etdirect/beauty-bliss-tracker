@@ -114,9 +114,9 @@ export async function baForCounter(counter: SchemeCounter) {
   return bas.map(u => ({ id: u.id, name: u.name }));
 }
 
-export async function referenceMonths(counter: SchemeCounter, month: string) {
+export async function referenceMonths(counter: SchemeCounter, month: string, historyMonths?: string[]) {
   const ids = posIdsOf(counter);
-  const months = previousMonths(month, 3);
+  const months = historyMonths && historyMonths.length > 0 ? historyMonths : previousMonths(month, 3);
   const repo = commissionRepo();
   const priorities = await repo.priorities();
   const priorityBrandIds = new Set(
@@ -138,8 +138,9 @@ export async function referenceMonths(counter: SchemeCounter, month: string) {
     for (const pair of Array.from(actualByBrand.entries())) byMonthBrand.set(`${m}|${pair[0]}`, pair[1]);
   }
 
-  const brandIds = new Set<string>(Array.from(priorityBrandIds));
-  for (const key of Array.from(byMonthBrand.keys())) brandIds.add(key.split("|")[1]);
+  const availability = await storage.getBrandPosAvailability();
+  const brandIds = new Set<string>();
+  for (const row of availability) if (ids.includes(row.posId)) brandIds.add(row.brandId);
 
   const rows = Array.from(brandIds).map(brandId => {
     const values = months.map(m => byMonthBrand.get(`${m}|${brandId}`) ?? 0);
@@ -168,9 +169,10 @@ export async function targetPreview(counter: SchemeCounter, month: string, input
   brandAdjustments?: Record<string, number>;
   counterStartingOverride?: number | null;
   brandStartingOverrides?: Record<string, number>;
+  historyMonths?: string[];
 }) {
   const repo = commissionRepo();
-  const ref = await referenceMonths(counter, month);
+  const ref = await referenceMonths(counter, month, input?.historyMonths);
   const steps = await repo.listStepPlans();
   const step = steps.find(s => s.counterId === counter.id);
   const saved = await repo.getCounterTarget(counter.id, month);
@@ -211,8 +213,12 @@ export async function targetPreview(counter: SchemeCounter, month: string, input
   const prevMonth = previousMonths(month, 1)[0];
   const prev = prevMonth ? await repo.listBrandTargets(counter.id, prevMonth) : [];
   const brandAdjustments: Record<string, number> = {};
-  for (const b of savedBrands) brandAdjustments[b.brandId] = b.brandAdjustment;
-  return { ref, starting, built, saved, prev, allAdj, nonPriority, step, brandAdjustments };
+  const manualAmounts: Record<string, number | null> = {};
+  for (const b of savedBrands) {
+    brandAdjustments[b.brandId] = b.brandAdjustment;
+    manualAmounts[b.brandId] = b.manualAmount;
+  }
+  return { ref, starting, built, saved, prev, allAdj, nonPriority, step, brandAdjustments, manualAmounts };
 }
 
 export async function projectionFor(opts: {
