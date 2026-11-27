@@ -197,7 +197,7 @@ export default function ChannelSalesPage() {
               <tr>
                 <th className="text-left p-2">Door</th>
                 <th className="text-left p-2">Mother code</th>
-                <th className="text-right p-2">Cashier lump</th>
+                <th className="text-right p-2">Sales report</th>
                 <th className="text-right p-2">Adjusted file</th>
                 <th className="text-right p-2">Difference</th>
               </tr>

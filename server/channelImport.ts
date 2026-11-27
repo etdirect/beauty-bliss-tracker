@@ -272,7 +272,7 @@ export function parseAeon(buffer: Buffer): ParsedUpload {
 export function parseCashier(buffer: Buffer, channel: "LOGON" | "SOGO"): ParsedUpload {
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const found = pickSheet(wb, ["Sheet1"], ["site", "sales qty", "sales amt", "brand"]);
-  if (!found) throw new Error(`This does not look like a ${channel} cashier report. It needs Site, Sales Qty, Sales Amt, and Brand columns.`);
+  if (!found) throw new Error(`This does not look like a ${channel} sales report. It needs Site, Sales Qty, Sales Amt, and Brand columns.`);
   const headerAt = findHeaderRow(found.rows, ["site", "sales qty", "brand"]);
   const header = found.rows[headerAt] ?? [];
   const iSite = col(header, "site");
@@ -308,7 +308,7 @@ export function parseCashier(buffer: Buffer, channel: "LOGON" | "SOGO"): ParsedU
     addBrand(brands, siteCode, brandCode, qty, amount);
   }
   const motherDoors = Array.from(mothers.values()).map(row => ({ ...row, qty: round2(row.qty), amount: round2(row.amount) }));
-  if (skuLines.length === 0 && motherDoors.length === 0) throw new Error("No sales lines were found in the cashier report.");
+  if (skuLines.length === 0 && motherDoors.length === 0) throw new Error("No sales lines were found in the sales report.");
   return { channel, kind: "cashier", skuLines, brandDoors: finishBrands(brands), motherDoors, warnings: [] };
 }
 
@@ -388,7 +388,7 @@ export function parseUpload(buffer: Buffer, channel: Channel, kind: UploadKind):
   }
   if (kind === "cashier") return parseCashier(buffer, channel);
   if (kind === "split") return parseSplit(buffer, channel);
-  throw new Error("Choose the cashier report or the adjusted brand workbook.");
+  throw new Error("Choose the sales report or the adjusted brand workbook.");
 }
 
 const memory: StoredUpload[] = [];
@@ -527,7 +527,7 @@ export function combineUploads(channel: Channel, month: string, uploads: StoredU
   for (const row of split?.brandDoors ?? []) splitByDoor.set(row.siteCode, (splitByDoor.get(row.siteCode) ?? 0) + row.amount);
   const warnings = uploads.flatMap(row => row.warnings);
   if ((channel === "LOGON" || channel === "SOGO") && cashier && !split && (cashier.motherDoors?.length ?? 0) > 0) {
-    warnings.push("A mother code is in the cashier report. Upload the adjusted brand workbook before using these figures for brand targets.");
+    warnings.push("A mother code is in the sales report. Upload the adjusted brand workbook before using these figures for brand targets.");
   }
   if (split) {
     for (const mother of cashier?.motherDoors ?? []) {

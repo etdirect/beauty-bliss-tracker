@@ -13,9 +13,9 @@ const UPLOAD_CHANNELS = ["LOGON", "SOGO", "AEON"] as const;
 
 const FILE_SLOTS = [
   { channel: "AEON", kind: "aeon", label: "Sales report" },
-  { channel: "LOGON", kind: "cashier", label: "Cashier report" },
+  { channel: "LOGON", kind: "cashier", label: "Sales report" },
   { channel: "LOGON", kind: "split", label: "Adjusted workbook" },
-  { channel: "SOGO", kind: "cashier", label: "Cashier report" },
+  { channel: "SOGO", kind: "cashier", label: "Sales report" },
   { channel: "SOGO", kind: "split", label: "Adjusted workbook" },
 ] as const;
 
@@ -28,7 +28,7 @@ const UPLOADS: Record<string, { kind: "aeon" | "cashier" | "split"; title: strin
   LOGON: [
     {
       kind: "cashier",
-      title: "1. Cashier report",
+      title: "1. Sales report",
       body: "Lines that name a product are kept. A line headed HAIR CARE PROMOTION is a mother code. It is held back and is not treated as a brand.",
     },
     {
@@ -40,7 +40,7 @@ const UPLOADS: Record<string, { kind: "aeon" | "cashier" | "split"; title: strin
   SOGO: [
     {
       kind: "cashier",
-      title: "1. Cashier report",
+      title: "1. Sales report",
       body: "Lines that name a product are kept. A line called BEAUTY BLISS-N1 is a mother code. It is held back and is not treated as a brand.",
     },
     {

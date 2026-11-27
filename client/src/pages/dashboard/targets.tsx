@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatHk, hkMonth, previousMonths } from "@shared/hkTime";
 import { median } from "@shared/commission";
 
@@ -28,32 +28,7 @@ export default function TargetsPage() {
   const [allAdj, setAllAdj] = useState("1");
   const [brandAdj, setBrandAdj] = useState<Record<string, string>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const { data: counters = [] } = useQuery<any[]>({ queryKey: ["/api/commission/counters"] });
-  const { data: reportDoors = [] } = useQuery<any[]>({
-    queryKey: ["channel-doors", month],
-    queryFn: async () => {
-      const res = await fetch(`/api/channel-reports/doors?month=${month}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    },
-  });
-  const baDoors = useMemo(() => {
-    const seen = new Set<string>();
-    const options: { key: string; counterId: string; label: string }[] = [];
-    for (const door of reportDoors) {
-      if (!door.hasBa || !door.counterId || seen.has(door.counterId)) continue;
-      seen.add(door.counterId);
-      const same = reportDoors.filter((item: any) => item.counterId === door.counterId && item.hasBa);
-      const places = same.map((item: any) => `${item.initials} ${item.name}`.trim()).join(", ");
-      const names = Array.from(new Set(same.flatMap((item: any) => item.baNames))).join(", ");
-      options.push({ key: door.counterId, counterId: door.counterId, label: `${places} · BA: ${names}` });
-    }
-    return options;
-  }, [reportDoors]);
-  const counter = counters.find(c => c.id === counterId) ?? counters[0];
-  const activeId = counter?.id ?? "";
-  useEffect(() => { if (!counterId && counters[0]) setCounterId(counters[0].id); }, [counters, counterId]);
-
+  const [doorKey, setDoorKey] = useState("");
   const historyMonths = useMemo(() => {
     if (/^\d{4}-\d{2}$/.test(fromMonth) && /^\d{4}-\d{2}$/.test(toMonth) && fromMonth <= toMonth) {
       const out: string[] = [];
@@ -68,6 +43,28 @@ export default function TargetsPage() {
     }
     return previousMonths(month, Math.min(24, Math.max(1, Number(monthCount) || 3)));
   }, [month, monthCount, fromMonth, toMonth]);
+  const doorMonths = useMemo(() => Array.from(new Set([month, ...historyMonths])), [month, historyMonths]);
+  const { data: counters = [] } = useQuery<any[]>({ queryKey: ["/api/commission/counters"] });
+  const { data: reportDoors = [] } = useQuery<any[]>({
+    queryKey: ["channel-doors", doorMonths.join(",")],
+    queryFn: async () => {
+      const params = new URLSearchParams({ month: doorMonths[0], months: doorMonths.join(",") });
+      const res = await fetch(`/api/channel-reports/doors?${params}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
+  const counter = counters.find(c => c.id === counterId) ?? counters[0];
+  const activeId = counter?.id ?? "";
+  useEffect(() => {
+    if (doorKey || reportDoors.length === 0) {
+      if (!counterId && counters[0] && reportDoors.length === 0) setCounterId(counters[0].id);
+      return;
+    }
+    const first = reportDoors.find((door: any) => door.counterId) ?? reportDoors[0];
+    setDoorKey(`${first.channel}|${first.siteCode}`);
+    if (first.counterId) setCounterId(first.counterId);
+  }, [reportDoors, counters, doorKey, counterId]);
 
   const { data } = useQuery<any>({
     queryKey: ["commission-targets", month, activeId, historyMonths.join(",")],
@@ -212,14 +209,37 @@ export default function TargetsPage() {
           <Label className="text-xs">Target month</Label>
           <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
         </div>
-        <Select value={activeId} onValueChange={setCounterId}>
-          <SelectTrigger className="w-80"><SelectValue placeholder="Counter" /></SelectTrigger>
+        <Select
+          value={reportDoors.length ? doorKey : activeId}
+          onValueChange={value => {
+            if (!reportDoors.length) { setCounterId(value); return; }
+            setDoorKey(value);
+            const door = reportDoors.find((item: any) => `${item.channel}|${item.siteCode}` === value);
+            setCounterId(door?.counterId ?? "");
+          }}
+        >
+          <SelectTrigger className="w-80"><SelectValue placeholder="Store" /></SelectTrigger>
           <SelectContent>
-            {(baDoors.length ? baDoors : counters.map(c => ({ key: c.id, counterId: c.id, label: c.name }))).map(item => (
-              <SelectItem key={item.key} value={item.counterId}>{item.label}</SelectItem>
-            ))}
+            {reportDoors.length === 0 && counters.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+            {["LOGON", "SOGO", "AEON"].map(channel => {
+              const group = reportDoors.filter((door: any) => door.channel === channel);
+              if (group.length === 0) return null;
+              return (
+                <SelectGroup key={channel}>
+                  <SelectLabel>{channel}</SelectLabel>
+                  {group.map((door: any) => (
+                    <SelectItem key={`${door.channel}|${door.siteCode}`} value={`${door.channel}|${door.siteCode}`}>
+                      {`${door.initials} | ${door.siteCode} | ${door.name || door.initials}`}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              );
+            })}
           </SelectContent>
         </Select>
+        {reportDoors.length > 0 && doorKey && !reportDoors.find((door: any) => `${door.channel}|${door.siteCode}` === doorKey)?.counterId && (
+          <p className="text-xs text-muted-foreground w-full">This store is in the sales reports. Brand targets are set on the stores that belong to a commission counter.</p>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3 items-end">

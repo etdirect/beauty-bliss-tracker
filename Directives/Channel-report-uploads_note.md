@@ -28,8 +28,8 @@ One upload. From that file take sales by brand, sales by door, and each SKU’s 
 
 Each tab tells the user which file to choose.
 
-1. **Cashier report.** Product lines give brand, door, units, and amount. Mother-code lines (HAIR CARE PROMOTION) are kept as a lump and are not treated as a brand.
-2. **Mother-code split** (the adjusted brand workbook). Real products that were inside the mother code, for the doors that use it. October 2026 doors: 1106 Times Square, 1108 Festival Walk (又一城), 1112 Langham Place, 1128 Harbour City, 1131 New Town Plaza. The other LOGON doors are only in the cashier report.
+1. **Sales report.** Product lines give brand, door, units, and amount. Mother-code lines (HAIR CARE PROMOTION) are kept as a lump and are not treated as a brand.
+2. **Mother-code split** (the adjusted brand workbook). Real products that were inside the mother code, for the doors that use it. October 2026 doors: 1106 Times Square, 1108 Festival Walk (又一城), 1112 Langham Place, 1128 Harbour City, 1131 New Town Plaza. The other LOGON doors are only in the sales report.
 
 Combined brand and SKU figures = cashier lines where the product is named + the split file. The mother-code lump stays out of that sum.
 
@@ -39,7 +39,7 @@ The split workbook’s result matched the October mother-code lump by door (HK$4
 
 October 2026 sample. The mother code is the line **90699773 - BEAUTY BLISS-N1**, brand `0`, not the words HAIR CARE PROMOTION.
 
-1. Cashier report. This sample has Causeway Bay only. Named products are HK$17,749.50. The mother code is HK$338,564.60. No dates on the lines. Kai Tak is not in the line sheet.
+1. Sales report. This sample has Causeway Bay only. Named products are HK$17,749.50. The mother code is HK$338,564.60. No dates on the lines. Kai Tak is not in the line sheet.
 2. Adjusted brand workbook. Causeway Bay matches that mother code to the cent. Kai Tak, HK$130,914, is only in this file.
 
 The before-adjustment workbooks (SOGO and LOGON) use the same invoices. Their result equals the invoice total, before the small tie-out to the cashier lump (SOGO Causeway Bay HK$2,613.50, LOGON HK$2,795.30). Do not add an upload tab for them. Upload the adjusted file.

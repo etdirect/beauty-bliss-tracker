@@ -247,7 +247,9 @@ export async function registerRoutes(
       return res.status(403).json({ error: "You do not have access to this" });
     }
     const month = String(req.query.month ?? "");
-    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Choose a month." });
+    const extra = String(req.query.months ?? "");
+    const months = Array.from(new Set([month, ...extra.split(",")].map(item => item.trim()).filter(item => /^\d{4}-\d{2}$/.test(item))));
+    if (months.length === 0) return res.status(400).json({ error: "Choose a month." });
     const [locations, users, assignments, counters] = await Promise.all([
       storage.getPosLocations(),
       storage.getUsers(),
@@ -255,10 +257,18 @@ export async function registerRoutes(
       commissionRepo().listCounters(),
     ]);
     const channels: Channel[] = ["AEON", "LOGON", "SOGO"];
+    const seen = new Set<string>();
     const found = [];
-    for (const channel of channels) {
-      const uploads = await listUploads(channel, month);
-      found.push(...doorsInReport(channel, month, uploads));
+    for (const oneMonth of months) {
+      for (const channel of channels) {
+        const uploads = await listUploads(channel, oneMonth);
+        for (const door of doorsInReport(channel, oneMonth, uploads)) {
+          const key = `${door.channel}|${door.siteCode}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          found.push(door);
+        }
+      }
     }
     const doors = attachStaff(found, locations, users, assignments, counters)
       .sort((a, b) => a.channel.localeCompare(b.channel) || a.initials.localeCompare(b.initials));
