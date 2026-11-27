@@ -18,7 +18,7 @@ import DutyPage from "./dashboard/duty";
 import ActualsPage from "./dashboard/actuals";
 import TargetsPage from "./dashboard/targets";
 import PayPage from "./dashboard/pay";
-import AeonUnitsPage from "./dashboard/aeon-units";
+import ChannelSalesPage from "./dashboard/channel-sales";
 import { canUseOfficeScreens } from "@shared/access";
 
 export const CHART_COLORS = [
@@ -37,7 +37,7 @@ const navItems = [
   { path: "/dashboard/reconciliation", label: "POS Reconciliation", icon: FileSpreadsheet, roles: ["management", "admin", "sales_manager"] },
   { path: "/dashboard/duty", label: "Duty Record", icon: CalendarDays, roles: ["admin", "sales_manager"] },
   { path: "/dashboard/actuals", label: "Monthly Actuals", icon: ClipboardList, roles: ["admin", "sales_manager"] },
-  { path: "/dashboard/aeon-units", label: "AEON Units", icon: Boxes, roles: ["management", "admin", "sales_manager", "brand_manager"] },
+  { path: "/dashboard/channel-sales", label: "Channel sales", icon: Boxes, roles: ["management", "admin", "sales_manager", "brand_manager"] },
   { path: "/dashboard/targets", label: "Targets", icon: Target, roles: ["admin", "sales_manager", "brand_manager"] },
   { path: "/dashboard/pay", label: "Pay Overview", icon: Wallet, roles: ["admin", "sales_manager"] },
   { path: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["management", "admin"] },
@@ -55,7 +55,7 @@ export default function Dashboard() {
   const [isSettings] = useRoute("/dashboard/settings");
   const [isDuty] = useRoute("/dashboard/duty");
   const [isActuals] = useRoute("/dashboard/actuals");
-  const [isAeonUnits] = useRoute("/dashboard/aeon-units");
+  const [isChannelSales] = useRoute("/dashboard/channel-sales");
   const [isTargets] = useRoute("/dashboard/targets");
   const [isPay] = useRoute("/dashboard/pay");
 
@@ -73,7 +73,7 @@ export default function Dashboard() {
     (path === "/dashboard/settings" && isSettings) ||
     (path === "/dashboard/duty" && isDuty) ||
     (path === "/dashboard/actuals" && isActuals) ||
-    (path === "/dashboard/aeon-units" && isAeonUnits) ||
+    (path === "/dashboard/channel-sales" && isChannelSales) ||
     (path === "/dashboard/targets" && isTargets) ||
     (path === "/dashboard/pay" && isPay);
   if (!visibleNav.some(item => onPath(item.path))) return <Redirect to="/dashboard" />;
@@ -106,7 +106,7 @@ export default function Dashboard() {
               (item.path === "/dashboard/settings" && isSettings) ||
               (item.path === "/dashboard/duty" && isDuty) ||
               (item.path === "/dashboard/actuals" && isActuals) ||
-              (item.path === "/dashboard/aeon-units" && isAeonUnits) ||
+              (item.path === "/dashboard/channel-sales" && isChannelSales) ||
               (item.path === "/dashboard/targets" && isTargets) ||
               (item.path === "/dashboard/pay" && isPay);
             return (
@@ -189,7 +189,7 @@ export default function Dashboard() {
           {isSettings && <SettingsPage />}
           {isDuty && <DutyPage />}
           {isActuals && <ActualsPage />}
-          {isAeonUnits && <AeonUnitsPage />}
+          {isChannelSales && <ChannelSalesPage />}
           {isTargets && <TargetsPage />}
           {isPay && <PayPage />}
         </main>

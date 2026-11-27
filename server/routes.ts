@@ -4,8 +4,8 @@ import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { registerCommissionRoutes, assertRoleChange } from "./commissionRoutes";
-import { AEON_UNITS_MONTH, aeonUnitLines } from "./aeonUnits202610";
 import { canUseOfficeScreens } from "@shared/access";
+import { combineUploads, listUploads, parseUpload, saveUpload, type Channel, type UploadKind } from "./channelImport";
 import multer from "multer";
 import * as XLSX from "xlsx";
 
@@ -191,12 +191,43 @@ export async function registerRoutes(
     res.json(locations);
   });
 
-  app.get("/api/aeon-units", requireAuth, async (req, res) => {
+  app.get("/api/channel-reports", requireAuth, async (req, res) => {
     const user = await storage.getUser(req.session.userId!);
     if (!user || !canUseOfficeScreens(user.role)) {
       return res.status(403).json({ error: "You do not have access to this" });
     }
-    res.json({ month: AEON_UNITS_MONTH, lines: aeonUnitLines });
+    const channel = String(req.query.channel ?? "") as Channel;
+    const month = String(req.query.month ?? "");
+    if (!["AEON", "LOGON", "SOGO"].includes(channel) || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "Choose a channel and a month." });
+    }
+    const uploads = await listUploads(channel, month);
+    res.json(combineUploads(channel, month, uploads));
+  });
+
+  app.post("/api/channel-reports", requireAuth, upload.single("file"), async (req: any, res) => {
+    const user = await storage.getUser(req.session.userId!);
+    if (!user || !canUseOfficeScreens(user.role)) {
+      return res.status(403).json({ error: "You do not have access to this" });
+    }
+    const channel = String(req.body.channel ?? "") as Channel;
+    const kind = String(req.body.kind ?? "") as UploadKind;
+    const month = String(req.body.month ?? "");
+    if (!["AEON", "LOGON", "SOGO"].includes(channel)) {
+      return res.status(400).json({ error: "Choose AEON, LOGON, or SOGO." });
+    }
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "Choose the month, for example 2026-10." });
+    }
+    if (!req.file) return res.status(400).json({ error: "Choose an Excel file." });
+    try {
+      const parsed = parseUpload(req.file.buffer, channel, kind);
+      await saveUpload(month, req.file.originalname || "upload.xlsx", parsed);
+      const uploads = await listUploads(channel, month);
+      res.json(combineUploads(channel, month, uploads));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "The file could not be read." });
+    }
   });
 
   app.post("/api/pos-locations", requireManagement, async (req, res) => {
