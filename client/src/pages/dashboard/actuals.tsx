@@ -11,6 +11,14 @@ import { formatHk, hkMonth } from "@shared/hkTime";
 
 const UPLOAD_CHANNELS = ["LOGON", "SOGO", "AEON"] as const;
 
+const FILE_SLOTS = [
+  { channel: "AEON", kind: "aeon", label: "Sales report" },
+  { channel: "LOGON", kind: "cashier", label: "Cashier report" },
+  { channel: "LOGON", kind: "split", label: "Adjusted workbook" },
+  { channel: "SOGO", kind: "cashier", label: "Cashier report" },
+  { channel: "SOGO", kind: "split", label: "Adjusted workbook" },
+] as const;
+
 const UPLOADS: Record<string, { kind: "aeon" | "cashier" | "split"; title: string; body: string }[]> = {
   AEON: [{
     kind: "aeon",
@@ -61,6 +69,14 @@ export default function ActualsPage() {
   const [doorKey, setDoorKey] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const { data: counters = [] } = useQuery<any[]>({ queryKey: ["/api/commission/counters"] });
+  const { data: uploadedFiles = [] } = useQuery<{ channel: string; kind: string; filename: string; uploadedAt: string; productLines: number; amountRead: number }[]>({
+    queryKey: ["channel-files", month],
+    queryFn: async () => {
+      const res = await fetch(`/api/channel-reports/files?month=${month}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
   const { data: doors = [] } = useQuery<ReportDoor[]>({
     queryKey: ["channel-doors", month],
     queryFn: async () => {
@@ -126,6 +142,7 @@ export default function ActualsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["channel-doors", month] });
       queryClient.invalidateQueries({ queryKey: ["channel-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["channel-files", month] });
       queryClient.invalidateQueries({ queryKey: ["commission-actuals"] });
       toast({ title: "Report saved", description: "Doors from the file are now in the dropdown. Doors with a BA can be used for brand targets." });
     },
@@ -155,6 +172,43 @@ export default function ActualsPage() {
         <div className="flex flex-wrap items-end gap-3 mb-3">
           <Input type="month" value={month} onChange={e => { setMonth(e.target.value); setDoorKey(""); }} className="w-40" />
         </div>
+        <div className="overflow-x-auto rounded-lg border mb-4">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left p-2">Channel</th>
+                <th className="text-left p-2">File type</th>
+                <th className="text-left p-2">File the app read</th>
+                <th className="text-right p-2">Products</th>
+                <th className="text-right p-2">Amount read</th>
+              </tr>
+            </thead>
+            <tbody>
+              {FILE_SLOTS.map(slot => {
+                const saved = uploadedFiles.find(file => file.channel === slot.channel && file.kind === slot.kind);
+                return (
+                  <tr key={`${slot.channel}-${slot.kind}`} className="border-t">
+                    <td className="p-2">{slot.channel}</td>
+                    <td className="p-2">{slot.label}</td>
+                    <td className="p-2">
+                      {saved ? (
+                        <>
+                          <div>{saved.filename}</div>
+                          <div className="text-xs text-muted-foreground">{new Date(saved.uploadedAt).toLocaleString("en-HK", { hour12: false })}</div>
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">Not uploaded</span>
+                      )}
+                    </td>
+                    <td className="p-2 text-right tabular-nums">{saved ? saved.productLines.toLocaleString("en-HK") : "—"}</td>
+                    <td className="p-2 text-right tabular-nums">{saved ? formatHk(saved.amountRead) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">This is the latest file the app successfully read for each slot in {month}. Uploading the same slot again replaces it.</p>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="enter">Enter by store</TabsTrigger>
           {UPLOAD_CHANNELS.map(channel => (

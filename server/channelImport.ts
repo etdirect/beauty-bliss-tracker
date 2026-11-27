@@ -475,6 +475,36 @@ export async function listUploads(channel: Channel, month: string): Promise<Stor
   return memory.filter(row => row.channel === channel && row.month === month);
 }
 
+export interface UploadFileRecord {
+  channel: Channel;
+  kind: UploadKind;
+  filename: string;
+  uploadedAt: string;
+  productLines: number;
+  amountRead: number;
+}
+
+export async function listUploadFiles(month: string): Promise<UploadFileRecord[]> {
+  const channels: Channel[] = ["AEON", "LOGON", "SOGO"];
+  const found: UploadFileRecord[] = [];
+  for (const channel of channels) {
+    const rows = await listUploads(channel, month);
+    for (const row of rows) {
+      const amount = row.brandDoors.reduce((sum, item) => sum + item.amount, 0)
+        + row.motherDoors.reduce((sum, item) => sum + item.amount, 0);
+      found.push({
+        channel,
+        kind: row.kind,
+        filename: row.filename,
+        uploadedAt: row.uploadedAt,
+        productLines: row.skuLines.length,
+        amountRead: round2(amount),
+      });
+    }
+  }
+  return found;
+}
+
 export interface CombinedReport {
   channel: Channel;
   month: string;

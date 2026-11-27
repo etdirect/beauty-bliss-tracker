@@ -7,7 +7,7 @@ import { registerCommissionRoutes, assertRoleChange } from "./commissionRoutes";
 import { commissionRepo } from "./commissionRepo";
 import { canUseOfficeScreens } from "@shared/access";
 import { brandMatchesCode } from "@shared/scheme";
-import { attachStaff, BRAND_NAMES, combineUploads, doorsInReport, listUploads, parseUpload, saveUpload, siteKey, type Channel, type UploadKind } from "./channelImport";
+import { attachStaff, BRAND_NAMES, combineUploads, doorsInReport, listUploadFiles, listUploads, parseUpload, saveUpload, siteKey, type Channel, type UploadKind } from "./channelImport";
 import multer from "multer";
 import * as XLSX from "xlsx";
 
@@ -229,6 +229,16 @@ export async function registerRoutes(
   app.get("/api/pos-locations", requireAuth, async (_req, res) => {
     const locations = await storage.getPosLocations();
     res.json(locations);
+  });
+
+  app.get("/api/channel-reports/files", requireAuth, async (req, res) => {
+    const user = await storage.getUser(req.session.userId!);
+    if (!user || !canUseOfficeScreens(user.role)) {
+      return res.status(403).json({ error: "You do not have access to this" });
+    }
+    const month = String(req.query.month ?? "");
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Choose a month." });
+    res.json(await listUploadFiles(month));
   });
 
   app.get("/api/channel-reports/doors", requireAuth, async (req, res) => {
