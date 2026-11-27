@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { randomUUID } from "crypto";
+import { channelKey, brandMatchesCode, type PosLike } from "@shared/scheme";
 import { isPostgres, storage, PgStorage } from "./storage";
 
 export type Channel = "AEON" | "LOGON" | "SOGO";
@@ -515,4 +516,75 @@ export function combineUploads(channel: Channel, month: string, uploads: StoredU
     splitDoors: Array.from(splitByDoor.entries()).map(([siteCode, amount]) => ({ siteCode, amount: round2(amount) })),
     warnings,
   };
+}
+
+export function siteKey(code: string): string {
+  const trimmed = code.trim().toUpperCase();
+  if (/^\d+$/.test(trimmed) && trimmed.length <= 3) return trimmed.padStart(3, "0");
+  return trimmed;
+}
+
+export interface ReportDoor {
+  channel: Channel;
+  siteCode: string;
+  initials: string;
+  name: string;
+  hasBa: boolean;
+  baNames: string[];
+  posId: string | null;
+  counterId: string | null;
+  counterName: string | null;
+}
+
+export function doorsInReport(channel: Channel, month: string, uploads: StoredUpload[]): ReportDoor[] {
+  const combined = combineUploads(channel, month, uploads);
+  const sites = new Set<string>();
+  for (const row of combined.brandDoors) sites.add(siteKey(row.siteCode));
+  for (const row of combined.motherDoors) sites.add(siteKey(row.siteCode));
+  for (const row of combined.skuLines) sites.add(siteKey(row.siteCode));
+  return Array.from(sites).map(siteCode => {
+    const known = DOOR_FALLBACK[siteCode];
+    return {
+      channel,
+      siteCode,
+      initials: known?.initials ?? siteCode,
+      name: known?.name ?? "",
+      hasBa: false,
+      baNames: [],
+      posId: null,
+      counterId: null,
+      counterName: null,
+    };
+  });
+}
+
+export function attachStaff(
+  doors: ReportDoor[],
+  locations: (PosLike & { siteCode?: string; isActive?: boolean })[],
+  users: { id: string; name: string; role: string; isActive: boolean }[],
+  assignments: { userId: string; posId: string }[],
+  counters: { id: string; name: string; channel: string; members: { shopCode?: string | null; posId?: string | null }[] }[],
+): ReportDoor[] {
+  return doors.map(door => {
+    const inChannel = locations.filter(pos => channelKey(pos.salesChannel) === door.channel && pos.isActive !== false);
+    const pos = inChannel.find(item => siteKey(item.siteCode || "") === door.siteCode)
+      ?? inChannel.find(item => item.storeCode.toUpperCase() === door.initials.toUpperCase());
+    const counter = counters.find(item =>
+      channelKey(item.channel) === door.channel &&
+      item.members.some(member => (pos && member.posId === pos.id) || (member.shopCode || "").toUpperCase() === door.initials.toUpperCase()),
+    );
+    const baNames = pos
+      ? users.filter(user => user.isActive && user.role === "ba" && assignments.some(link => link.userId === user.id && link.posId === pos.id)).map(user => user.name)
+      : [];
+    return {
+      ...door,
+      initials: pos?.storeCode || door.initials,
+      name: (pos?.storeName || "").trim() || door.name,
+      hasBa: baNames.length > 0,
+      baNames,
+      posId: pos?.id ?? null,
+      counterId: counter?.id ?? null,
+      counterName: counter?.name ?? null,
+    };
+  });
 }

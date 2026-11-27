@@ -1,16 +1,11 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+﻿import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { channelKey } from "@shared/scheme";
 
 type Channel = "AEON" | "LOGON" | "SOGO";
-type Kind = "aeon" | "cashier" | "split";
 
 interface SkuLine {
   siteCode: string;
@@ -33,7 +28,7 @@ interface BrandDoor {
 interface Report {
   channel: Channel;
   month: string;
-  uploads: { kind: Kind; filename: string; uploadedAt: string }[];
+  uploads: { kind: "aeon" | "cashier" | "split"; filename: string; uploadedAt: string }[];
   brandDoors: BrandDoor[];
   skuLines: SkuLine[];
   motherDoors: { siteCode: string; qty: number; amount: number; label: string }[];
@@ -71,37 +66,6 @@ const DOOR_FALLBACK: Record<string, { initials: string; name: string }> = {
   KTK: { initials: "KTK", name: "Kai Tak" },
 };
 
-const GUIDES: Record<Channel, { kind: Kind; title: string; body: string }[]> = {
-  AEON: [{
-    kind: "aeon",
-    title: "AEON sales report",
-    body: "One file for the month. It covers every AEON door. The app reads each product’s units and sales amount, then adds them up by brand and by door.",
-  }],
-  LOGON: [
-    {
-      kind: "cashier",
-      title: "1. Cashier report",
-      body: "Upload the LOGON cashier report. Lines that name a product are kept. A line called HAIR CARE PROMOTION is a mother code: the till recorded the amount and not the products. It is held back and is not treated as a brand.",
-    },
-    {
-      kind: "split",
-      title: "2. Adjusted brand workbook",
-      body: "Upload the LOGON file whose name says adjusted. It puts the real products back into the mother code. Do not upload the before-adjustment file.",
-    },
-  ],
-  SOGO: [
-    {
-      kind: "cashier",
-      title: "1. Cashier report",
-      body: "Upload the SOGO cashier report. Lines that name a product are kept. A line called BEAUTY BLISS-N1 is a mother code. It is held back and is not treated as a brand.",
-    },
-    {
-      kind: "split",
-      title: "2. Adjusted brand workbook",
-      body: "Upload the SOGO file whose name says adjusted. It puts the real products back into the mother code. Kai Tak may appear only in this file. Do not upload the before-adjustment file.",
-    },
-  ],
-};
 
 function siteKey(code: string): string {
   const trimmed = code.trim().toUpperCase();
@@ -123,7 +87,6 @@ function brandLabel(code: string): string {
 }
 
 export default function ChannelSalesPage() {
-  const { toast } = useToast();
   const [channel, setChannel] = useState<Channel>("AEON");
   const [month, setMonth] = useState("2026-10");
   const [door, setDoor] = useState("all");
@@ -137,25 +100,6 @@ export default function ChannelSalesPage() {
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
-  });
-
-  const upload = useMutation({
-    mutationFn: async ({ kind, file }: { kind: Kind; file: File }) => {
-      const body = new FormData();
-      body.append("file", file);
-      body.append("channel", channel);
-      body.append("kind", kind);
-      body.append("month", month);
-      const res = await fetch("/api/channel-reports", { method: "POST", body, credentials: "same-origin" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "The file could not be read.");
-      return json as Report;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["channel-reports", channel, month] });
-      toast({ title: "Report saved", description: "The figures below use this file." });
-    },
-    onError: (err: Error) => toast({ title: "The file was not saved", description: err.message, variant: "destructive" }),
   });
 
   const doors = useMemo(() => {
@@ -172,7 +116,7 @@ export default function ChannelSalesPage() {
       ...(data?.skuLines ?? []).map(row => row.siteCode),
       ...(data?.motherDoors ?? []).map(row => row.siteCode),
     ]);
-    for (const code of codes) {
+    for (const code of Array.from(codes)) {
       const key = siteKey(code);
       if (bySite.has(key)) continue;
       const known = DOOR_FALLBACK[key] ?? DOOR_FALLBACK[code];
@@ -213,14 +157,13 @@ export default function ChannelSalesPage() {
   const brands = Array.from(new Set((data?.brandDoors ?? []).map(row => row.brandCode))).sort();
   const totalQty = brandRows.reduce((sum, row) => sum + row.qty, 0);
   const totalAmount = brandRows.reduce((sum, row) => sum + row.amount, 0);
-  const uploaded = new Set((data?.uploads ?? []).map(item => item.kind));
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-6xl mx-auto">
       <div>
-        <h2 className="text-xl font-semibold">Channel sales</h2>
+        <h2 className="text-xl font-semibold">Product dynamics</h2>
         <p className="text-sm text-muted-foreground">
-          Upload the monthly channel report. The figures are sales by brand, sales by door, and each product’s units and amount. Choose the month the file belongs to.
+          Upload the channel reports on Monthly Actuals first. Come back here to see units and sales amount by channel, by door, and by product.
         </p>
       </div>
 
@@ -242,33 +185,6 @@ export default function ChannelSalesPage() {
         </label>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        {GUIDES[channel].map(guide => (
-          <Card key={guide.kind}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{guide.title}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <p>{guide.body}</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="file"
-                  accept=".xlsx,.xlsm,.xls"
-                  className="max-w-xs"
-                  onChange={event => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (file) upload.mutate({ kind: guide.kind, file });
-                  }}
-                />
-                {uploaded.has(guide.kind) && <span className="text-foreground">Saved for {month}</span>}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {upload.isPending && <p className="text-sm text-muted-foreground">Reading the file…</p>}
       {isError && <p className="text-sm text-destructive">The saved reports could not be loaded.</p>}
       {(data?.warnings ?? []).map(warning => (
         <p key={warning} className="text-sm text-amber-700">{warning}</p>

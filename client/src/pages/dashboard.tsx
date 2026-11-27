@@ -37,7 +37,7 @@ const navItems = [
   { path: "/dashboard/reconciliation", label: "POS Reconciliation", icon: FileSpreadsheet, roles: ["management", "admin", "sales_manager"] },
   { path: "/dashboard/duty", label: "Duty Record", icon: CalendarDays, roles: ["admin", "sales_manager"] },
   { path: "/dashboard/actuals", label: "Monthly Actuals", icon: ClipboardList, roles: ["admin", "sales_manager"] },
-  { path: "/dashboard/channel-sales", label: "Channel sales", icon: Boxes, roles: ["management", "admin", "sales_manager", "brand_manager"] },
+  { path: "/dashboard/channel-sales", label: "Product dynamics", icon: Boxes, roles: ["management", "admin", "sales_manager", "brand_manager"] },
   { path: "/dashboard/targets", label: "Targets", icon: Target, roles: ["admin", "sales_manager", "brand_manager"] },
   { path: "/dashboard/pay", label: "Pay Overview", icon: Wallet, roles: ["admin", "sales_manager"] },
   { path: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["management", "admin"] },

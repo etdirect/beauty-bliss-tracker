@@ -4,8 +4,10 @@ import { storage } from "./storage";
 import { batchSalesSubmissionSchema, insertCounterSchema, insertBrandSchema, insertPromotionSchema, insertCategorySchema, insertIncentiveSchemeSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { registerCommissionRoutes, assertRoleChange } from "./commissionRoutes";
+import { commissionRepo } from "./commissionRepo";
 import { canUseOfficeScreens } from "@shared/access";
-import { combineUploads, listUploads, parseUpload, saveUpload, type Channel, type UploadKind } from "./channelImport";
+import { brandMatchesCode } from "@shared/scheme";
+import { attachStaff, BRAND_NAMES, combineUploads, doorsInReport, listUploads, parseUpload, saveUpload, siteKey, type Channel, type UploadKind } from "./channelImport";
 import multer from "multer";
 import * as XLSX from "xlsx";
 
@@ -49,6 +51,44 @@ async function requireManagement(req: Request, res: Response, next: NextFunction
     return;
   }
   next();
+}
+
+async function fillCommissionActuals(channel: Channel, month: string, userId: string): Promise<number> {
+  const uploads = await listUploads(channel, month);
+  const combined = combineUploads(channel, month, uploads);
+  const [locations, brands, users, assignments, counters] = await Promise.all([
+    storage.getPosLocations(),
+    storage.getBrands(),
+    storage.getUsers(),
+    storage.getUserPosAssignments(),
+    commissionRepo().listCounters(),
+  ]);
+  const doors = attachStaff(doorsInReport(channel, month, uploads), locations, users, assignments, counters);
+  const byCounter = new Map<string, { brandId: string; posId: string; actualAmount: number }[]>();
+  for (const row of combined.brandDoors) {
+    const door = doors.find(item => item.siteCode === siteKey(row.siteCode));
+    if (!door?.posId || !door.counterId || !door.hasBa) continue;
+    const wanted = (BRAND_NAMES[row.brandCode] || row.brandCode).toLowerCase();
+    const brand = brands.find(item => brandMatchesCode(item.name, row.brandCode) || item.name.toLowerCase() === wanted);
+    if (!brand) continue;
+    const list = byCounter.get(door.counterId) ?? [];
+    const existing = list.find(item => item.brandId === brand.id && item.posId === door.posId);
+    if (existing) existing.actualAmount = Math.round((existing.actualAmount + row.amount) * 100) / 100;
+    else list.push({ brandId: brand.id, posId: door.posId, actualAmount: row.amount });
+    byCounter.set(door.counterId, list);
+  }
+  let filled = 0;
+  for (const entry of Array.from(byCounter.entries())) {
+    const counterId = entry[0];
+    const rows = entry[1];
+    try {
+      await commissionRepo().saveActuals(counterId, month, rows, userId);
+      filled += rows.length;
+    } catch {
+      // A locked month keeps the previous actuals.
+    }
+  }
+  return filled;
 }
 
 export async function registerRoutes(
@@ -191,6 +231,30 @@ export async function registerRoutes(
     res.json(locations);
   });
 
+  app.get("/api/channel-reports/doors", requireAuth, async (req, res) => {
+    const user = await storage.getUser(req.session.userId!);
+    if (!user || !canUseOfficeScreens(user.role)) {
+      return res.status(403).json({ error: "You do not have access to this" });
+    }
+    const month = String(req.query.month ?? "");
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Choose a month." });
+    const [locations, users, assignments, counters] = await Promise.all([
+      storage.getPosLocations(),
+      storage.getUsers(),
+      storage.getUserPosAssignments(),
+      commissionRepo().listCounters(),
+    ]);
+    const channels: Channel[] = ["AEON", "LOGON", "SOGO"];
+    const found = [];
+    for (const channel of channels) {
+      const uploads = await listUploads(channel, month);
+      found.push(...doorsInReport(channel, month, uploads));
+    }
+    const doors = attachStaff(found, locations, users, assignments, counters)
+      .sort((a, b) => a.channel.localeCompare(b.channel) || a.initials.localeCompare(b.initials));
+    res.json(doors);
+  });
+
   app.get("/api/channel-reports", requireAuth, async (req, res) => {
     const user = await storage.getUser(req.session.userId!);
     if (!user || !canUseOfficeScreens(user.role)) {
@@ -223,8 +287,9 @@ export async function registerRoutes(
     try {
       const parsed = parseUpload(req.file.buffer, channel, kind);
       await saveUpload(month, req.file.originalname || "upload.xlsx", parsed);
+      const filled = await fillCommissionActuals(channel, month, user.id);
       const uploads = await listUploads(channel, month);
-      res.json(combineUploads(channel, month, uploads));
+      res.json({ ...combineUploads(channel, month, uploads), filledActuals: filled });
     } catch (err: any) {
       res.status(400).json({ error: err.message || "The file could not be read." });
     }

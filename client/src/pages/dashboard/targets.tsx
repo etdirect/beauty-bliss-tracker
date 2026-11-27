@@ -29,6 +29,27 @@ export default function TargetsPage() {
   const [brandAdj, setBrandAdj] = useState<Record<string, string>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const { data: counters = [] } = useQuery<any[]>({ queryKey: ["/api/commission/counters"] });
+  const { data: reportDoors = [] } = useQuery<any[]>({
+    queryKey: ["channel-doors", month],
+    queryFn: async () => {
+      const res = await fetch(`/api/channel-reports/doors?month=${month}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
+  const baDoors = useMemo(() => {
+    const seen = new Set<string>();
+    const options: { key: string; counterId: string; label: string }[] = [];
+    for (const door of reportDoors) {
+      if (!door.hasBa || !door.counterId || seen.has(door.counterId)) continue;
+      seen.add(door.counterId);
+      const same = reportDoors.filter((item: any) => item.counterId === door.counterId && item.hasBa);
+      const places = same.map((item: any) => `${item.initials} ${item.name}`.trim()).join(", ");
+      const names = Array.from(new Set(same.flatMap((item: any) => item.baNames))).join(", ");
+      options.push({ key: door.counterId, counterId: door.counterId, label: `${places} · BA: ${names}` });
+    }
+    return options;
+  }, [reportDoors]);
   const counter = counters.find(c => c.id === counterId) ?? counters[0];
   const activeId = counter?.id ?? "";
   useEffect(() => { if (!counterId && counters[0]) setCounterId(counters[0].id); }, [counters, counterId]);
@@ -192,8 +213,12 @@ export default function TargetsPage() {
           <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
         </div>
         <Select value={activeId} onValueChange={setCounterId}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Counter" /></SelectTrigger>
-          <SelectContent>{counters.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+          <SelectTrigger className="w-80"><SelectValue placeholder="Counter" /></SelectTrigger>
+          <SelectContent>
+            {(baDoors.length ? baDoors : counters.map(c => ({ key: c.id, counterId: c.id, label: c.name }))).map(item => (
+              <SelectItem key={item.key} value={item.counterId}>{item.label}</SelectItem>
+            ))}
+          </SelectContent>
         </Select>
       </div>
 

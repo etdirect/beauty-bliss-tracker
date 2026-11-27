@@ -11,15 +11,68 @@ import { formatHk, hkMonth } from "@shared/hkTime";
 
 const UPLOAD_CHANNELS = ["LOGON", "SOGO", "AEON"] as const;
 
+const UPLOADS: Record<string, { kind: "aeon" | "cashier" | "split"; title: string; body: string }[]> = {
+  AEON: [{
+    kind: "aeon",
+    title: "AEON sales report",
+    body: "One file for the month. It covers every AEON door. Product lines are added up by brand and by door.",
+  }],
+  LOGON: [
+    {
+      kind: "cashier",
+      title: "1. Cashier report",
+      body: "Lines that name a product are kept. A line headed HAIR CARE PROMOTION is a mother code. It is held back and is not treated as a brand.",
+    },
+    {
+      kind: "split",
+      title: "2. Adjusted brand workbook",
+      body: "Upload the LOGON file whose name says adjusted. It puts the products back into the mother code. Do not upload the before-adjustment file.",
+    },
+  ],
+  SOGO: [
+    {
+      kind: "cashier",
+      title: "1. Cashier report",
+      body: "Lines that name a product are kept. A line called BEAUTY BLISS-N1 is a mother code. It is held back and is not treated as a brand.",
+    },
+    {
+      kind: "split",
+      title: "2. Adjusted brand workbook",
+      body: "Upload the SOGO file whose name says adjusted. It puts the products back into the mother code. Do not upload the before-adjustment file.",
+    },
+  ],
+};
+
+interface ReportDoor {
+  channel: string;
+  siteCode: string;
+  initials: string;
+  name: string;
+  hasBa: boolean;
+  baNames: string[];
+  counterId: string | null;
+  counterName: string | null;
+}
+
 export default function ActualsPage() {
   const { toast } = useToast();
   const [month, setMonth] = useState(hkMonth());
   const [counterId, setCounterId] = useState("");
+  const [doorKey, setDoorKey] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const { data: counters = [] } = useQuery<any[]>({ queryKey: ["/api/commission/counters"] });
-  const counter = counters.find(c => c.id === counterId) ?? counters[0];
+  const { data: doors = [] } = useQuery<ReportDoor[]>({
+    queryKey: ["channel-doors", month],
+    queryFn: async () => {
+      const res = await fetch(`/api/channel-reports/doors?month=${month}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
+  const selectedDoor = doors.find(door => `${door.channel}|${door.siteCode}` === doorKey);
+  const counter = counters.find(c => c.id === (selectedDoor?.counterId || counterId)) ?? (doors.length ? undefined : counters[0]);
   const activeId = counter?.id ?? "";
-  useEffect(() => { if (!counterId && counters[0]) setCounterId(counters[0].id); }, [counters, counterId]);
+  useEffect(() => { if (!doorKey && !counterId && counters[0] && doors.length === 0) setCounterId(counters[0].id); }, [counters, counterId, doorKey, doors.length]);
 
   const { data } = useQuery<any>({
     queryKey: ["commission-actuals", month, activeId],
@@ -58,6 +111,27 @@ export default function ActualsPage() {
     onError: (err: Error) => toast({ title: "Could not save", description: err.message, variant: "destructive" }),
   });
 
+  const uploadReport = useMutation({
+    mutationFn: async ({ channel, kind, file }: { channel: string; kind: string; file: File }) => {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("channel", channel);
+      body.append("kind", kind);
+      body.append("month", month);
+      const res = await fetch("/api/channel-reports", { method: "POST", body, credentials: "same-origin" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "The file could not be read.");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["channel-doors", month] });
+      queryClient.invalidateQueries({ queryKey: ["channel-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["commission-actuals"] });
+      toast({ title: "Report saved", description: "Doors from the file are now in the dropdown. Doors with a BA can be used for brand targets." });
+    },
+    onError: (err: Error) => toast({ title: "The file was not saved", description: err.message, variant: "destructive" }),
+  });
+
   const rec = data?.reconciliation;
   const gapPct = rec?.gapPct == null ? null : `${(rec.gapPct * 100).toFixed(1)}%`;
   const rows = data?.rows ?? [];
@@ -78,6 +152,9 @@ export default function ActualsPage() {
         <p className="text-sm text-muted-foreground">Brands shown are the ones ticked for that shop under Settings, Brand-POS.</p>
       </div>
       <Tabs defaultValue="enter">
+        <div className="flex flex-wrap items-end gap-3 mb-3">
+          <Input type="month" value={month} onChange={e => { setMonth(e.target.value); setDoorKey(""); }} className="w-40" />
+        </div>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="enter">Enter by store</TabsTrigger>
           {UPLOAD_CHANNELS.map(channel => (
@@ -86,12 +163,29 @@ export default function ActualsPage() {
         </TabsList>
         <TabsContent value="enter" className="space-y-4 mt-4">
       <div className="flex flex-wrap items-end gap-3">
-        <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
-        <Select value={activeId} onValueChange={setCounterId}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Counter" /></SelectTrigger>
-          <SelectContent>{counters.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+        <Select
+          value={doors.length ? doorKey : activeId}
+          onValueChange={value => {
+            if (!doors.length) { setCounterId(value); return; }
+            setDoorKey(value);
+            const door = doors.find(item => `${item.channel}|${item.siteCode}` === value);
+            setCounterId(door?.counterId ?? "");
+          }}
+        >
+          <SelectTrigger className="w-80"><SelectValue placeholder={doors.length ? "Door from the report" : "Counter"} /></SelectTrigger>
+          <SelectContent>
+            {doors.length === 0 && counters.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+            {doors.map(door => (
+              <SelectItem key={`${door.channel}|${door.siteCode}`} value={`${door.channel}|${door.siteCode}`}>
+                {door.channel} · {door.initials} {door.name} · {door.hasBa ? `BA: ${door.baNames.join(", ")}` : "No BA"}
+              </SelectItem>
+            ))}
+          </SelectContent>
         </Select>
       </div>
+      {selectedDoor && !selectedDoor.hasBa && (
+        <p className="text-sm text-muted-foreground">No BA is stationed at this door, so it is not used for a brand target. Doors with a BA are marked in the list.</p>
+      )}
 
       {rec && (
         <Card>
@@ -155,17 +249,26 @@ export default function ActualsPage() {
       <Button onClick={() => save.mutate()} disabled={data?.status === "locked" || save.isPending || rows.length === 0}>Save actuals</Button>
         </TabsContent>
         {UPLOAD_CHANNELS.map(channel => (
-          <TabsContent key={channel} value={`upload-${channel}`} className="mt-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Upload {channel}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm text-muted-foreground">
-                <p>One Excel file will cover every {channel} door for the month. The doors do not need a separate file.</p>
-                <p>The column layout is not set yet. When you send a sample file, this tab will read it and fill the actual amounts.</p>
-                <Button type="button" variant="outline" disabled>Choose Excel file</Button>
-              </CardContent>
-            </Card>
+          <TabsContent key={channel} value={`upload-${channel}`} className="mt-4 space-y-3">
+            {UPLOADS[channel].map(guide => (
+              <Card key={guide.kind}>
+                <CardHeader className="pb-2"><CardTitle className="text-base">{guide.title}</CardTitle></CardHeader>
+                <CardContent className="space-y-3 text-sm text-muted-foreground">
+                  <p>{guide.body}</p>
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xlsm,.xls"
+                    className="max-w-md"
+                    disabled={uploadReport.isPending}
+                    onChange={event => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) uploadReport.mutate({ channel, kind: guide.kind, file });
+                    }}
+                  />
+                </CardContent>
+              </Card>
+            ))}
           </TabsContent>
         ))}
       </Tabs>
