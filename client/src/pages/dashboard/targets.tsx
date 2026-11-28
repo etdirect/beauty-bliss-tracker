@@ -141,6 +141,10 @@ export default function TargetsPage() {
     onError: (err: Error) => toast({ title: "Could not update priority", description: err.message, variant: "destructive" }),
   });
 
+  const monthSource = (index: number) => data?.ref?.monthSources?.[index] === "actual" ? "actual" : "entered";
+  const monthClass = (index: number) => monthSource(index) === "actual"
+    ? "bg-amber-100 text-amber-950 dark:bg-amber-400/25 dark:text-amber-50"
+    : "bg-sky-100 text-sky-950 dark:bg-sky-400/25 dark:text-sky-50";
   const renderRows = (list: any[], title: string) => (
     <>
       <tr className="bg-muted/70">
@@ -160,7 +164,7 @@ export default function TargetsPage() {
                 <span>{row.name}</span>
               </label>
             </td>
-            {row.months.map((n: number, i: number) => <td key={i} className="p-2 text-right tabular-nums">{formatHk(n)}</td>)}
+            {row.months.map((n: number, i: number) => <td key={i} className={`p-2 text-right tabular-nums ${monthClass(i)}`}>{formatHk(n)}</td>)}
             <td className="p-2 text-right tabular-nums">{formatHk(row.median)}</td>
             <td className="p-2 text-right tabular-nums">{formatHk(figures.starting)}</td>
             <td className="p-2 text-right">
@@ -185,7 +189,7 @@ export default function TargetsPage() {
         return (
           <tr className="border-t bg-muted/30 font-semibold">
             <td className="p-2">Subtotal</td>
-            {monthSums.map((n, i) => <td key={i} className="p-2 text-right tabular-nums">{formatHk(n)}</td>)}
+            {monthSums.map((n, i) => <td key={i} className={`p-2 text-right tabular-nums ${monthClass(i)}`}>{formatHk(n)}</td>)}
             <td className="p-2 text-right tabular-nums">{formatHk(median(monthSums))}</td>
             <td className="p-2 text-right tabular-nums">{formatHk(startingSum)}</td>
             <td />
@@ -286,12 +290,16 @@ export default function TargetsPage() {
         </Card>
       )}
 
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <span className="inline-flex items-center gap-2"><span className="inline-block h-3 w-6 rounded-sm bg-amber-100 dark:bg-amber-400/40" /> Actual sales from the channel report</span>
+        <span className="inline-flex items-center gap-2"><span className="inline-block h-3 w-6 rounded-sm bg-sky-100 dark:bg-sky-400/40" /> Sales the BA typed</span>
+      </div>
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
               <th className="text-left p-2">Brand</th>
-              {(data?.ref?.months ?? []).map((m: string) => <th key={m} className="text-right p-2">{m}</th>)}
+              {(data?.ref?.months ?? []).map((m: string, i: number) => <th key={m} className={`text-right p-2 ${monthClass(i)}`}>{m}</th>)}
               <th className="text-right p-2">Median</th>
               <th className="text-right p-2">Starting</th>
               <th className="text-right p-2">Multiplier</th>

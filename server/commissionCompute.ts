@@ -131,11 +131,13 @@ export async function referenceMonths(counter: SchemeCounter, month: string, his
     const key = `${e.date.slice(0, 7)}|${e.brandId}`;
     byMonthBrand.set(key, (byMonthBrand.get(key) ?? 0) + provisionalAmount(e.amount));
   }
+  const monthSources: ("actual" | "entered")[] = [];
   for (const m of months) {
     const actuals = await repo.listActuals(counter.id, m);
     const actualByBrand = new Map<string, number>();
     for (const a of actuals) actualByBrand.set(a.brandId, (actualByBrand.get(a.brandId) ?? 0) + a.actualAmount);
     for (const pair of Array.from(actualByBrand.entries())) byMonthBrand.set(`${m}|${pair[0]}`, pair[1]);
+    monthSources.push(actuals.length > 0 ? "actual" : "entered");
   }
 
   const availability = await storage.getBrandPosAvailability();
@@ -157,6 +159,7 @@ export async function referenceMonths(counter: SchemeCounter, month: string, his
   const nonPriorityMonths = months.map((_, i) => rows.filter(r => !r.priority).reduce((s, r) => s + r.months[i], 0));
   return {
     months,
+    monthSources,
     rows,
     counterMedian: median(counterMonths),
     nonPriorityMedian: median(nonPriorityMonths),
